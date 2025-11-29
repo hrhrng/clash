@@ -1,7 +1,7 @@
 'use client';
 
-import { memo, useState } from 'react';
-import { NodeProps, NodeResizeControl } from 'reactflow';
+import { memo, useState, useMemo } from 'react';
+import { NodeProps, NodeResizeControl, useReactFlow } from 'reactflow';
 
 const controlStyle = {
     background: '#FF9900',
@@ -11,8 +11,35 @@ const controlStyle = {
     height: 10,
 };
 
-const GroupNode = ({ selected, data }: NodeProps) => {
+const GroupNode = ({ selected, data, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Group');
+    const { getNodes } = useReactFlow();
+
+    // Calculate nesting depth
+    const depth = useMemo(() => {
+        const nodes = getNodes();
+        let currentId = id;
+        let level = 0;
+
+        while (currentId) {
+            const node = nodes.find(n => n.id === currentId);
+            if (!node || !node.parentId) break;
+            currentId = node.parentId;
+            level++;
+        }
+
+        return level;
+    }, [id, getNodes]);
+
+    // Generate background color based on depth
+    const backgroundColor = useMemo(() => {
+        if (selected) return 'bg-[#FFF8F0]';
+
+        // Each level adds more opacity to the slate background
+        const opacities = [40, 50, 60, 70, 80]; // 40%, 50%, 60%, etc.
+        const opacity = opacities[Math.min(depth, opacities.length - 1)];
+        return `bg-slate-100/${opacity}`;
+    }, [depth, selected]);
 
     return (
         <>
@@ -26,8 +53,7 @@ const GroupNode = ({ selected, data }: NodeProps) => {
             )}
 
             <div
-                className={`h-full w-full border-2 rounded-matrix transition-all duration-300 ${selected ? 'border-[#FF9900] bg-[#FFF8F0]' : 'border-slate-200 bg-slate-50/5'
-                    }`}
+                className={`h-full w-full border-2 transition-all duration-300 ${selected ? 'border-[#FF9900]' : 'border-slate-300'} ${backgroundColor}`}
             >
                 {/* Floating Title Input */}
                 <div

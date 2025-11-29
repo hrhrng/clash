@@ -6,20 +6,32 @@ enabling state persistence, recovery, and time-travel debugging.
 
 from typing import Optional
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from master_clash.config import get_settings
 from master_clash.database.connection import get_db_connection, get_db_path, init_database
 
 
-def get_checkpointer(initialize: bool = True) -> SqliteSaver:
+def get_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
     """Get a LangGraph checkpointer configured for SQLite/D1.
 
     Args:
         initialize: Whether to initialize the database schema if not exists
 
     Returns:
-        Configured SqliteSaver instance
+        Configured checkpoint saver instance
     """
+    settings = get_settings()
+
+    if settings.use_d1_checkpointer:
+        from master_clash.database.d1_checkpointer import D1Checkpointer
+        return D1Checkpointer(
+            account_id=settings.cloudflare_account_id,
+            database_id=settings.cloudflare_d1_database_id,
+            api_token=settings.cloudflare_api_token,
+        )
+
     db_path = get_db_path()
 
     if initialize:
@@ -35,7 +47,7 @@ def get_checkpointer(initialize: bool = True) -> SqliteSaver:
     return checkpointer
 
 
-async def get_async_checkpointer(initialize: bool = True) -> SqliteSaver:
+async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
     """Get an async LangGraph checkpointer configured for SQLite/D1.
 
     For async workflows, this uses aiosqlite for non-blocking I/O.
@@ -44,8 +56,18 @@ async def get_async_checkpointer(initialize: bool = True) -> SqliteSaver:
         initialize: Whether to initialize the database schema if not exists
 
     Returns:
-        Configured async SqliteSaver instance
+        Configured async checkpoint saver instance
     """
+    settings = get_settings()
+
+    if settings.use_d1_checkpointer:
+        from master_clash.database.d1_checkpointer import D1Checkpointer
+        return D1Checkpointer(
+            account_id=settings.cloudflare_account_id,
+            database_id=settings.cloudflare_d1_database_id,
+            api_token=settings.cloudflare_api_token,
+        )
+
     import aiosqlite
 
     db_path = get_db_path()

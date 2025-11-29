@@ -35,6 +35,7 @@ import AudioNode from './nodes/AudioNode';
 import ActionBadge from './nodes/ActionBadge';
 import GroupNode from './nodes/GroupNode';
 import { MediaViewerProvider } from './MediaViewerContext';
+import { ProjectProvider } from './ProjectContext';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -80,7 +81,32 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     // Auto-save on change (debounced in a real app, but simple here)
     useEffect(() => {
         const timer = setTimeout(() => {
-            saveProjectState(project.id, nodes, edges);
+            // Sanitize nodes and edges to remove non-serializable properties (like 'internals' symbol in React Flow nodes)
+            // that cause "Only plain objects can be passed to Server Functions" error.
+            const sanitizedNodes = nodes.map(node => {
+                // Destructure to pick only serializable properties we want to persist
+                const {
+                    id, type, position, data, style, className,
+                    width, height, parentId, extent
+                } = node;
+                return {
+                    id, type, position, data, style, className,
+                    width, height, parentId, extent
+                };
+            });
+
+            const sanitizedEdges = edges.map(edge => {
+                const {
+                    id, source, target, sourceHandle, targetHandle,
+                    type, animated, style, data, className
+                } = edge;
+                return {
+                    id, source, target, sourceHandle, targetHandle,
+                    type, animated, style, data, className
+                };
+            });
+
+            saveProjectState(project.id, sanitizedNodes, sanitizedEdges);
         }, 1000);
         return () => clearTimeout(timer);
     }, [nodes, edges, project.id]);
@@ -198,276 +224,278 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
 
     return (
-        <MediaViewerProvider>
-            <div className="flex h-screen w-full flex-col bg-white">
-                {/* Hidden File Input */}
-                <input
-                    type="file"
-                    ref={fileInputRef}
-                    className="hidden"
-                    onChange={handleFileChange}
-                />
+        <ProjectProvider projectId={project.id}>
+            <MediaViewerProvider>
+                <div className="flex h-screen w-full flex-col bg-white">
+                    {/* Hidden File Input */}
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        className="hidden"
+                        onChange={handleFileChange}
+                    />
 
-                {/* Top Toolbar */}
+                    {/* Top Toolbar */}
 
 
-                {/* Main Canvas Area */}
-                <div className="flex flex-1 overflow-hidden relative">
-                    <div className="flex-1 relative h-full">
-                        <ReactFlow
-                            nodes={nodes}
-                            edges={edges}
-                            onNodesChange={onNodesChange}
-                            onEdgesChange={onEdgesChange}
-                            onConnect={onConnect}
-                            onNodeDragStop={(event, node) => {
-                                // Helper to recursively calculate absolute position of a node
-                                const getAbsolutePosition = (n: Node): { x: number; y: number } => {
-                                    if (!n.parentId) {
-                                        return { x: n.position.x, y: n.position.y };
-                                    }
-                                    const parent = nodes.find((p) => p.id === n.parentId);
-                                    if (!parent) {
-                                        return { x: n.position.x, y: n.position.y };
-                                    }
-                                    const parentAbsPos = getAbsolutePosition(parent);
-                                    return {
-                                        x: parentAbsPos.x + n.position.x,
-                                        y: parentAbsPos.y + n.position.y,
-                                    };
-                                };
-
-                                // Helper to check if groupId is a descendant of nodeId (prevent circular nesting)
-                                const isDescendant = (groupId: string, nodeId: string): boolean => {
-                                    const group = nodes.find((n) => n.id === groupId);
-                                    if (!group || !group.parentId) return false;
-                                    if (group.parentId === nodeId) return true;
-                                    return isDescendant(group.parentId, nodeId);
-                                };
-
-                                // Check intersection with group nodes (including nested groups)
-                                const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
-                                const nodeRect = {
-                                    x: node.position.x,
-                                    y: node.position.y,
-                                    width: node.width || (node.type === 'group' ? 400 : 300),
-                                    height: node.height || (node.type === 'group' ? 400 : 400),
-                                };
-
-                                // Calculate absolute position for the dragged node
-                                const absoluteNodePos = getAbsolutePosition(node);
-                                const absoluteNodeRect = {
-                                    x: absoluteNodePos.x,
-                                    y: absoluteNodePos.y,
-                                    width: nodeRect.width,
-                                    height: nodeRect.height,
-                                };
-
-                                let newParentId: string | undefined = undefined;
-                                let maxZIndex = -Infinity;
-
-                                for (const group of groupNodes) {
-                                    // Skip if this group is a descendant of the node (prevent circular nesting)
-                                    if (isDescendant(group.id, node.id)) continue;
-
-                                    const groupRect = {
-                                        x: group.position.x,
-                                        y: group.position.y,
-                                        width: group.style?.width || 400,
-                                        height: group.style?.height || 400,
+                    {/* Main Canvas Area */}
+                    <div className="flex flex-1 overflow-hidden relative">
+                        <div className="flex-1 relative h-full">
+                            <ReactFlow
+                                nodes={nodes}
+                                edges={edges}
+                                onNodesChange={onNodesChange}
+                                onEdgesChange={onEdgesChange}
+                                onConnect={onConnect}
+                                onNodeDragStop={(event, node) => {
+                                    // Helper to recursively calculate absolute position of a node
+                                    const getAbsolutePosition = (n: Node): { x: number; y: number } => {
+                                        if (!n.parentId) {
+                                            return { x: n.position.x, y: n.position.y };
+                                        }
+                                        const parent = nodes.find((p) => p.id === n.parentId);
+                                        if (!parent) {
+                                            return { x: n.position.x, y: n.position.y };
+                                        }
+                                        const parentAbsPos = getAbsolutePosition(parent);
+                                        return {
+                                            x: parentAbsPos.x + n.position.x,
+                                            y: parentAbsPos.y + n.position.y,
+                                        };
                                     };
 
-                                    // Calculate absolute position of group
-                                    const absoluteGroupPos = getAbsolutePosition(group);
-                                    const absoluteGroupRect = {
-                                        x: absoluteGroupPos.x,
-                                        y: absoluteGroupPos.y,
-                                        width: groupRect.width,
-                                        height: groupRect.height,
+                                    // Helper to check if groupId is a descendant of nodeId (prevent circular nesting)
+                                    const isDescendant = (groupId: string, nodeId: string): boolean => {
+                                        const group = nodes.find((n) => n.id === groupId);
+                                        if (!group || !group.parentId) return false;
+                                        if (group.parentId === nodeId) return true;
+                                        return isDescendant(group.parentId, nodeId);
                                     };
 
-                                    // Check if node center is inside the group
-                                    const nodeCenterX = absoluteNodeRect.x + nodeRect.width / 2;
-                                    const nodeCenterY = absoluteNodeRect.y + nodeRect.height / 2;
+                                    // Check intersection with group nodes (including nested groups)
+                                    const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
+                                    const nodeRect = {
+                                        x: node.position.x,
+                                        y: node.position.y,
+                                        width: node.width || (node.type === 'group' ? 400 : 300),
+                                        height: node.height || (node.type === 'group' ? 400 : 400),
+                                    };
 
-                                    if (
-                                        nodeCenterX > absoluteGroupRect.x &&
-                                        nodeCenterX < absoluteGroupRect.x + (absoluteGroupRect.width as number) &&
-                                        nodeCenterY > absoluteGroupRect.y &&
-                                        nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
-                                    ) {
-                                        // Pick the group with highest z-index (innermost/topmost group)
-                                        const groupZIndex = group.style?.zIndex ?? -1;
-                                        if (groupZIndex > maxZIndex) {
-                                            maxZIndex = groupZIndex;
-                                            newParentId = group.id;
+                                    // Calculate absolute position for the dragged node
+                                    const absoluteNodePos = getAbsolutePosition(node);
+                                    const absoluteNodeRect = {
+                                        x: absoluteNodePos.x,
+                                        y: absoluteNodePos.y,
+                                        width: nodeRect.width,
+                                        height: nodeRect.height,
+                                    };
+
+                                    let newParentId: string | undefined = undefined;
+                                    let maxZIndex = -Infinity;
+
+                                    for (const group of groupNodes) {
+                                        // Skip if this group is a descendant of the node (prevent circular nesting)
+                                        if (isDescendant(group.id, node.id)) continue;
+
+                                        const groupRect = {
+                                            x: group.position.x,
+                                            y: group.position.y,
+                                            width: group.style?.width || 400,
+                                            height: group.style?.height || 400,
+                                        };
+
+                                        // Calculate absolute position of group
+                                        const absoluteGroupPos = getAbsolutePosition(group);
+                                        const absoluteGroupRect = {
+                                            x: absoluteGroupPos.x,
+                                            y: absoluteGroupPos.y,
+                                            width: groupRect.width,
+                                            height: groupRect.height,
+                                        };
+
+                                        // Check if node center is inside the group
+                                        const nodeCenterX = absoluteNodeRect.x + nodeRect.width / 2;
+                                        const nodeCenterY = absoluteNodeRect.y + nodeRect.height / 2;
+
+                                        if (
+                                            nodeCenterX > absoluteGroupRect.x &&
+                                            nodeCenterX < absoluteGroupRect.x + (absoluteGroupRect.width as number) &&
+                                            nodeCenterY > absoluteGroupRect.y &&
+                                            nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
+                                        ) {
+                                            // Pick the group with highest z-index (innermost/topmost group)
+                                            const groupZIndex = group.style?.zIndex ?? -1;
+                                            if (groupZIndex > maxZIndex) {
+                                                maxZIndex = groupZIndex;
+                                                newParentId = group.id;
+                                            }
                                         }
                                     }
-                                }
 
-                                // Update node if parent changed
-                                if (newParentId !== node.parentId) {
-                                    setNodes((nds) =>
-                                        nds.map((n) => {
-                                            if (n.id === node.id) {
-                                                const newNode = { ...n, parentId: newParentId };
+                                    // Update node if parent changed
+                                    if (newParentId !== node.parentId) {
+                                        setNodes((nds) =>
+                                            nds.map((n) => {
+                                                if (n.id === node.id) {
+                                                    const newNode = { ...n, parentId: newParentId };
 
-                                                // Adjust position to be relative to new parent (or absolute if no parent)
-                                                if (newParentId) {
-                                                    const parent = nodes.find((p) => p.id === newParentId);
-                                                    if (parent) {
-                                                        // Calculate parent's absolute position
-                                                        const parentAbsPos = getAbsolutePosition(parent);
+                                                    // Adjust position to be relative to new parent (or absolute if no parent)
+                                                    if (newParentId) {
+                                                        const parent = nodes.find((p) => p.id === newParentId);
+                                                        if (parent) {
+                                                            // Calculate parent's absolute position
+                                                            const parentAbsPos = getAbsolutePosition(parent);
 
-                                                        newNode.position = {
-                                                            x: absoluteNodeRect.x - parentAbsPos.x,
-                                                            y: absoluteNodeRect.y - parentAbsPos.y,
-                                                        };
-
-                                                        // For group nodes, ensure they remain editable and above parent
-                                                        if (node.type === 'group') {
-                                                            const parentZIndex = parent.style?.zIndex ?? 0;
-                                                            newNode.draggable = true;
-                                                            newNode.selectable = true;
-                                                            newNode.style = {
-                                                                ...newNode.style,
-                                                                zIndex: parentZIndex + 1, // Child group should be above parent
+                                                            newNode.position = {
+                                                                x: absoluteNodeRect.x - parentAbsPos.x,
+                                                                y: absoluteNodeRect.y - parentAbsPos.y,
                                                             };
-                                                            // Don't set extent for group nodes - they need freedom to move
-                                                            newNode.extent = undefined;
-                                                        } else {
-                                                            // For non-group nodes, optionally constrain to parent
-                                                            // newNode.extent = 'parent';
+
+                                                            // For group nodes, ensure they remain editable and above parent
+                                                            if (node.type === 'group') {
+                                                                const parentZIndex = parent.style?.zIndex ?? 0;
+                                                                newNode.draggable = true;
+                                                                newNode.selectable = true;
+                                                                newNode.style = {
+                                                                    ...newNode.style,
+                                                                    zIndex: parentZIndex + 1, // Child group should be above parent
+                                                                };
+                                                                // Don't set extent for group nodes - they need freedom to move
+                                                                newNode.extent = undefined;
+                                                            } else {
+                                                                // For non-group nodes, optionally constrain to parent
+                                                                // newNode.extent = 'parent';
+                                                            }
                                                         }
+                                                    } else {
+                                                        // Becoming orphan, convert to absolute
+                                                        newNode.position = {
+                                                            x: absoluteNodeRect.x,
+                                                            y: absoluteNodeRect.y,
+                                                        };
+                                                        newNode.extent = undefined;
                                                     }
-                                                } else {
-                                                    // Becoming orphan, convert to absolute
-                                                    newNode.position = {
-                                                        x: absoluteNodeRect.x,
-                                                        y: absoluteNodeRect.y,
-                                                    };
-                                                    newNode.extent = undefined;
+                                                    return newNode;
                                                 }
-                                                return newNode;
-                                            }
-                                            return n;
-                                        })
-                                    );
-                                }
-                            }}
+                                                return n;
+                                            })
+                                        );
+                                    }
+                                }}
 
-                            nodeTypes={nodeTypes}
-                            fitView
-                            minZoom={0.1}
-                            proOptions={{ hideAttribution: true }}
-                        >
-                            <Background
-                                variant={BackgroundVariant.Dots}
-                                gap={12}
-                                size={1}
-                                color="#e2e8f0"
-                            />
+                                nodeTypes={nodeTypes}
+                                fitView
+                                minZoom={0.1}
+                                proOptions={{ hideAttribution: true }}
+                            >
+                                <Background
+                                    variant={BackgroundVariant.Dots}
+                                    gap={12}
+                                    size={1}
+                                    color="#e2e8f0"
+                                />
 
-                            {/* Left Toolbar */}
-                            {/* Header Panel */}
-                            <Panel position="top-left" className="m-4 z-50">
-                                <div className="flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
-                                    <Link href="/">
-                                        <motion.button
-                                            className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                        >
-                                            <span className="font-display font-medium text-2xl tracking-tight">
-                                                Clash
+                                {/* Left Toolbar */}
+                                {/* Header Panel */}
+                                <Panel position="top-left" className="m-4 z-50">
+                                    <div className="flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
+                                        <Link href="/">
+                                            <motion.button
+                                                className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
+                                                whileHover={{ scale: 1.05 }}
+                                                whileTap={{ scale: 0.95 }}
+                                            >
+                                                <span className="font-display font-medium text-2xl tracking-tight">
+                                                    Clash
+                                                </span>
+                                            </motion.button>
+                                        </Link>
+                                        <span className="text-slate-300 text-xl font-light">/</span>
+                                        <div className="grid items-center justify-items-start">
+                                            {/* Invisible span to set width */}
+                                            <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
+                                                {projectName || 'Untitled'}
                                             </span>
-                                        </motion.button>
-                                    </Link>
-                                    <span className="text-slate-300 text-xl font-light">/</span>
-                                    <div className="grid items-center justify-items-start">
-                                        {/* Invisible span to set width */}
-                                        <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
-                                            {projectName || 'Untitled'}
-                                        </span>
-                                        <input
-                                            className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
-                                            size={1}
-                                            value={projectName}
-                                            onChange={(e) => setProjectName(e.target.value)}
-                                            onBlur={() => {
-                                                if (projectName !== project.name) {
-                                                    updateProjectName(project.id, projectName);
-                                                }
-                                            }}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.currentTarget.blur();
-                                                }
-                                            }}
-                                        />
+                                            <input
+                                                className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
+                                                size={1}
+                                                value={projectName}
+                                                onChange={(e) => setProjectName(e.target.value)}
+                                                onBlur={() => {
+                                                    if (projectName !== project.name) {
+                                                        updateProjectName(project.id, projectName);
+                                                    }
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.currentTarget.blur();
+                                                    }
+                                                }}
+                                            />
+                                        </div>
                                     </div>
-                                </div>
-                            </Panel>
+                                </Panel>
 
-                            {/* Left Toolbar */}
-                            {/* Bottom Dock Tools */}
-                            <Panel position="bottom-center" className="m-4 mb-8 z-50">
-                                <div className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1">
+                                {/* Left Toolbar */}
+                                {/* Bottom Dock Tools */}
+                                <Panel position="bottom-center" className="m-4 mb-8 z-50">
+                                    <div className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1">
 
-                                    {/* Assets Section */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Assets</span>
-                                        {assetTools.map((tool) => {
-                                            const Icon = tool.icon;
-                                            return (
-                                                <motion.button
-                                                    key={tool.id}
-                                                    onClick={() => handleToolClick(tool.id)}
-                                                    className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                    whileHover={{ scale: 1.1, y: -2 }}
-                                                    whileTap={{ scale: 0.95 }}
-                                                    title={tool.label}
-                                                >
-                                                    <Icon className="h-5 w-5" weight="regular" />
-                                                </motion.button>
-                                            );
-                                        })}
+                                        {/* Assets Section */}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Assets</span>
+                                            {assetTools.map((tool) => {
+                                                const Icon = tool.icon;
+                                                return (
+                                                    <motion.button
+                                                        key={tool.id}
+                                                        onClick={() => handleToolClick(tool.id)}
+                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
+                                                        whileHover={{ scale: 1.1, y: -2 }}
+                                                        whileTap={{ scale: 0.95 }}
+                                                        title={tool.label}
+                                                    >
+                                                        <Icon className="h-5 w-5" weight="regular" />
+                                                    </motion.button>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="h-8 w-px bg-slate-200" />
+
+                                        {/* Actions Section */}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Actions</span>
+                                            {actionTools.map((tool) => {
+                                                const Icon = tool.icon;
+                                                return (
+                                                    <motion.button
+                                                        key={tool.id}
+                                                        onClick={() => handleToolClick(tool.id)}
+                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition-all hover:bg-blue-100 hover:text-blue-700 border border-blue-200/50"
+                                                        whileHover={{ scale: 1.1, y: -2 }}
+                                                        whileTap={{ scale: 0.95 }}
+                                                        title={tool.label}
+                                                    >
+                                                        <Icon className="h-5 w-5" weight="fill" />
+                                                    </motion.button>
+                                                );
+                                            })}
+                                        </div>
+
                                     </div>
+                                </Panel>
+                            </ReactFlow>
+                        </div>
 
-                                    <div className="h-8 w-px bg-slate-200" />
-
-                                    {/* Actions Section */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Actions</span>
-                                        {actionTools.map((tool) => {
-                                            const Icon = tool.icon;
-                                            return (
-                                                <motion.button
-                                                    key={tool.id}
-                                                    onClick={() => handleToolClick(tool.id)}
-                                                    className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition-all hover:bg-blue-100 hover:text-blue-700 border border-blue-200/50"
-                                                    whileHover={{ scale: 1.1, y: -2 }}
-                                                    whileTap={{ scale: 0.95 }}
-                                                    title={tool.label}
-                                                >
-                                                    <Icon className="h-5 w-5" weight="fill" />
-                                                </motion.button>
-                                            );
-                                        })}
-                                    </div>
-
-                                </div>
-                            </Panel>
-                        </ReactFlow>
+                        <ChatbotCopilot
+                            projectId={project.id}
+                            initialMessages={project.messages}
+                            onCommand={handleCommand}
+                        />
                     </div>
-
-                    <ChatbotCopilot
-                        projectId={project.id}
-                        initialMessages={project.messages}
-                        onCommand={handleCommand}
-                    />
                 </div>
-            </div>
-        </MediaViewerProvider>
+            </MediaViewerProvider>
+        </ProjectProvider>
     );
 }

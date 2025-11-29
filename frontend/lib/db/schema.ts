@@ -19,6 +19,23 @@ export const messages = sqliteTable('message', {
     createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(strftime('%s', 'now'))`),
 });
 
+export const assets = sqliteTable('asset', {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    name: text('name').notNull(), // User-defined unique name within project
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    storageKey: text('storage_key').notNull(), // R2 object key (e.g., "projects/{projectId}/assets/{uuid}.png")
+    url: text('url').notNull(), // Public R2 URL
+    type: text('type').notNull(), // "image" | "video" | "audio" | "text"
+    metadata: text('metadata', { mode: 'json' }), // Additional info (dimensions, duration, etc.)
+    createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(strftime('%s', 'now'))`),
+}, (asset) => ({
+    // Unique constraint: name must be unique within a project
+    uniqueNamePerProject: {
+        columns: [asset.projectId, asset.name],
+        name: 'asset_project_name_unique',
+    },
+}));
+
 // Auth.js Tables (Adapted for SQLite)
 export const users = sqliteTable('user', {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -76,11 +93,19 @@ import { relations } from 'drizzle-orm';
 
 export const projectsRelations = relations(projects, ({ many }) => ({
     messages: many(messages),
+    assets: many(assets),
 }));
 
 export const messagesRelations = relations(messages, ({ one }) => ({
     project: one(projects, {
         fields: [messages.projectId],
+        references: [projects.id],
+    }),
+}));
+
+export const assetsRelations = relations(assets, ({ one }) => ({
+    project: one(projects, {
+        fields: [assets.projectId],
         references: [projects.id],
     }),
 }));

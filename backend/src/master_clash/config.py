@@ -129,6 +129,68 @@ class Settings(BaseSettings):
     )
 
     # =============================================================================
+    # Cloudflare R2 Configuration
+    # =============================================================================
+    r2_account_id: str | None = Field(
+        default=None,
+        description="Cloudflare R2 account ID"
+    )
+
+    r2_access_key_id: str | None = Field(
+        default=None,
+        description="R2 access key ID (S3-compatible)"
+    )
+
+    r2_secret_access_key: str | None = Field(
+        default=None,
+        description="R2 secret access key (S3-compatible)"
+    )
+
+    r2_bucket_name: str | None = Field(
+        default=None,
+        description="R2 bucket name"
+    )
+
+    r2_public_url: str | None = Field(
+        default=None,
+        description="R2 public URL domain (e.g., https://pub-xxx.r2.dev)"
+    )
+
+    @property
+    def r2_endpoint(self) -> str | None:
+        """Generate R2 S3-compatible endpoint URL."""
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
+
+    # =============================================================================
+    # Cloudflare D1 Configuration (for LangGraph Checkpointer)
+    # =============================================================================
+    cloudflare_account_id: str | None = Field(
+        default=None,
+        description="Cloudflare account ID"
+    )
+
+    cloudflare_d1_database_id: str | None = Field(
+        default=None,
+        description="D1 database ID for LangGraph checkpointer"
+    )
+
+    cloudflare_api_token: str | None = Field(
+        default=None,
+        description="Cloudflare API token with D1 edit permissions"
+    )
+
+    @property
+    def use_d1_checkpointer(self) -> bool:
+        """Check if D1 checkpointer is configured."""
+        return all([
+            self.cloudflare_account_id,
+            self.cloudflare_d1_database_id,
+            self.cloudflare_api_token,
+        ])
+
+    # =============================================================================
     # Application Configuration
     # =============================================================================
     max_workers: int = Field(

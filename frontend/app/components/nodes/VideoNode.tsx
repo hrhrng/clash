@@ -1,11 +1,12 @@
 import { memo, useState } from 'react';
-import { Handle, Position, NodeProps } from 'reactflow';
+import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { FilmSlate } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 
-const VideoNode = ({ data, selected }: NodeProps) => {
+const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
     const { openViewer } = useMediaViewer();
+    const { setNodes } = useReactFlow();
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -27,8 +28,22 @@ const VideoNode = ({ data, selected }: NodeProps) => {
                     className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
                     value={label}
                     onChange={(evt) => {
-                        setLabel(evt.target.value);
-                        data.label = evt.target.value;
+                        const newLabel = evt.target.value;
+                        setLabel(newLabel);
+                        setNodes((nds) =>
+                            nds.map((node) => {
+                                if (node.id === id) {
+                                    return {
+                                        ...node,
+                                        data: {
+                                            ...node.data,
+                                            label: newLabel,
+                                        },
+                                    };
+                                }
+                                return node;
+                            })
+                        );
                     }}
                 />
             </div>
@@ -66,11 +81,7 @@ const VideoNode = ({ data, selected }: NodeProps) => {
                 )}
             </div>
 
-            <Handle
-                type="target"
-                position={Position.Left}
-                className="!h-4 !w-4 !-translate-x-2 !border-4 !border-white !bg-slate-400 transition-all hover:!bg-red-500 hover:scale-125 shadow-sm"
-            />
+            {/* Asset nodes only have output (source) */}
             <Handle
                 type="source"
                 position={Position.Right}

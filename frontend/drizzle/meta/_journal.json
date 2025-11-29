@@ -8,6 +8,13 @@
       "when": 1764339382737,
       "tag": "0000_lazy_yellowjacket",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1764394556999,
+      "tag": "0001_rapid_beyonder",
+      "breakpoints": true
     }
   ]
 }
