@@ -1,6 +1,7 @@
 """
 FastAPI server for Master Clash backend.
-Handles AI agent orchestration and workflow execution.
+Handles AI generation - returns base64 images or temporary URLs.
+Frontend handles storage and database.
 """
 from contextlib import asynccontextmanager
 from typing import Any
@@ -11,22 +12,38 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from master_clash.config import get_settings
+from master_clash.tools.nano_banana import nano_banana_gen
+from master_clash.tools.kling_video import kling_video_gen
 
 
 # Request/Response Models
-class GenerateVideoRequest(BaseModel):
-    """Request to generate video from script."""
-    project_id: str = Field(..., description="Project ID from frontend database")
-    script: str = Field(..., description="Video script content")
-    style: str = Field(default="cinematic", description="Visual style preference")
-    duration: int = Field(default=30, description="Target duration in seconds")
-
-
 class GenerateImageRequest(BaseModel):
-    """Request to generate images for shots."""
-    project_id: str = Field(..., description="Project ID")
-    shot_description: str = Field(..., description="Shot description")
-    style: str = Field(default="cinematic", description="Visual style")
+    """Request to generate image using Nano Banana."""
+    prompt: str = Field(..., description="Image generation prompt")
+    system_prompt: str = Field(default="", description="System-level instructions")
+    aspect_ratio: str = Field(default="16:9", description="Image aspect ratio")
+
+
+class GenerateImageResponse(BaseModel):
+    """Response with base64 encoded image."""
+    base64: str = Field(..., description="Base64 encoded image data")
+    model: str = Field(default="gemini-2.5-flash-image", description="Model used")
+
+
+class GenerateVideoRequest(BaseModel):
+    """Request to generate video using Kling."""
+    image_url: str = Field(..., description="URL or path to input image")
+    prompt: str = Field(..., description="Video generation prompt")
+    duration: int = Field(default=5, description="Video duration in seconds (5 or 10)")
+    cfg_scale: float = Field(default=0.5, description="Guidance scale (0-1)")
+    model: str = Field(default="kling-v1", description="Kling model version")
+
+
+class GenerateVideoResponse(BaseModel):
+    """Response with temporary video URL from Kling."""
+    url: str = Field(..., description="Temporary Kling video URL")
+    duration: int = Field(..., description="Video duration in seconds")
+    model: str = Field(..., description="Model used")
 
 
 class WorkflowStatusResponse(BaseModel):
@@ -91,51 +108,50 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/api/v1/video/generate", response_model=WorkflowStatusResponse)
-async def generate_video(request: GenerateVideoRequest):
-    """
-    Generate video from script using LangGraph workflow.
-
-    This endpoint triggers the video production workflow:
-    1. Script Agent: Analyze and break down script
-    2. Shot Agent: Generate shot descriptions
-    3. Art Director: Define visual style
-    4. Kling API: Generate images/videos
-    """
-    try:
-        # TODO: Initialize LangGraph workflow
-        # TODO: Start workflow execution with checkpointing
-        # TODO: Return workflow status
-
-        return WorkflowStatusResponse(
-            project_id=request.project_id,
-            status="running",
-            progress=0.1,
-            current_step="script_analysis",
-            result=None,
-            error=None
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/image/generate")
+@app.post("/api/generate/image", response_model=GenerateImageResponse)
 async def generate_image(request: GenerateImageRequest):
     """
-    Generate image for a specific shot using Kling API.
+    Generate image using Nano Banana (Google Gemini).
+    Returns base64 encoded image - frontend handles storage.
     """
     try:
-        # TODO: Call Kling image generation
-        # TODO: Save to storage
-        # TODO: Return image URL
+        base64_image = nano_banana_gen(
+            text=request.prompt,
+            system_prompt=request.system_prompt,
+            base64_images=[],
+            aspect_ratio=request.aspect_ratio,
+        )
 
-        return {
-            "project_id": request.project_id,
-            "image_url": "https://placeholder.com/image.png",
-            "status": "generated"
-        }
+        return GenerateImageResponse(
+            base64=base64_image,
+            model="gemini-2.5-flash-image"
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+
+
+@app.post("/api/generate/video", response_model=GenerateVideoResponse)
+async def generate_video(request: GenerateVideoRequest):
+    """
+    Generate video using Kling (image-to-video).
+    Returns temporary Kling URL - frontend handles download and storage.
+    """
+    try:
+        video_url = kling_video_gen(
+            image_path=request.image_url,
+            prompt=request.prompt,
+            duration=request.duration,
+            cfg_scale=request.cfg_scale,
+            model=request.model,
+        )
+
+        return GenerateVideoResponse(
+            url=video_url,
+            duration=request.duration,
+            model=request.model
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Video generation failed: {str(e)}")
 
 
 @app.get("/api/v1/workflow/{project_id}/status", response_model=WorkflowStatusResponse)

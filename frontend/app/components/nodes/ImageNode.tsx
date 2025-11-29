@@ -57,11 +57,7 @@ const ImageNode = ({ data, selected }: NodeProps) => {
                 )}
             </div>
 
-            <Handle
-                type="target"
-                position={Position.Left}
-                className="!h-4 !w-4 !-translate-x-2 !border-4 !border-white !bg-slate-400 transition-all hover:!bg-blue-500 hover:scale-125 shadow-sm"
-            />
+            {/* Asset nodes only have output (source) */}
             <Handle
                 type="source"
                 position={Position.Right}

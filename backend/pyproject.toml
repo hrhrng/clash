@@ -43,6 +43,8 @@ dependencies = [
     # Database
     "aiosqlite>=0.20.0",
     "httpx>=0.28.0",
+    # Cloud Storage
+    "boto3>=1.35.0",
 ]
 
 # Optional dependency groups

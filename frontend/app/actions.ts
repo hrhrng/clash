@@ -121,3 +121,16 @@ export async function sendMessage(projectId: string, content: string) {
     revalidatePath(`/projects/${projectId}`);
     return { success: true, commands };
 }
+
+export async function createAsset(data: {
+    name: string;
+    projectId: string;
+    storageKey: string;
+    url: string;
+    type: 'image' | 'video';
+    metadata: string;
+}) {
+    const db = getDb();
+    const [asset] = await db.insert(schema.assets).values(data).returning();
+    return asset;
+}

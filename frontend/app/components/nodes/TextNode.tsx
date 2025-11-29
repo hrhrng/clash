@@ -5,15 +5,7 @@ import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { TextT, X, Check } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
-import dynamic from 'next/dynamic';
-import '@uiw/react-md-editor/markdown-editor.css';
-import '@uiw/react-markdown-preview/markdown.css';
-
-// Dynamically import to avoid SSR issues
-const MDEditor = dynamic(
-    () => import('@uiw/react-md-editor'),
-    { ssr: false }
-);
+import MilkdownEditor from '../MilkdownEditor';
 
 const TextNode = ({ data, selected, id }: NodeProps) => {
     const [showModal, setShowModal] = useState(false);
@@ -23,8 +15,10 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
 
     // Sync when data changes
     useEffect(() => {
-        if (data.label) setLabel(data.label);
-        if (data.content) setContent(data.content);
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setLabel((prev: string) => (data.label && data.label !== prev ? data.label : prev));
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setContent((prev: string) => (data.content && data.content !== prev ? data.content : prev));
     }, [data.label, data.content]);
 
     const handleDoubleClick = useCallback(() => {
@@ -77,32 +71,9 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
         );
     };
 
-    // Simple markdown preview component
-    const MarkdownPreview = ({ content }: { content: string }) => {
-        return (
-            <div
-                className="prose prose-lg max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-700 prose-a:text-purple-600 prose-code:text-purple-600 prose-code:bg-purple-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded"
-                dangerouslySetInnerHTML={{
-                    __html: content
-                        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-                        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-                        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-                        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-                        .replace(/\*(.*)\*/gim, '<em>$1</em>')
-                        .replace(/\n/gim, '<br />')
-                }}
-            />
-        );
-    };
 
-    const [isEditing, setIsEditing] = useState(false);
 
-    // Reset editing state when modal closes
-    useEffect(() => {
-        if (!showModal) {
-            setIsEditing(false);
-        }
-    }, [showModal]);
+
 
     const modalContent = showModal ? (
         <AnimatePresence>
@@ -122,88 +93,41 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                    className="relative z-10 w-full max-w-5xl h-[85vh] bg-[#FDFBF7] rounded-matrix shadow-2xl overflow-hidden flex flex-col border border-[#E5E5E5]"
+                    className="relative z-10 w-full max-w-5xl h-[85vh] bg-white rounded-xl shadow-2xl overflow-hidden flex flex-col border border-gray-200"
                     onClick={(e) => e.stopPropagation()}
                 >
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-12 py-8 bg-[#FDFBF7]">
-                        <div className="flex-1">
-                            {isEditing ? (
-                                <input
-                                    className="w-full text-4xl font-bold text-[#333333] bg-transparent border-none focus:ring-0 placeholder:text-gray-300"
-                                    value={label}
-                                    onChange={handleLabelChange}
-                                    placeholder="Page Title"
-                                    autoFocus
-                                />
-                            ) : (
-                                <h2 className="text-4xl font-bold text-[#333333]">{label}</h2>
-                            )}
-                        </div>
-
-                        <div className="flex items-center gap-4 ml-8">
-                            {isEditing ? (
-                                <>
-                                    <button
-                                        onClick={() => setIsEditing(false)}
-                                        className="px-6 py-3 text-base font-medium text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            handleSave();
-                                            setIsEditing(false);
-                                        }}
-                                        className="px-8 py-3 text-base font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-xl shadow-lg shadow-blue-500/20 transition-all transform hover:scale-105"
-                                    >
-                                        Save Changes
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <button
-                                        onClick={handleCancel}
-                                        className="p-3 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
-                                    >
-                                        <X className="w-6 h-6" weight="bold" />
-                                    </button>
-                                    <button
-                                        onClick={() => setIsEditing(true)}
-                                        className="px-8 py-3 text-base font-medium text-[#333333] bg-white border border-gray-200 hover:bg-gray-50 rounded-xl shadow-sm transition-all"
-                                    >
-                                        Edit Page
-                                    </button>
-                                </>
-                            )}
+                    {/* Header with Title Input */}
+                    <div className="px-12 pt-8 pb-2 flex justify-between items-start">
+                        <input
+                            type="text"
+                            value={label}
+                            onChange={handleLabelChange}
+                            placeholder="Untitled"
+                            className="w-full text-4xl font-bold text-gray-900 placeholder:text-gray-300 bg-transparent border-none outline-none focus:outline-none"
+                            style={{
+                                fontFamily: 'var(--font-space-grotesk), var(--font-inter), sans-serif',
+                                letterSpacing: '-0.02em'
+                            }}
+                        />
+                        <div className="flex gap-2">
+                            <button
+                                onClick={handleSave}
+                                className="px-4 py-2 text-sm font-medium text-white bg-black rounded-lg hover:bg-gray-800 transition-colors"
+                            >
+                                Save
+                            </button>
+                            <button
+                                onClick={handleCancel}
+                                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                <X className="w-5 h-5" weight="bold" />
+                            </button>
                         </div>
                     </div>
 
-                    {/* Content Area */}
-                    <div className="flex-1 overflow-hidden bg-[#FDFBF7]">
-                        <div className="h-full overflow-y-auto px-12 pb-12">
-                            <div className="max-w-4xl mx-auto h-full">
-                                {isEditing ? (
-                                    <div data-color-mode="light" className="h-full min-h-[500px]">
-                                        <MDEditor
-                                            value={content}
-                                            onChange={(val) => setContent(val || '')}
-                                            height="100%"
-                                            preview="edit"
-                                            className="!bg-transparent !border-none shadow-none"
-                                            visibleDragbar={false}
-                                            textareaProps={{
-                                                placeholder: 'Start typing...'
-                                            }}
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="prose prose-xl max-w-none prose-slate prose-headings:font-bold prose-headings:text-[#333333] prose-p:text-gray-600 prose-a:text-blue-600 prose-img:rounded-2xl">
-                                        <MarkdownPreview content={content} />
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                    {/* Editor Content */}
+                    <div className="flex-1 overflow-hidden bg-white">
+                        <MilkdownEditor value={content} onChange={setContent} />
                     </div>
                 </motion.div>
             </div>
@@ -248,11 +172,7 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
                     </div>
                 </div>
 
-                <Handle
-                    type="target"
-                    position={Position.Left}
-                    className="!h-4 !w-4 !-translate-x-2 !border-4 !border-white !bg-blue-500 transition-all hover:scale-125 shadow-sm"
-                />
+                {/* Asset nodes only have output (source) */}
                 <Handle
                     type="source"
                     position={Position.Right}
@@ -263,6 +183,24 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
             {/* Render modal in portal */}
             {typeof window !== 'undefined' && modalContent && createPortal(modalContent, document.body)}
         </>
+    );
+};
+
+// Simple markdown preview component
+const MarkdownPreview = ({ content }: { content: string }) => {
+    return (
+        <div
+            className="prose prose-lg max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-700 prose-a:text-purple-600 prose-code:text-purple-600 prose-code:bg-purple-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded"
+            dangerouslySetInnerHTML={{
+                __html: content
+                    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+                    .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
+                    .replace(/\*(.*)\*/gim, '<em>$1</em>')
+                    .replace(/\n/gim, '<br />')
+            }}
+        />
     );
 };
 

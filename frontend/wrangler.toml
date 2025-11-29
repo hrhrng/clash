@@ -6,8 +6,8 @@ pages_build_output_dir = "out"
 # D1 Database binding
 [[d1_databases]]
 binding = "DB"
-database_name = "clash-flow-db"
-database_id = "c53a6c5a-6cb0-451d-8eed-202a90745ef9"
+database_name = "master-clash-frontend"
+database_id = "aab16eeb-a375-490b-ad1e-cd092cd9f4bb"
 migrations_dir = "drizzle"
 
 # Environment variables (for Pages Functions)
