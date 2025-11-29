@@ -19,13 +19,24 @@ interface ChatbotCopilotProps {
     projectId: string;
     initialMessages: Message[];
     onCommand?: (command: Command) => void;
+    width: number;
+    onWidthChange: (width: number) => void;
+    isCollapsed: boolean;
+    onCollapseChange: (collapsed: boolean) => void;
 }
 
-export default function ChatbotCopilot({ projectId, initialMessages, onCommand }: ChatbotCopilotProps) {
+export default function ChatbotCopilot({
+    projectId,
+    initialMessages,
+    onCommand,
+    width,
+    onWidthChange,
+    isCollapsed,
+    onCollapseChange
+}: ChatbotCopilotProps) {
     const [messages, setMessages] = useState<Message[]>(initialMessages);
     const [inputValue, setInputValue] = useState('');
-    const [isCollapsed, setIsCollapsed] = useState(false);
-    const [width, setWidth] = useState(384); // 默认 384px (w-96)
+    // Internal state for width and isCollapsed removed - controlled by parent
     const [isResizing, setIsResizing] = useState(false);
     const [isPending, setIsPending] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -93,7 +104,7 @@ export default function ChatbotCopilot({ projectId, initialMessages, onCommand }
             const newWidth = window.innerWidth - e.clientX;
             // 限制最小和最大宽度
             const constrainedWidth = Math.max(300, Math.min(700, newWidth));
-            setWidth(constrainedWidth);
+            onWidthChange(constrainedWidth);
         };
 
         const handleMouseUp = () => {
@@ -125,18 +136,18 @@ export default function ChatbotCopilot({ projectId, initialMessages, onCommand }
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        onClick={() => setIsCollapsed(false)}
-                        className="fixed right-4 top-4 z-50 p-2 bg-white hover:bg-gray-100/50 rounded-lg shadow-md flex items-center justify-center transition-all"
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.9 }}
+                        onClick={() => onCollapseChange(false)}
+                        className="absolute right-4 top-4 z-50 flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200/60 bg-white/80 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90"
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
                     >
-                        <CaretLeft className="w-5 h-5 text-gray-600" weight="bold" />
+                        <CaretLeft className="w-5 h-5 text-slate-600" weight="bold" />
                     </motion.button>
                 )}
             </AnimatePresence>
 
             <motion.div
-                className={`h-full bg-slate-50 flex flex-col relative ${isCollapsed ? '' : 'border-l border-slate-200'}`}
+                className={`h-full bg-white/60 backdrop-blur-xl flex flex-col relative ${isCollapsed ? '' : 'border-l border-white/20 shadow-2xl'}`}
                 style={{ width: isCollapsed ? 0 : `${width}px` }}
                 animate={{ width: isCollapsed ? 0 : width }}
                 transition={isResizing ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
@@ -153,7 +164,7 @@ export default function ChatbotCopilot({ projectId, initialMessages, onCommand }
                 {/* Collapse Button - 只在展开时显示 */}
                 {!isCollapsed && (
                     <motion.button
-                        onClick={() => setIsCollapsed(true)}
+                        onClick={() => onCollapseChange(true)}
                         className="absolute left-2 top-4 z-20 p-2 flex items-center justify-center hover:bg-gray-100/50 rounded-lg transition-all"
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.9 }}
@@ -186,8 +197,8 @@ export default function ChatbotCopilot({ projectId, initialMessages, onCommand }
                                                 <div className={`max-w-[82%] ${message.role === 'user' ? 'items-end' : ''}`}>
                                                     <motion.div
                                                         className={`px-4 py-3 rounded-matrix shadow-sm border ${message.role === 'assistant'
-                                                            ? 'bg-white border-gray-200 text-gray-900'
-                                                            : 'bg-gradient-to-br from-red-50 to-pink-50 border-red-100 text-gray-900'
+                                                            ? 'bg-white/80 backdrop-blur-sm border-white/40 text-gray-900'
+                                                            : 'bg-gradient-to-br from-red-50/90 to-pink-50/90 border-red-100/50 text-gray-900'
                                                             }`}
                                                         whileHover={{ scale: 1.02, boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}
                                                         transition={{ type: "spring", stiffness: 400, damping: 25 }}

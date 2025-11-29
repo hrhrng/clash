@@ -17,6 +17,8 @@ import { motion } from 'framer-motion';
 import {
     FilmSlate,
     TextT,
+    ChatText,
+    Article,
     Image as ImageIcon,
     Plus,
     PaintBrush,
@@ -31,6 +33,8 @@ import VideoNode from './nodes/VideoNode';
 import ImageNode from './nodes/ImageNode';
 import ImageGenNode from './nodes/ImageGenNode';
 import TextNode from './nodes/TextNode';
+import PromptNode from './nodes/PromptNode';
+import ContextNode from './nodes/ContextNode';
 import AudioNode from './nodes/AudioNode';
 import ActionBadge from './nodes/ActionBadge';
 import GroupNode from './nodes/GroupNode';
@@ -46,6 +50,8 @@ const nodeTypes = {
     image: ImageNode,
     'image-gen': ImageGenNode,
     text: TextNode,
+    prompt: PromptNode,
+    context: ContextNode,
     audio: AudioNode,
     'action-badge': ActionBadge,
     group: GroupNode,
@@ -66,6 +72,10 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     // File upload state
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [pendingNodeType, setPendingNodeType] = useState<string | null>(null);
+
+    // Sidebar state
+    const [sidebarWidth, setSidebarWidth] = useState(384);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
     // Sync local state when prop changes (e.g. after agent action revalidation)
     // Sync local state when prop changes (e.g. after agent action revalidation)
@@ -118,7 +128,8 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     );
 
     const assetTools = [
-        { id: 'text', label: 'Text', icon: TextT },
+        { id: 'prompt', label: 'Prompt', icon: ChatText },
+        { id: 'context', label: 'Context', icon: Article },
         { id: 'image', label: 'Image', icon: ImageIcon },
         { id: 'video', label: 'Video', icon: FilmSlate },
         { id: 'audio', label: 'Audio', icon: SpeakerHigh },
@@ -142,6 +153,10 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             nodeData = { ...nodeData, actionType: 'video-gen', modelName: 'Veo3' };
         } else if (type === 'text') {
             nodeData = { label: 'Text Node', ...nodeData, content: '# Hello World\nDouble click to edit.' };
+        } else if (type === 'prompt') {
+            nodeData = { label: 'Prompt', ...nodeData, content: '# Prompt\nEnter your prompt here...' };
+        } else if (type === 'context') {
+            nodeData = { label: 'Context', ...nodeData, content: '# Context\nAdd background information here...' };
         }
 
         // For group nodes, calculate z-index to be lower than existing groups (so it appears behind)
@@ -149,7 +164,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         if (nodeType === 'group') {
             const groupNodes = nodes.filter((n) => n.type === 'group');
             const minZIndex = groupNodes.reduce((min, n) => {
-                const nodeZIndex = n.style?.zIndex ?? 0;
+                const nodeZIndex = Number(n.style?.zIndex ?? 0);
                 return Math.min(min, nodeZIndex);
             }, 0);
             zIndex = minZIndex - 1;
@@ -226,7 +241,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     return (
         <ProjectProvider projectId={project.id}>
             <MediaViewerProvider>
-                <div className="flex h-screen w-full flex-col bg-white">
+                <div className="flex h-screen w-full flex-col bg-white overflow-hidden">
                     {/* Hidden File Input */}
                     <input
                         type="file"
@@ -240,7 +255,46 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
                     {/* Main Canvas Area */}
                     <div className="flex flex-1 overflow-hidden relative">
-                        <div className="flex-1 relative h-full">
+                        {/* Header Panel - Moved out of ReactFlow to prevent layout shifts */}
+                        <div id="editor-header" className="absolute top-4 left-4 z-[60] pointer-events-none">
+                            <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
+                                <Link href="/">
+                                    <motion.button
+                                        className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                    >
+                                        <span className="font-display font-medium text-2xl tracking-tight">
+                                            Clash
+                                        </span>
+                                    </motion.button>
+                                </Link>
+                                <span className="text-slate-300 text-xl font-light">/</span>
+                                <div className="grid items-center justify-items-start">
+                                    {/* Invisible span to set width */}
+                                    <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
+                                        {projectName || 'Untitled'}
+                                    </span>
+                                    <input
+                                        className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
+                                        size={1}
+                                        value={projectName}
+                                        onChange={(e) => setProjectName(e.target.value)}
+                                        onBlur={() => {
+                                            if (projectName !== project.name) {
+                                                updateProjectName(project.id, projectName);
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.currentTarget.blur();
+                                            }
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="absolute inset-0 z-0">
                             <ReactFlow
                                 nodes={nodes}
                                 edges={edges}
@@ -324,7 +378,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                             nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
                                         ) {
                                             // Pick the group with highest z-index (innermost/topmost group)
-                                            const groupZIndex = group.style?.zIndex ?? -1;
+                                            const groupZIndex = Number(group.style?.zIndex ?? -1);
                                             if (groupZIndex > maxZIndex) {
                                                 maxZIndex = groupZIndex;
                                                 newParentId = group.id;
@@ -353,7 +407,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
                                                             // For group nodes, ensure they remain editable and above parent
                                                             if (node.type === 'group') {
-                                                                const parentZIndex = parent.style?.zIndex ?? 0;
+                                                                const parentZIndex = Number(parent.style?.zIndex ?? 0);
                                                                 newNode.draggable = true;
                                                                 newNode.selectable = true;
                                                                 newNode.style = {
@@ -395,51 +449,17 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     color="#e2e8f0"
                                 />
 
-                                {/* Left Toolbar */}
-                                {/* Header Panel */}
-                                <Panel position="top-left" className="m-4 z-50">
-                                    <div className="flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
-                                        <Link href="/">
-                                            <motion.button
-                                                className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
-                                                whileHover={{ scale: 1.05 }}
-                                                whileTap={{ scale: 0.95 }}
-                                            >
-                                                <span className="font-display font-medium text-2xl tracking-tight">
-                                                    Clash
-                                                </span>
-                                            </motion.button>
-                                        </Link>
-                                        <span className="text-slate-300 text-xl font-light">/</span>
-                                        <div className="grid items-center justify-items-start">
-                                            {/* Invisible span to set width */}
-                                            <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
-                                                {projectName || 'Untitled'}
-                                            </span>
-                                            <input
-                                                className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
-                                                size={1}
-                                                value={projectName}
-                                                onChange={(e) => setProjectName(e.target.value)}
-                                                onBlur={() => {
-                                                    if (projectName !== project.name) {
-                                                        updateProjectName(project.id, projectName);
-                                                    }
-                                                }}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
-                                                        e.currentTarget.blur();
-                                                    }
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-                                </Panel>
+
 
                                 {/* Left Toolbar */}
                                 {/* Bottom Dock Tools */}
-                                <Panel position="bottom-center" className="m-4 mb-8 z-50">
-                                    <div className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1">
+                                <Panel
+                                    position="bottom-center"
+                                    className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
+                                >
+                                    <div
+                                        className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1"
+                                    >
 
                                         {/* Assets Section */}
                                         <div className="flex items-center gap-2">
@@ -488,11 +508,19 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                             </ReactFlow>
                         </div>
 
-                        <ChatbotCopilot
-                            projectId={project.id}
-                            initialMessages={project.messages}
-                            onCommand={handleCommand}
-                        />
+                        <div id="copilot-container" className="fixed right-0 top-0 bottom-0 z-40 pointer-events-none">
+                            <div className="pointer-events-auto h-full">
+                                <ChatbotCopilot
+                                    projectId={project.id}
+                                    initialMessages={project.messages}
+                                    onCommand={handleCommand}
+                                    width={sidebarWidth}
+                                    onWidthChange={setSidebarWidth}
+                                    isCollapsed={isSidebarCollapsed}
+                                    onCollapseChange={setIsSidebarCollapsed}
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
             </MediaViewerProvider>
