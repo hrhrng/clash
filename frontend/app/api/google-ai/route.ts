@@ -25,7 +25,6 @@ export async function POST(request: NextRequest) {
             messages,
             stream = false,
             temperature = 0.7,
-            maxTokens = 2048,
         } = body;
 
         // Validate input
@@ -48,10 +47,9 @@ export async function POST(request: NextRequest) {
                 model: modelInstance,
                 messages: formattedMessages,
                 temperature,
-                maxTokens,
             });
 
-            return result.toDataStreamResponse();
+            return result.toTextStreamResponse();
         }
 
         // Non-streaming response
@@ -59,7 +57,6 @@ export async function POST(request: NextRequest) {
             model: modelInstance,
             messages: formattedMessages,
             temperature,
-            maxTokens,
         });
 
         return NextResponse.json({
