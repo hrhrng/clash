@@ -1,10 +1,87 @@
-# Python-generated files
+# Dependencies
+node_modules/
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+venv/
+ENV/
 
-# Virtual environments
-.venv
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Build outputs
+.next/
+.vercel/
+out/
+dist/
+build/
+*.egg-info/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# Testing
+coverage/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Wrangler
+.wrangler/
+.dev.vars
+
+# Python
+*.py[cod]
+*$py.class
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Output files
+output/
+generated/
+assets/output/
+
+# Secrets
+*.pem
+*.key
+credentials.json
+service-account.json

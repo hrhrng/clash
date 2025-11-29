@@ -1,0 +1,22 @@
+name = "clash-flow"
+compatibility_date = "2024-11-20"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "out"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "clash-flow-db"
+database_id = "c53a6c5a-6cb0-451d-8eed-202a90745ef9"
+migrations_dir = "drizzle"
+
+# Environment variables (for Pages Functions)
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+[env.preview]
+vars = { ENVIRONMENT = "preview" }
+
+# Backend API URL binding
+[vars]
+BACKEND_API_URL = "https://master-clash-backend.your-cloudflare-account.workers.dev"

@@ -1,0 +1,37 @@
+{
+  "name": "master-clash",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered video production platform",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && make dev",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "build:frontend": "cd frontend && npm run pages:build",
+    "build:backend": "cd backend && docker build -t master-clash-backend .",
+    "build": "npm run build:frontend && npm run build:backend",
+    "deploy:frontend": "cd frontend && wrangler pages deploy",
+    "deploy:backend": "echo 'See backend/README.md for Cloudflare Container deployment'",
+    "db:create": "cd frontend && wrangler d1 create clash-flow-db",
+    "db:migrate:local": "cd frontend && wrangler d1 migrations apply clash-flow-db --local",
+    "db:migrate:prod": "cd frontend && wrangler d1 migrations apply clash-flow-db",
+    "db:seed": "cd frontend && npm run db:seed",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && make test",
+    "test": "npm run test:frontend && npm run test:backend",
+    "clean": "rm -rf frontend/node_modules backend/.venv frontend/.next frontend/.wrangler"
+  },
+  "keywords": [
+    "ai",
+    "video-production",
+    "cloudflare",
+    "next.js",
+    "langgraph"
+  ],
+  "author": "hrhrng <hrhrng@foxmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
