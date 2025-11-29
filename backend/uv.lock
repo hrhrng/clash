@@ -1501,6 +1501,7 @@ dependencies = [
     { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "rapidfuzz" },
+    { name = "requests" },
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1558,6 +1559,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "rapidfuzz", specifier = ">=3.14.3" },
+    { name = "requests", specifier = ">=2.32.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },

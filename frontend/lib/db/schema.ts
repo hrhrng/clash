@@ -26,6 +26,8 @@ export const assets = sqliteTable('asset', {
     storageKey: text('storage_key').notNull(), // R2 object key (e.g., "projects/{projectId}/assets/{uuid}.png")
     url: text('url').notNull(), // Public R2 URL
     type: text('type').notNull(), // "image" | "video" | "audio" | "text"
+    status: text('status').default('completed'), // "pending" | "processing" | "completed" | "failed"
+    taskId: text('task_id'), // External task ID (e.g., Kling task ID)
     metadata: text('metadata', { mode: 'json' }), // Additional info (dimensions, duration, etc.)
     createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(strftime('%s', 'now'))`),
 }, (asset) => ({

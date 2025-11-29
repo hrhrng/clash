@@ -4,22 +4,39 @@ import { projects, messages } from '@/lib/db/schema';
 import { eq, desc, asc } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
+import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
+import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/lib/db/schema';
-import path from 'path';
+import { getRequestContext } from '@cloudflare/next-on-pages';
 
-// Helper to get DB (local dev with better-sqlite3)
-const getDb = () => {
-    const dbPath = path.join(process.cwd(), 'local.db');
-    const sqlite = new Database(dbPath);
-    return drizzle(sqlite, { schema });
+// Helper to get DB (D1 in production/preview, local SQLite in dev)
+const getDb = async () => {
+    // 1. Try to get D1 from Cloudflare context
+    try {
+        const ctx = getRequestContext();
+        if (ctx.env.DB) {
+            return drizzleD1(ctx.env.DB, { schema });
+        }
+    } catch (e) {
+        // Ignore error if getRequestContext fails (e.g. not in Pages environment)
+    }
+
+    // 2. Fallback to local SQLite (Node.js only)
+    if (process.env.NODE_ENV === 'development') {
+        const path = await import('path');
+        const Database = (await import('better-sqlite3')).default;
+        const dbPath = path.join(process.cwd(), 'local.db');
+        const sqlite = new Database(dbPath);
+        return drizzleSqlite(sqlite, { schema });
+    }
+
+    throw new Error('No database connection available');
 }
 
 // Project Actions
 
 export async function createProject(prompt: string) {
-    const db = getDb();
+    const db = await getDb();
     const [project] = await db.insert(projects).values({
         name: prompt.length > 20 ? prompt.substring(0, 20) + '...' : prompt,
         description: prompt,
@@ -31,7 +48,7 @@ export async function createProject(prompt: string) {
 }
 
 export async function getProjects() {
-    const db = getDb();
+    const db = await getDb();
     return await db.query.projects.findMany({
         orderBy: [desc(projects.createdAt)],
         limit: 10,
@@ -39,7 +56,7 @@ export async function getProjects() {
 }
 
 export async function getProject(id: string) {
-    const db = getDb();
+    const db = await getDb();
     return await db.query.projects.findFirst({
         where: eq(projects.id, id),
         with: {
@@ -51,14 +68,14 @@ export async function getProject(id: string) {
 }
 
 export async function saveProjectState(id: string, nodes: any, edges: any) {
-    const db = getDb();
+    const db = await getDb();
     await db.update(projects)
         .set({ nodes, edges })
         .where(eq(projects.id, id));
 }
 
 export async function updateProjectName(id: string, name: string) {
-    const db = getDb();
+    const db = await getDb();
     await db.update(projects)
         .set({ name })
         .where(eq(projects.id, id));
@@ -82,7 +99,7 @@ import { HumanMessage } from '@langchain/core/messages';
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
 
 export async function sendMessage(projectId: string, content: string) {
-    const db = getDb();
+    const db = await getDb();
 
     // 1. Save user message
     await db.insert(messages).values({
@@ -128,9 +145,18 @@ export async function createAsset(data: {
     storageKey: string;
     url: string;
     type: 'image' | 'video';
+    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    taskId?: string;
     metadata: string;
 }) {
-    const db = getDb();
+    const db = await getDb();
     const [asset] = await db.insert(schema.assets).values(data).returning();
     return asset;
+}
+
+export async function getAsset(id: string) {
+    const db = await getDb();
+    return await db.query.assets.findFirst({
+        where: eq(schema.assets.id, id),
+    });
 }

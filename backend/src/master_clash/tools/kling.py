@@ -166,6 +166,8 @@ class KlingVideoGenerator:
         }
 
         # Add optional parameters
+        if tail_image_url:
+            payload["image_tail"] = self._format_image_data(tail_image_url, is_base64)
         if prompt:
             payload["prompt"] = prompt
         if negative_prompt:
@@ -199,6 +201,8 @@ class KlingVideoGenerator:
                 )
             except Exception:
                 pass
+        if not response.ok:
+            print(f"Kling API Error: {response.status_code} - {response.text}")
         response.raise_for_status()
 
         result = response.json()

@@ -36,27 +36,13 @@ export default function HomePageClient({ initialProjects }: HomePageClientProps)
     };
 
     return (
-        <div className="min-h-screen bg-white">
-            <div className="mx-auto max-w-7xl px-12 py-16">
+        <div className="min-h-screen bg-white flex items-center">
+            <div className="mx-auto w-full max-w-7xl px-12">
                 {/* Hero Section with Chat Input */}
-                <div className="mb-16 text-center">
-                    <h1 className="mb-3 text-4xl font-bold tracking-tight text-gray-900">
+                <div className="mb-24 text-center">
+                    <h1 className="mb-8 text-4xl font-bold tracking-tight text-gray-900">
                         What video are we creating today, 蛇皮?
                     </h1>
-
-                    {/* Feature Banner */}
-                    <motion.div
-                        className="mb-8 inline-flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600"
-                        whileHover={{ scale: 1.02 }}
-                    >
-                        <span className="text-lg">✨</span>
-                        <span className="font-medium">
-                            New: AI-powered voiceover and subtitle generation!
-                        </span>
-                        <button className="font-bold text-red-600 transition-colors hover:text-red-700">
-                            Try it now →
-                        </button>
-                    </motion.div>
 
                     {/* Chat Input */}
                     <div className="mx-auto max-w-3xl">
@@ -109,28 +95,6 @@ export default function HomePageClient({ initialProjects }: HomePageClientProps)
                                     </span>
                                 </motion.button>
                             </div>
-                        </div>
-
-                        {/* Quick Tags */}
-                        <div className="mt-6 flex flex-wrap justify-center gap-2">
-                            {[
-                                'Script Generation',
-                                'Video Editing',
-                                'Voiceover',
-                                'Subtitles',
-                            ].map((tag, index) => (
-                                <motion.button
-                                    key={tag}
-                                    className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${index === 0
-                                        ? 'border border-red-100 bg-red-50 text-red-600'
-                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
-                                    whileHover={{ x: 2 }}
-                                    whileTap={{ scale: 0.98 }}
-                                >
-                                    {tag}
-                                </motion.button>
-                            ))}
                         </div>
                     </div>
                 </div>
