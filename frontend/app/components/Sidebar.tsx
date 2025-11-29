@@ -6,18 +6,13 @@ import { usePathname } from 'next/navigation';
 import {
   House,
   FolderOpen,
-  VideoCamera,
-  Sparkle,
   GearSix,
   SignOut,
-  Play,
 } from '@phosphor-icons/react';
 
 const navItems = [
   { name: 'Home', href: '/', icon: House },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
-  { name: 'Video Library', href: '/library', icon: VideoCamera },
-  { name: 'AI Tools', href: '/ai-tools', icon: Sparkle },
 ];
 
 export default function Sidebar() {
@@ -26,15 +21,17 @@ export default function Sidebar() {
   return (
     <aside className="fixed top-0 left-0 flex h-screen w-72 flex-col border-r border-slate-200 bg-slate-50">
       {/* Logo Section */}
-      <div className="border-b border-slate-200 p-6">
-        <Link href="/" className="group flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-900">
-            <Play className="h-5 w-5 text-white" weight="fill" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">ClashFlow</h1>
-            <p className="text-xs font-medium text-gray-500">Video Agent</p>
-          </div>
+      <div className="border-b border-slate-200 px-4 py-6">
+        <Link href="/" className="group">
+          <motion.div
+            className="flex items-center px-4"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <span className="font-display font-medium text-3xl tracking-tight text-slate-900">
+              Clash
+            </span>
+          </motion.div>
         </Link>
       </div>
 
@@ -81,7 +78,7 @@ export default function Sidebar() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
         >
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-red-500 to-red-600 text-xs font-bold text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-cyan-400 to-blue-500 text-xs font-bold text-white">
             蛇
           </div>
           <div className="min-w-0 flex-1">

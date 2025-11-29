@@ -13,15 +13,15 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const result = await uploadVideoFromUrlToR2({
-            videoUrl,
-            projectId,
-            fileName,
-        });
+        // Skip R2 upload for now, use original URL directly
+        const result = {
+            storageKey: `local/${fileName}.mp4`,
+            url: videoUrl,
+        };
 
         return NextResponse.json(result);
     } catch (error: any) {
-        console.error('Video upload error:', error);
+        console.error('Video upload route error:', error);
         return NextResponse.json(
             { error: error.message || 'Failed to upload video' },
             { status: 500 }

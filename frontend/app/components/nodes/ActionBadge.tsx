@@ -3,6 +3,7 @@ import { Handle, Position, NodeProps, useReactFlow, useEdges } from 'reactflow';
 import { VideoCamera, Image as ImageIcon, CaretDown, Gear, ArrowsOutSimple, Sliders, ArrowUp, Play, Spinner } from '@phosphor-icons/react';
 import { useProject } from '../ProjectContext';
 import { createAsset } from '../../actions';
+import { useAutoLayout } from '../../hooks/useAutoLayout';
 
 const ActionBadge = ({ data, selected, id }: NodeProps) => {
     const [isHovered, setIsHovered] = useState(false);
@@ -12,7 +13,8 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
 
     // React Flow hooks
     const { projectId } = useProject();
-    const { getNodes, getEdges, addNodes } = useReactFlow();
+    const { getNodes, getNode, getEdges, addEdges } = useReactFlow();
+    const { addNodeWithAutoLayout } = useAutoLayout();
     const edges = useEdges();
 
     // Initialize state from data or defaults
@@ -50,7 +52,7 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
 
             // Extract prompt from connected text nodes
             let prompt = data.prompt || '';
-            const textNode = connectedNodes.find(n => n.type === 'text');
+            const textNode = connectedNodes.find(n => n?.type === 'text');
             if (textNode) {
                 prompt = textNode.data.content || prompt;
             }
@@ -64,8 +66,18 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
             const assetName = `${actionType}-${Date.now()}`;
 
             if (actionType === 'image-gen') {
-                // 1. Call Python backend to generate image (returns base64)
-                // 1. Call Python backend to generate image (returns base64)
+                // Collect connected images
+                const imageNodes = connectedNodes.filter(n => n?.type === 'image');
+                const base64Images = imageNodes.map(n => {
+                    const src = n?.data?.src;
+                    // Remove data:image/xxx;base64, prefix if present
+                    if (src && src.includes('base64,')) {
+                        return src.split('base64,')[1];
+                    }
+                    return null;
+                }).filter(Boolean);
+
+                // 1. Call Python backend to generate image (returns task_id immediately)
                 const genResponse = await fetch('/api/generate/image', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -73,6 +85,7 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                         prompt,
                         system_prompt: '',
                         aspect_ratio: '16:9',
+                        base64_images: base64Images,
                     }),
                 });
 
@@ -81,65 +94,76 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                     throw new Error(error.detail || 'Image generation failed');
                 }
 
-                const { base64 } = await genResponse.json();
+                const { task_id } = await genResponse.json();
 
-                // 2. Upload to R2 via Next.js API route
-                const uploadResponse = await fetch('/api/upload/image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        base64Data: base64,
-                        projectId,
-                        fileName: assetName,
-                        contentType: 'image/png',
-                    }),
-                });
-
-                if (!uploadResponse.ok) {
-                    throw new Error('Failed to upload image to R2');
-                }
-
-                const { storageKey, url } = await uploadResponse.json();
-
-                // 3. Create asset record in database
+                // 2. Create asset record in database with PENDING status
                 const asset = await createAsset({
                     name: assetName,
                     projectId,
-                    storageKey,
-                    url,
+                    storageKey: `pending/${task_id}`,
+                    url: '',
                     type: 'image',
+                    status: 'pending',
+                    taskId: task_id,
                     metadata: JSON.stringify({ prompt, model: 'gemini-2.5-flash-image' }),
                 });
 
-                // 4. Create new image node with the result
-                addNodes({
-                    id: asset.id,
-                    type: 'image',
-                    position: { x: (data.position?.x || 0) + 300, y: data.position?.y || 100 },
-                    data: {
-                        label: assetName,
-                        src: url,
+                // 3. Create new image node with auto-layout (collision detection + group expansion)
+                const newNode = addNodeWithAutoLayout(
+                    {
+                        id: asset.id,
+                        type: 'image',
+                        data: {
+                            label: assetName,
+                            src: '', // Empty src indicates pending/loading
+                            status: 'pending',
+                            assetId: asset.id, // Pass asset ID for polling
+                        },
                     },
+                    id // Parent node ID (the action badge)
+                );
+
+                if (!newNode) {
+                    console.error('Failed to create image node with auto-layout');
+                    return;
+                }
+
+                // 4. Connect the action node to the new image node
+                addEdges({
+                    id: `${id}-${asset.id}`,
+                    source: id,
+                    target: asset.id,
+                    type: 'default',
                 });
 
             } else if (actionType === 'video-gen') {
-                // Get connected image node for video generation
-                const imageNode = connectedNodes.find(n => n.type === 'image');
-                if (!imageNode || !imageNode.data.src) {
-                    throw new Error('Video generation requires a connected image node');
+                // Collect connected images for video generation
+                // First image is start frame, second is end frame (if available)
+                const imageNodes = connectedNodes.filter(n => n?.type === 'image');
+
+                if (imageNodes.length === 0) {
+                    throw new Error('Video generation requires at least one connected image node');
                 }
 
-                // 1. Call Python backend to generate video (returns Kling URL)
-                // 1. Call Python backend to generate video (returns Kling URL)
+                const base64Images = imageNodes.map(n => {
+                    const src = n?.data?.src;
+                    // Remove data:image/xxx;base64, prefix if present
+                    if (src && src.includes('base64,')) {
+                        return src.split('base64,')[1];
+                    }
+                    return null;
+                }).filter(Boolean);
+
+                // 1. Call Python backend to generate video (returns task_id immediately)
                 const genResponse = await fetch('/api/generate/video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        image_url: imageNode.data.src,
+                        base64_images: base64Images,
                         prompt,
                         duration: 5,
                         cfg_scale: 0.5,
-                        model: model.toLowerCase().replace(' ', '-'),
+                        model: model === 'Kling' ? 'kling-v1' : model.toLowerCase().replace(' ', '-'),
                     }),
                 });
 
@@ -148,44 +172,48 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                     throw new Error(error.detail || 'Video generation failed');
                 }
 
-                const { url: klingUrl, duration: videoDuration } = await genResponse.json();
+                const { task_id, duration: videoDuration } = await genResponse.json();
 
-                // 2. Download from Kling and upload to R2 via Next.js API route
-                const uploadResponse = await fetch('/api/upload/video', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        videoUrl: klingUrl,
-                        projectId,
-                        fileName: assetName,
-                    }),
-                });
-
-                if (!uploadResponse.ok) {
-                    throw new Error('Failed to upload video to R2');
-                }
-
-                const { storageKey, url } = await uploadResponse.json();
-
-                // 3. Create asset record in database
+                // 2. Create asset record in database with PENDING status
+                // Note: We don't have the URL yet, so we use a placeholder or empty string
+                // The backend will update this record when generation is complete
                 const asset = await createAsset({
                     name: assetName,
                     projectId,
-                    storageKey,
-                    url,
+                    storageKey: `pending/${task_id}`, // Placeholder
+                    url: '', // Placeholder
                     type: 'video',
+                    status: 'pending',
+                    taskId: task_id,
                     metadata: JSON.stringify({ prompt, duration: videoDuration, model }),
                 });
 
-                // 4. Create new video node with the result
-                addNodes({
-                    id: asset.id,
-                    type: 'video',
-                    position: { x: (data.position?.x || 0) + 300, y: data.position?.y || 100 },
-                    data: {
-                        label: assetName,
-                        src: url,
+                // 3. Create new video node with auto-layout (collision detection + group expansion)
+                const newNode = addNodeWithAutoLayout(
+                    {
+                        id: asset.id,
+                        type: 'video',
+                        data: {
+                            label: assetName,
+                            src: '', // Empty src indicates pending/loading
+                            status: 'pending',
+                            assetId: asset.id, // Pass asset ID for polling
+                        },
                     },
+                    id // Parent node ID (the action badge)
+                );
+
+                if (!newNode) {
+                    console.error('Failed to create video node with auto-layout');
+                    return;
+                }
+
+                // 5. Connect the action node to the new video node
+                addEdges({
+                    id: `${id}-${asset.id}`,
+                    source: id,
+                    target: asset.id,
+                    type: 'default',
                 });
             }
 
@@ -401,6 +429,14 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 type="target"
                 position={Position.Left}
                 className={`!h-3 !w-3 !-translate-x-1 !border-2 !border-white !bg-slate-400 transition-all hover:scale-125 shadow-sm hover:!bg-slate-600 z-10`}
+            />
+
+            {/* Output handle for generated assets (Hidden from user, used for programmatic connections) */}
+            <Handle
+                type="source"
+                position={Position.Right}
+                isConnectable={false}
+                className={`!h-3 !w-3 !translate-x-1 !border-2 !border-white !bg-slate-400 transition-all hover:scale-125 shadow-sm hover:!bg-slate-600 z-10 !opacity-0 !pointer-events-none`}
             />
 
         </div>

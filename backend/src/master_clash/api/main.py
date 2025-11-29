@@ -6,14 +6,16 @@ Frontend handles storage and database.
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from master_clash.config import get_settings
 from master_clash.tools.nano_banana import nano_banana_gen
+from master_clash.tools.nano_banana import nano_banana_gen
 from master_clash.tools.kling_video import kling_video_gen
+import requests
 
 
 # Request/Response Models
@@ -22,136 +24,133 @@ class GenerateImageRequest(BaseModel):
     prompt: str = Field(..., description="Image generation prompt")
     system_prompt: str = Field(default="", description="System-level instructions")
     aspect_ratio: str = Field(default="16:9", description="Image aspect ratio")
+    base64_images: list[str] = Field(default=[], description="List of base64 encoded reference images")
 
 
 class GenerateImageResponse(BaseModel):
     """Response with base64 encoded image."""
-    base64: str = Field(..., description="Base64 encoded image data")
+    base64: str | None = Field(default=None, description="Base64 encoded image data (if available)")
     model: str = Field(default="gemini-2.5-flash-image", description="Model used")
+    task_id: str = Field(..., description="Internal task ID for polling")
 
 
-class GenerateVideoRequest(BaseModel):
-    """Request to generate video using Kling."""
-    image_url: str = Field(..., description="URL or path to input image")
-    prompt: str = Field(..., description="Video generation prompt")
-    duration: int = Field(default=5, description="Video duration in seconds (5 or 10)")
-    cfg_scale: float = Field(default=0.5, description="Guidance scale (0-1)")
-    model: str = Field(default="kling-v1", description="Kling model version")
+def process_image_generation(internal_task_id: str, params: dict):
+    """Background task to run image generation and update frontend."""
+    try:
+        print(f"Starting background image generation for task {internal_task_id}")
+        # Call generation (blocking)
+        base64_image = nano_banana_gen(**params)
+        
+        # Convert to data URI if not already
+        if not base64_image.startswith("data:"):
+            image_url = f"data:image/png;base64,{base64_image}"
+        else:
+            image_url = base64_image
 
-
-class GenerateVideoResponse(BaseModel):
-    """Response with temporary video URL from Kling."""
-    url: str = Field(..., description="Temporary Kling video URL")
-    duration: int = Field(..., description="Video duration in seconds")
-    model: str = Field(..., description="Model used")
-
-
-class WorkflowStatusResponse(BaseModel):
-    """Workflow execution status."""
-    project_id: str
-    status: str  # "running", "completed", "failed"
-    progress: float  # 0.0 to 1.0
-    current_step: str
-    result: dict[str, Any] | None = None
-    error: str | None = None
-
-
-# Lifespan context manager
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
-    settings = get_settings()
-    app.state.settings = settings
-
-    # TODO: Initialize database connection pool
-    # TODO: Initialize LangGraph checkpointer
-
-    yield
-
-    # Shutdown
-    # TODO: Close database connections
-    pass
-
-
-# Create FastAPI app
-app = FastAPI(
-    title="Master Clash API",
-    description="AI-powered video production backend",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {
-        "name": "Master Clash API",
-        "version": "0.1.0",
-        "status": "running"
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for container orchestration."""
-    return {"status": "healthy"}
+        # Success
+        print(f"Image generation successful")
+        update_asset_status(internal_task_id, "completed", url=image_url)
+    except Exception as e:
+        # Failure
+        import traceback
+        traceback.print_exc()
+        print(f"Image generation failed: {e}")
+        update_asset_status(internal_task_id, "failed", error=str(e))
 
 
 @app.post("/api/generate/image", response_model=GenerateImageResponse)
-async def generate_image(request: GenerateImageRequest):
+async def generate_image(request: GenerateImageRequest, background_tasks: BackgroundTasks):
     """
     Generate image using Nano Banana (Google Gemini).
-    Returns base64 encoded image - frontend handles storage.
+    Returns task_id immediately - frontend polls for status.
     """
-    try:
-        base64_image = nano_banana_gen(
-            text=request.prompt,
-            system_prompt=request.system_prompt,
-            base64_images=[],
-            aspect_ratio=request.aspect_ratio,
-        )
+    import uuid
+    internal_task_id = str(uuid.uuid4())
 
-        return GenerateImageResponse(
-            base64=base64_image,
-            model="gemini-2.5-flash-image"
-        )
+    # Start background task
+    background_tasks.add_task(
+        process_image_generation,
+        internal_task_id,
+        {
+            "text": request.prompt,
+            "system_prompt": request.system_prompt,
+            "base64_images": request.base64_images,
+            "aspect_ratio": request.aspect_ratio,
+        }
+    )
+
+    return GenerateImageResponse(
+        base64=None,
+        model="gemini-2.5-flash-image",
+        task_id=internal_task_id
+    )
+
+
+def update_asset_status(task_id: str, status: str, url: str = None, error: str = None):
+    """Call frontend API to update asset status."""
+    # TODO: Make frontend URL configurable via env vars
+    frontend_url = "http://localhost:3000/api/internal/assets/update"
+    try:
+        print(f"Updating asset {task_id} to {status}")
+        response = requests.post(frontend_url, json={
+            "taskId": task_id,
+            "status": status,
+            "url": url,
+            "metadata": {"error": error} if error else {}
+        })
+        if not response.ok:
+            print(f"Failed to update asset status: {response.status_code} - {response.text}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+        print(f"Failed to update asset status: {e}")
+
+
+def process_video_generation(internal_task_id: str, params: dict):
+    """Background task to run video generation and update frontend."""
+    try:
+        print(f"Starting background video generation for task {internal_task_id}")
+        # Call generation (blocking)
+        video_url = kling_video_gen(**params)
+        
+        # Success
+        print(f"Video generation successful: {video_url}")
+        update_asset_status(internal_task_id, "completed", url=video_url)
+    except Exception as e:
+        # Failure
+        import traceback
+        traceback.print_exc()
+        print(f"Video generation failed: {e}")
+        update_asset_status(internal_task_id, "failed", error=str(e))
 
 
 @app.post("/api/generate/video", response_model=GenerateVideoResponse)
-async def generate_video(request: GenerateVideoRequest):
+async def generate_video(request: GenerateVideoRequest, background_tasks: BackgroundTasks):
     """
     Generate video using Kling (image-to-video).
-    Returns temporary Kling URL - frontend handles download and storage.
+    Returns task_id immediately - frontend polls for status.
     """
-    try:
-        video_url = kling_video_gen(
-            image_path=request.image_url,
-            prompt=request.prompt,
-            duration=request.duration,
-            cfg_scale=request.cfg_scale,
-            model=request.model,
-        )
+    import uuid
+    internal_task_id = str(uuid.uuid4())
+    
+    # Start background task
+    background_tasks.add_task(
+        process_video_generation, 
+        internal_task_id, 
+        {
+            "image_path": request.image_url,
+            "base64_images": request.base64_images,
+            "prompt": request.prompt,
+            "duration": request.duration,
+            "cfg_scale": request.cfg_scale,
+            "model": request.model
+        }
+    )
 
-        return GenerateVideoResponse(
-            url=video_url,
-            duration=request.duration,
-            model=request.model
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Video generation failed: {str(e)}")
+    return GenerateVideoResponse(
+        url=None,
+        duration=request.duration,
+        model=request.model,
+        task_id=internal_task_id
+    )
 
 
 @app.get("/api/v1/workflow/{project_id}/status", response_model=WorkflowStatusResponse)
@@ -190,6 +189,8 @@ async def cancel_workflow(project_id: str):
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler."""
+    import traceback
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
         content={"error": str(exc), "type": type(exc).__name__}

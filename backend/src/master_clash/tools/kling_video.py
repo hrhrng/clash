@@ -127,8 +127,9 @@ def _save_video_to_file(
 
 
 def kling_video_gen(
-    image_path: str,
-    prompt: str,
+    image_path: str | None = None,
+    base64_images: list[str] | None = None,
+    prompt: str = "",
     duration: int = 5,
     cfg_scale: float = 0.5,
     negative_prompt: str | None = None,
@@ -139,7 +140,8 @@ def kling_video_gen(
     Generate video from image using Kling AI.
 
     Args:
-        image_path: Path to input image file
+        image_path: Path to input image file (deprecated)
+        base64_images: List of base64 images. First is start frame, second is end frame.
         prompt: Text description for video generation
         duration: Video length in seconds (5 or 10)
         cfg_scale: Classifier Free Guidance scale (0-1, default 0.5)
@@ -150,21 +152,35 @@ def kling_video_gen(
     Returns:
         URL of generated video
     """
-    # Convert image to base64
-    base64_image = image_to_base64(image_path)
+    # Determine start and end images
+    start_image = None
+    tail_image = None
+
+    if base64_images and len(base64_images) > 0:
+        start_image = base64_images[0]
+        if len(base64_images) > 1:
+            tail_image = base64_images[1]
+    elif image_path:
+        # Fallback to image_path if no base64_images provided
+        start_image = image_to_base64(image_path)
+    
+    if not start_image:
+        raise ValueError("No input image provided (base64_images or image_path required)")
 
     # Initialize generator
     generator = KlingVideoGenerator()
 
     # Generate video
     result = generator.generate_video(
-        image_url=base64_image,
+        image_url=start_image,
+        tail_image_url=tail_image,
         prompt=prompt,
         duration=duration,
         cfg_scale=cfg_scale,
         negative_prompt=negative_prompt,
         is_base64=True,
         model=model,
+        max_wait_time=600,  # Increase timeout to 10 minutes
     )
 
     # Extract video URL from result
