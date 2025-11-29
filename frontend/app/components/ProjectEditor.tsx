@@ -77,6 +77,13 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     const [sidebarWidth, setSidebarWidth] = useState(384);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
+    // Selection state
+    const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+
+    const onSelectionChange = useCallback(({ nodes }: { nodes: Node[] }) => {
+        setSelectedNodes(nodes);
+    }, []);
+
     // Sync local state when prop changes (e.g. after agent action revalidation)
     // Sync local state when prop changes (e.g. after agent action revalidation)
     useEffect(() => {
@@ -301,6 +308,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                 onNodesChange={onNodesChange}
                                 onEdgesChange={onEdgesChange}
                                 onConnect={onConnect}
+                                onSelectionChange={onSelectionChange}
                                 onNodeDragStop={(event, node) => {
                                     // Helper to recursively calculate absolute position of a node
                                     const getAbsolutePosition = (n: Node): { x: number; y: number } => {
@@ -518,6 +526,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     onWidthChange={setSidebarWidth}
                                     isCollapsed={isSidebarCollapsed}
                                     onCollapseChange={setIsSidebarCollapsed}
+                                    selectedNodes={selectedNodes}
                                 />
                             </div>
                         </div>
