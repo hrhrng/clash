@@ -1,193 +1,234 @@
-# AI Video Production System
+# Master Clash
 
-An AI-powered video production pipeline that generates complete video storyboards from simple story ideas.
+AI-powered video production platform with multi-agent orchestration.
 
-## Philosophy
+## Architecture
 
-This project follows a **modular architecture**:
-- **Core modules** (`.py` files) provide reusable functions and data structures
-- **Workflow logic** stays in **Jupyter Notebooks** for interactive development
-- Command-line tools are optional for simple use cases
+This is a full-stack application deployed on Cloudflare:
 
-## Features
+- **Frontend**: Next.js application deployed to Cloudflare Pages
+  - Handles project CRUD operations
+  - User interface and interactions
+  - Uses Cloudflare D1 (SQLite) database
 
-- **Automated Script Generation**: Convert story ideas into structured production scripts
-- **Asset Generation**: Automatically create character and location reference images
-- **Shot Generation**: Generate individual shot keyframes with consistent visual style
-- **Multiple AI Backends**: Support for Google Gemini and Nano Banana Pro
-- **Modular Design**: Functions are separated from workflow logic
+- **Backend**: Python FastAPI service deployed to Cloudflare Container
+  - AI agent orchestration (LangGraph)
+  - Video production workflow
+  - Image/video generation (Kling API)
+  - Connects to shared D1 database
+
+## Tech Stack
+
+### Frontend
+- Next.js 16 (React 19)
+- Cloudflare Pages + Workers
+- Cloudflare D1 (Database)
+- Drizzle ORM
+- NextAuth.js (Authentication)
+- TailwindCSS 4
+- React Flow (Workflow visualization)
+
+### Backend
+- Python 3.12+
+- FastAPI
+- LangGraph (Multi-agent orchestration)
+- LangChain
+- Google Gemini / OpenAI
+- Kling AI (Image/Video generation)
 
 ## Project Structure
 
 ```
 master-clash/
-├── config.py              # Configuration and environment variables
-├── models.py              # Pydantic data models (Script, Shot, Character, etc.)
-├── utils.py               # Utility functions (file I/O, conversions)
-├── image_generation.py    # Image generation backends (Gemini, Nano Banana)
-├── agents.py              # Core agent functions (generate_script, generate_assets, etc.)
-├── main.py                # Optional CLI tool
-├── example_workflow.py    # Example workflow (copy to notebook)
-├── video.ipynb            # Main interactive workflow (Jupyter)
-├── production_assets/     # Generated images
-└── output/                # Script JSON and other outputs
+├── frontend/              # Next.js application
+│   ├── app/              # Next.js App Router
+│   ├── components/       # React components
+│   ├── lib/             # Utilities and database
+│   ├── drizzle/         # Database migrations
+│   └── wrangler.toml    # Cloudflare config
+├── backend/              # Python FastAPI service
+│   ├── src/
+│   │   └── master_clash/
+│   │       ├── agents/  # LangGraph agents
+│   │       ├── tools/   # AI tools (Kling, etc)
+│   │       ├── workflow/# Video production workflow
+│   │       └── database/# Database adapters
+│   ├── Dockerfile       # Container config
+│   └── pyproject.toml   # Python dependencies
+└── .github/
+    └── workflows/        # CI/CD pipelines
 ```
 
-## Installation
+## Quick Start
 
-1. Clone the repository
-2. Install dependencies:
+### Prerequisites
+
+- Node.js 20+
+- Python 3.12+
+- Cloudflare account
+- Wrangler CLI (`npm install -g wrangler`)
+
+### Initial Setup
 
 ```bash
-pip install -r requirements.txt
-# or using uv
-uv pip install -r requirements.txt
+# Clone and setup
+git clone <your-repo>
+cd master-clash
+
+# Run setup script
+npm run setup
 ```
 
-3. Set up environment variables:
+This will:
+1. Install frontend dependencies
+2. Setup Python virtual environment
+3. Create environment files
+4. Initialize D1 database
+5. Run database migrations
 
-Create a `.env` file with:
+### Development
+
+#### Frontend Development
+
+```bash
+cd frontend
+npm run dev
+# Open http://localhost:3000
+```
+
+#### Backend Development
+
+```bash
+cd backend
+make dev
+# Open http://localhost:8000
+```
+
+### Environment Variables
+
+#### Frontend (.env)
 
 ```env
-GOOGLE_API_KEY=your_google_api_key
-GEMINI_API_KEY=your_gemini_api_key
-NANO_BANANA_API_KEY=your_nano_banana_api_key
+# Database
+DATABASE_URL="your-d1-database-url"
+
+# Auth
+AUTH_SECRET="your-secret-key"
+AUTH_GOOGLE_ID="your-google-client-id"
+AUTH_GOOGLE_SECRET="your-google-client-secret"
+
+# Backend API
+NEXT_PUBLIC_BACKEND_URL="http://localhost:8000"
+
+# AI
+GOOGLE_AI_API_KEY="your-gemini-api-key"
 ```
 
-## Usage
+#### Backend (.env)
 
-### Primary Method: Jupyter Notebook (Recommended)
+```env
+# AI Services
+GOOGLE_API_KEY="your-gemini-api-key"
+OPENAI_API_KEY="your-openai-api-key"
+KLING_ACCESS_KEY="your-kling-access-key"
+KLING_SECRET_KEY="your-kling-secret-key"
 
-Open `video.ipynb` and run cells interactively:
+# Database (Cloudflare D1)
+D1_DATABASE_URL="your-d1-database-url"
+D1_ACCOUNT_ID="your-cloudflare-account-id"
+D1_DATABASE_ID="your-d1-database-id"
+D1_API_TOKEN="your-cloudflare-api-token"
 
-```python
-# Import core functions
-from config import print_config
-from agents import generate_script, generate_assets, generate_shots
-
-# Step 1: Generate script
-script = generate_script("A sci-fi short about a robot finding a flower")
-
-# Step 2: Generate assets (you can modify script before this step)
-assets = generate_assets(script)
-
-# Step 3: Generate shots (full control over which shots to generate)
-shots = generate_shots(script, assets)
+# LangSmith (Optional)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY="your-langsmith-api-key"
+LANGCHAIN_PROJECT="master-clash"
 ```
 
-This gives you:
-- Full control over each step
-- Ability to inspect and modify data between steps
-- Interactive debugging and experimentation
-- Access to all generated data in memory
+## Deployment
 
-### Alternative: Example Workflow Script
-
-See `example_workflow.py` for a complete example that can be:
-- Run directly as a Python script
-- Copied into a new Jupyter notebook
-- Modified for your specific needs
+### Frontend to Cloudflare Pages
 
 ```bash
-python example_workflow.py
+cd frontend
+npm run pages:build
+wrangler pages deploy
 ```
 
-### Optional: Command Line Tool
-
-For quick script generation only:
+### Backend to Cloudflare Container
 
 ```bash
-# Generate script only
-python main.py "Your story idea"
-
-# Generate script and save JSON
-python main.py "Your story idea" --output-json output/script.json
-
-# Run full production (script + assets + shots)
-python main.py "Your story idea" --full
+cd backend
+docker build -t master-clash-backend .
+# Push to Cloudflare Container Registry
+# (See Cloudflare documentation)
 ```
 
-Note: CLI is provided for convenience, but notebook workflow is recommended for full control.
+### Using GitHub Actions (Recommended)
 
-## Module Documentation
+Push to `main` branch to trigger automatic deployment:
 
-### config.py
-Contains all configuration settings:
-- Model names (TEXT_MODEL_NAME, IMAGE_MODEL_NAME)
-- API keys and URLs
-- Directory paths
+```bash
+git add .
+git commit -m "Deploy updates"
+git push origin main
+```
 
-### models.py
-Pydantic data models:
-- `ScriptOutput`: Complete script structure
-- `Shot`: Individual shot specifications
-- `Character`, `Location`: Asset definitions
-- `Camera`, `VisualSpec`, `Performance`, `Audio`: Shot components
+## Database Management
 
-### utils.py
-Utility functions:
-- `save_binary_file()`: Save binary data
-- `image_to_base64()`: Convert images to base64
-- `load_input_data()`: Load text/CSV input
-- `ensure_directory()`: Create directories
-- `create_reference_image_dict()`: Create image reference data
+### Create D1 Database
 
-### image_generation.py
-Image generation functions:
-- `generate_image()`: Gemini-based image generation
-- `generate_image_nano()`: Nano Banana Pro generation
-- `create_nano_banana_task()`: Create async tasks
-- `query_nano_banana_task()`: Poll for results
+```bash
+cd frontend
+wrangler d1 create clash-flow-db
+```
 
-### agents.py
-Production pipeline agents (these are the main functions you'll use):
-- `generate_script(user_input)`: Convert story ideas to structured scripts
-- `generate_assets(script)`: Generate character/location reference images
-- `generate_shots(script, asset_images)`: Generate shot keyframes
-- `print_production_summary(script, assets, shots)`: Print summary
-- `SCRIPT_GENERATION_SYSTEM_PROMPT`: System prompt for script generation
+### Run Migrations
 
-## Output
+```bash
+cd frontend
+wrangler d1 migrations apply clash-flow-db --local  # Local
+wrangler d1 migrations apply clash-flow-db          # Production
+```
 
-The system generates:
+### Execute SQL
 
-1. **Script JSON**: Structured screenplay with shots, characters, locations
-2. **Character References**: Multi-angle character design sheets
-3. **Location References**: Environment concept art
-4. **Shot Keyframes**: Individual frames for each shot in the sequence
+```bash
+wrangler d1 execute clash-flow-db --command="SELECT * FROM users"
+```
 
-All images are saved to `production_assets/` directory.
+## API Documentation
 
-## Example Workflow
+### Backend API
 
-1. **Input**: "A boy finds a mysterious robot in the rain"
+Once the backend is running, visit:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 
-2. **Script Generation**:
-   - Story outline
-   - Character definitions (Boy, Robot)
-   - Location definitions (Rainy Street, Alley)
-   - Shot breakdown (15-20 shots)
+## Testing
 
-3. **Asset Generation**:
-   - `char_1_reference.png` (Boy character sheet)
-   - `char_2_reference.png` (Robot character sheet)
-   - `loc_1_reference.png` (Rainy street environment)
+### Frontend Tests
 
-4. **Shot Generation**:
-   - `shot_001.png` through `shot_015.png`
-   - Each maintains visual consistency using asset references
+```bash
+cd frontend
+npm test
+```
 
-## Requirements
+### Backend Tests
 
-- Python 3.8+
-- Google Gemini API access
-- Nano Banana Pro API access (optional)
-- Dependencies: see `pyproject.toml`
+```bash
+cd backend
+make test
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please ensure code follows the modular structure.

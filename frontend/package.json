@@ -1,0 +1,61 @@
+{
+  "name": "clash-flow",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "pages:build": "npx @cloudflare/next-on-pages",
+    "start": "next start",
+    "lint": "eslint",
+    "format": "prettier --write .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,md}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^2.0.43",
+    "@auth/drizzle-adapter": "^1.7.4",
+    "@google/generative-ai": "^0.24.1",
+    "@langchain/core": "^1.0.6",
+    "@langchain/google-genai": "^1.0.3",
+    "@langchain/langgraph": "^1.0.2",
+    "@phosphor-icons/react": "^2.1.10",
+    "@uiw/react-md-editor": "^4.0.8",
+    "ai": "^5.0.98",
+    "better-sqlite3": "^12.4.6",
+    "drizzle-orm": "^0.36.4",
+    "framer-motion": "^12.23.24",
+    "next": "^15.0.3",
+    "next-auth": "^5.0.0-beta.30",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "reactflow": "^11.11.4",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.28.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "prettier": "^3.6.2",
+    "prettier-plugin-tailwindcss": "^0.7.1",
+    "tailwindcss": "^4",
+    "tsx": "^4.20.6",
+    "typescript": "^5",
+    "wrangler": "^3.91.0"
+  }
+}
