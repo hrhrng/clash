@@ -22,6 +22,10 @@ export function getNodeSize(type: string): { width: number; height: number } {
             return { width: 400, height: 400 };
         case 'text':
             return { width: 300, height: 200 };
+        case 'prompt':
+            return { width: 300, height: 150 };
+        case 'context':
+            return { width: 300, height: 400 };
         case 'image':
         case 'video':
             return { width: 300, height: 300 };
