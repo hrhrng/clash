@@ -41,6 +41,7 @@ import GroupNode from './nodes/GroupNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
 import { findNonOverlappingPosition } from '../utils/layout';
+import { getLayoutedElements } from '../utils/elkLayout';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -241,23 +242,101 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
             let targetPos = { x: 100, y: 100 };
 
+            // If no parentId, try to place to the right of the entire graph
+            if (!parentId && nds.length > 0) {
+                let maxX = -Infinity;
+                let minY = Infinity;
+                let maxY = -Infinity;
+
+                nds.forEach(n => {
+                    // Only consider root nodes or top-level groups
+                    if (!n.parentId) {
+                        const x = n.position.x + (n.width || Number(n.style?.width) || 300);
+                        if (x > maxX) maxX = x;
+                        if (n.position.y < minY) minY = n.position.y;
+                        if (n.position.y > maxY) maxY = n.position.y;
+                    }
+                });
+
+                if (maxX > -Infinity) {
+                    // Place to the right of the right-most node
+                    targetPos = {
+                        x: maxX + 100,
+                        y: (minY + maxY) / 2 || 100 // Center vertically relative to graph content
+                    };
+                }
+            }
+
+            console.log('[addNode] Calculating position for', nodeType, 'parentId:', parentId, 'upstream:', extraData.upstreamNodeId, 'layout:', extraData.layoutDirection);
+
             if (parentId) {
                 // Start at top-left of group
                 targetPos = { x: 50, y: 50 };
 
-                // Optional: Try to stack if there are existing children, but let collision detector handle the fine tuning
-                const children = nds.filter(n => n.parentId === parentId);
-                if (children.length > 0) {
-                    const bottomChild = children.reduce((prev, current) => {
-                        return (prev.position.y > current.position.y) ? prev : current;
-                    });
-                    const childHeight = bottomChild.height || Number(bottomChild.style?.height) || 200;
-                    targetPos = {
-                        x: 50,
-                        y: bottomChild.position.y + childHeight + 50
-                    };
+                // 1. Upstream Node Placement (Highest Priority)
+                if (extraData.upstreamNodeId) {
+                    const upstreamNode = nds.find(n => n.id === extraData.upstreamNodeId);
+                    if (upstreamNode && upstreamNode.parentId === parentId) {
+                        const upstreamWidth = upstreamNode.width || Number(upstreamNode.style?.width) || 300;
+                        const upstreamHeight = upstreamNode.height || Number(upstreamNode.style?.height) || 300;
+
+                        // Center vertically relative to upstream node
+                        const centerY = upstreamNode.position.y + (upstreamHeight / 2);
+                        const newNodeY = centerY - (defaultHeight / 2);
+
+                        targetPos = {
+                            x: upstreamNode.position.x + upstreamWidth + 80, // Increased spacing slightly
+                            y: newNodeY
+                        };
+                    }
+                }
+                // 2. Layout Direction (Right vs Bottom)
+                else {
+                    const children = nds.filter(n => n.parentId === parentId);
+                    if (children.length > 0) {
+                        if (extraData.layoutDirection === 'right') {
+                            // Find the right-most child
+                            const rightMostChild = children.reduce((prev, current) => {
+                                return (prev.position.x > current.position.x) ? prev : current;
+                            });
+                            const childWidth = rightMostChild.width || Number(rightMostChild.style?.width) || defaultWidth;
+
+                            targetPos = {
+                                x: rightMostChild.position.x + childWidth + 50,
+                                y: rightMostChild.position.y // Keep same Y level
+                            };
+                        } else {
+                            // Default: Vertical stacking (bottom)
+                            const bottomChild = children.reduce((prev, current) => {
+                                return (prev.position.y > current.position.y) ? prev : current;
+                            });
+                            const childHeight = bottomChild.height || Number(bottomChild.style?.height) || 200;
+                            targetPos = {
+                                x: 50,
+                                y: bottomChild.position.y + childHeight + 50
+                            };
+                        }
+                    }
+                }
+            } else {
+                // Root level placement (e.g. new groups)
+                if (nodeType === 'group') {
+                    // Find the right-most group to avoid overlap
+                    const existingGroups = nds.filter(n => n.type === 'group');
+                    if (existingGroups.length > 0) {
+                        const rightMostGroup = existingGroups.reduce((prev, current) => {
+                            return (prev.position.x > current.position.x) ? prev : current;
+                        });
+                        const groupWidth = rightMostGroup.width || Number(rightMostGroup.style?.width) || 400;
+                        targetPos = {
+                            x: rightMostGroup.position.x + groupWidth + 100, // Add extra spacing for groups
+                            y: rightMostGroup.position.y
+                        };
+                    }
                 }
             }
+
+            console.log('[addNode] Initial targetPos:', targetPos);
 
             const position = findNonOverlappingPosition(
                 targetPos,
@@ -267,6 +346,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                 nds,
                 parentId
             );
+            console.log('[addNode] Final position:', position);
 
             const newNode: Node = {
                 id: newNodeId,
@@ -432,7 +512,22 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         }
     }, [nodes.length, setNodes]);
 
+    const onLayout = useCallback(async () => {
+        const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
+            nodes,
+            edges,
+            { 'elk.direction': 'RIGHT' }
+        );
 
+        setNodes([...layoutedNodes]);
+        setEdges([...layoutedEdges]);
+    }, [nodes, edges, setNodes, setEdges]);
+
+
+    const findNodeIdByName = useCallback((name: string): string | undefined => {
+        const node = nodes.find(n => n.data?.label === name);
+        return node?.id;
+    }, [nodes]);
 
     return (
         <ProjectProvider projectId={project.id}>
@@ -654,7 +749,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     position="bottom-center"
                                     className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
                                     style={{
-                                        transform: `translate(calc(-50% - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
+                                        transform: `translate(calc(-50 % - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
                                     }}
                                 >
                                     <div
@@ -701,6 +796,17 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                                     </motion.button>
                                                 );
                                             })}
+
+                                            {/* Auto Layout Button */}
+                                            <motion.button
+                                                onClick={onLayout}
+                                                className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
+                                                whileHover={{ scale: 1.1, y: -2 }}
+                                                whileTap={{ scale: 0.95 }}
+                                                title="Auto Layout"
+                                            >
+                                                <MagicWand className="h-5 w-5" weight="regular" />
+                                            </motion.button>
                                         </div>
 
                                     </div>
@@ -721,6 +827,9 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     selectedNodes={selectedNodes}
                                     onAddNode={addNode}
                                     onAddEdge={onConnect}
+                                    findNodeIdByName={findNodeIdByName}
+                                    nodes={nodes}
+                                    edges={edges}
                                 />
                             </div>
                         </div>

@@ -34,6 +34,9 @@ interface ChatbotCopilotProps {
     selectedNodes?: Node[];
     onAddNode?: (type: string, extraData?: any) => string;
     onAddEdge?: (params: Edge | Connection) => void;
+    findNodeIdByName?: (name: string) => string | undefined;
+    nodes?: Node[];
+    edges?: Edge[];
 }
 
 export default function ChatbotCopilot({
@@ -46,7 +49,10 @@ export default function ChatbotCopilot({
     onCollapseChange,
     selectedNodes = [],
     onAddNode,
-    onAddEdge
+    onAddEdge,
+    findNodeIdByName,
+    nodes = [],
+    edges = []
 }: ChatbotCopilotProps) {
     const { messages, status, sendMessage } = useChat({
         initialMessages: initialMessages.map(m => ({
@@ -261,6 +267,40 @@ export default function ChatbotCopilot({
             }
         }]);
     };
+    const [pendingResume, setPendingResume] = useState<{
+        userInput: string;
+        resume: boolean;
+        inputData: any;
+        expectedNodeId?: string; // Wait for this node to exist
+    } | null>(null);
+
+    // Effect to handle pending resume after nodes update
+    useEffect(() => {
+        if (pendingResume) {
+            // If we are waiting for a specific node, check if it exists
+            if (pendingResume.expectedNodeId) {
+                const nodeExists = nodes.some(n => n.id === pendingResume.expectedNodeId);
+                if (!nodeExists) {
+                    // Not ready yet, keep waiting
+                    return;
+                }
+                console.log(`[ChatbotCopilot] Node ${pendingResume.expectedNodeId} found. Resuming stream...`);
+            } else if (nodes.length === 0) {
+                // If not waiting for specific node, but nodes are empty (unlikely in this flow but good safety), wait
+                return;
+            }
+
+            console.log('[ChatbotCopilot] Resuming stream...', pendingResume);
+            runStreamScenario(pendingResume.userInput, pendingResume.resume, pendingResume.inputData);
+            setPendingResume(null);
+        }
+    }, [nodes, pendingResume]);
+
+    // Helper to resolve name to ID using current nodes
+    const resolveName = (name: string) => {
+        const node = nodes.find(n => n.data?.label === name);
+        return node?.id;
+    };
 
     const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
         // 1. Add User Message (only if not resuming)
@@ -274,7 +314,39 @@ export default function ChatbotCopilot({
             }]);
         }
 
-        // 2. Connect to SSE Stream
+        // 2. Sync Context to Backend
+        console.log('[ChatbotCopilot] Syncing context to backend...');
+        try {
+            // Use relative URL to go through proxy
+            const contextUrl = `/api/v1/project/${projectId}/context`;
+            await fetch(contextUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    nodes: nodes.map(n => ({
+                        id: n.id,
+                        type: n.type,
+                        data: n.data,
+                        position: n.position,
+                        parentId: n.parentId
+                    })),
+                    edges: edges.map(e => ({
+                        id: e.id,
+                        source: e.source,
+                        target: e.target,
+                        type: e.type
+                    }))
+                }),
+            });
+            console.log('[ChatbotCopilot] Context synced successfully.');
+        } catch (error) {
+            console.error('[ChatbotCopilot] Failed to sync context:', error);
+        }
+
+        // 3. Connect to SSE Stream
+        console.log('[ChatbotCopilot] Connecting to SSE stream...');
         const url = new URL(`/api/v1/stream/${projectId}`, window.location.origin);
         url.searchParams.append('thread_id', threadId);
         if (resume) {
@@ -285,6 +357,20 @@ export default function ChatbotCopilot({
         }
 
         const eventSource = new EventSource(url.toString());
+
+        eventSource.onopen = () => {
+            console.log('[ChatbotCopilot] SSE Stream connected successfully.');
+        };
+
+        eventSource.onerror = (e) => {
+            console.error('[ChatbotCopilot] SSE Stream error:', e);
+            // Check readyState
+            if (eventSource.readyState === EventSource.CLOSED) {
+                console.log('[ChatbotCopilot] SSE Stream closed.');
+            } else if (eventSource.readyState === EventSource.CONNECTING) {
+                console.log('[ChatbotCopilot] SSE Stream reconnecting...');
+            }
+        };
 
         eventSource.addEventListener('plan', (e: any) => {
             const data = JSON.parse(e.data);
@@ -427,6 +513,29 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received node_proposal:', data);
             const proposalId = Date.now().toString() + '-proposal';
 
+            // Resolve Names to IDs using local helper
+            let resolvedGroupId = data.groupId;
+            if (data.groupName) {
+                const foundId = resolveName(data.groupName);
+                if (foundId) {
+                    resolvedGroupId = foundId;
+                    console.log(`[ChatbotCopilot] Resolved groupName "${data.groupName}" to ID "${foundId}"`);
+                } else {
+                    console.warn(`[ChatbotCopilot] Could not resolve groupName "${data.groupName}"`);
+                }
+            }
+
+            let resolvedUpstreamNodeId = data.upstreamNodeId;
+            if (data.upstreamNodeName) {
+                const foundId = resolveName(data.upstreamNodeName);
+                if (foundId) {
+                    resolvedUpstreamNodeId = foundId;
+                    console.log(`[ChatbotCopilot] Resolved upstreamNodeName "${data.upstreamNodeName}" to ID "${foundId}"`);
+                } else {
+                    console.warn(`[ChatbotCopilot] Could not resolve upstreamNodeName "${data.upstreamNodeName}"`);
+                }
+            }
+
             setDisplayItems(prev => [...prev, {
                 type: 'node_proposal',
                 id: proposalId,
@@ -440,23 +549,28 @@ export default function ChatbotCopilot({
                         // Add the node
                         let createdNodeId: string | undefined;
                         if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: data.groupId });
+                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId });
                         }
                         // Add edge if upstream provided
-                        if (data.upstreamNodeId && onAddEdge && createdNodeId) {
+                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
                             // Create edge from upstream to new node
                             setTimeout(() => {
                                 onAddEdge({
-                                    id: `e-${data.upstreamNodeId}-${createdNodeId}`,
-                                    source: data.upstreamNodeId,
+                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                    source: resolvedUpstreamNodeId,
                                     target: createdNodeId,
                                     type: 'default'
                                 } as any);
                             }, 100);
                         }
 
-                        // Resume stream with accept
-                        runStreamScenario('', true, { action: 'accept', proposalId: data.id, createdNodeId, groupId: data.groupId });
+                        // Resume stream AFTER state update
+                        setPendingResume({
+                            userInput: '',
+                            resume: true,
+                            inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                            expectedNodeId: createdNodeId // Wait for this node!
+                        });
                     },
                     onReject: () => {
                         setDisplayItems(p => p.filter(i => i.id !== proposalId));
@@ -468,31 +582,34 @@ export default function ChatbotCopilot({
                         // Add node with autoRun flag
                         let createdNodeId: string | undefined;
                         if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: data.groupId, autoRun: true, upstreamNodeId: data.upstreamNodeId });
+                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId, autoRun: true, upstreamNodeId: resolvedUpstreamNodeId });
                         }
 
                         // Add edge if upstream provided
-                        if (data.upstreamNodeId && onAddEdge && createdNodeId) {
+                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                            // Create edge from upstream to new node
                             setTimeout(() => {
                                 onAddEdge({
-                                    id: `e-${data.upstreamNodeId}-${createdNodeId}`,
-                                    source: data.upstreamNodeId,
+                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                    source: resolvedUpstreamNodeId,
                                     target: createdNodeId,
                                     type: 'default'
                                 } as any);
                             }, 100);
                         }
 
-                        // Resume stream with accept_and_run
-                        runStreamScenario('', true, { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: data.groupId });
+                        // Resume stream AFTER state update
+                        setPendingResume({
+                            userInput: '',
+                            resume: true,
+                            inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                            expectedNodeId: createdNodeId // Wait for this node!
+                        });
                     }
                 }
             }]);
-        });
-
-        eventSource.onerror = () => {
             eventSource.close();
-        };
+        });
     };
 
     const handleSubmit = async (e?: React.FormEvent) => {
