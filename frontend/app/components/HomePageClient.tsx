@@ -41,7 +41,7 @@ export default function HomePageClient({ initialProjects }: HomePageClientProps)
                 {/* Hero Section with Chat Input */}
                 <div className="mb-24 text-center">
                     <h1 className="mb-8 text-4xl font-bold tracking-tight text-gray-900">
-                        What video are we creating today, 蛇皮?
+                        Hey! Let's make some CLASH?
                     </h1>
 
                     {/* Chat Input */}

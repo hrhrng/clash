@@ -10,7 +10,10 @@ import { UserMessage } from './copilot/UserMessage';
 import { AgentCard } from './copilot/AgentCard';
 import { ToolCall } from './copilot/ToolCall';
 import { ApprovalCard } from './copilot/ApprovalCard';
-import { Node } from 'reactflow';
+import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
+import { ThinkingProcess } from './copilot/ThinkingProcess';
+import { TodoList, TodoItem } from './copilot/TodoList';
+import { Node, Edge, Connection } from 'reactflow';
 
 interface Message {
     id: string;
@@ -29,6 +32,8 @@ interface ChatbotCopilotProps {
     isCollapsed: boolean;
     onCollapseChange: (collapsed: boolean) => void;
     selectedNodes?: Node[];
+    onAddNode?: (type: string, extraData?: any) => string;
+    onAddEdge?: (params: Edge | Connection) => void;
 }
 
 export default function ChatbotCopilot({
@@ -39,7 +44,9 @@ export default function ChatbotCopilot({
     onWidthChange,
     isCollapsed,
     onCollapseChange,
-    selectedNodes = []
+    selectedNodes = [],
+    onAddNode,
+    onAddEdge
 }: ChatbotCopilotProps) {
     const { messages, status, sendMessage } = useChat({
         initialMessages: initialMessages.map(m => ({
@@ -55,6 +62,7 @@ export default function ChatbotCopilot({
     const [threadId, setThreadId] = useState<string>(() => Date.now().toString());
     const [sessionHistory, setSessionHistory] = useState<string[]>([]);
     const [showHistory, setShowHistory] = useState(false);
+    const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
 
     const handleNewSession = () => {
         const newThreadId = Date.now().toString();
@@ -113,25 +121,30 @@ export default function ChatbotCopilot({
             id: userMsgId
         }]);
 
-        // 2. Director Agent (Orchestrator) - Thinking
-        const directorId = Date.now().toString() + '-director';
+        // 2. Director Agent (Orchestrator) - Thinking & Planning
+        const thinkingId = Date.now().toString() + '-thinking';
         setDisplayItems(prev => [...prev, {
-            type: 'agent_card',
-            id: directorId,
-            props: {
-                agentName: 'Director',
-                status: 'working',
-                persona: 'director',
-                children: <div className="text-xs text-slate-500">Analyzing request and planning workflow...</div>
-            }
+            type: 'thinking',
+            id: thinkingId,
+            content: "Analyzing the user's request to generate a video script.\n\n1.  **Identify Intent**: The user wants to create a video about a specific topic.\n2.  **Determine Workflow**: I need to delegate the scriptwriting task to the ScriptWriter agent.\n3.  **Action Plan**: Call the ScriptWriter to draft the content, then review it before proceeding to video generation."
+        }]);
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        const directorMsgId = Date.now().toString() + '-director';
+        setDisplayItems(prev => [...prev, {
+            type: 'message',
+            role: 'assistant',
+            content: "Analyzing request and planning workflow...",
+            id: directorMsgId
         }]);
 
         await new Promise(resolve => setTimeout(resolve, 1500));
 
         // 3. Director Delegates to ScriptWriter
         setDisplayItems(prev => prev.map(item =>
-            item.id === directorId
-                ? { ...item, props: { ...item.props, status: 'done', children: <div className="text-xs text-slate-500">Plan approved. Delegating to <span className="text-indigo-600 font-medium">@ScriptWriter</span>.</div> } }
+            item.id === directorMsgId
+                ? { ...item, content: <span>Plan approved. Delegating to <span className="text-indigo-600 font-medium">@ScriptWriter</span>.</span> }
                 : item
         ));
 
@@ -144,7 +157,11 @@ export default function ChatbotCopilot({
                 agentName: 'ScriptWriter',
                 status: 'working',
                 persona: 'scriptwriter',
-                children: <div className="text-xs text-slate-500">Drafting script based on topic: "{userInput}"...</div>
+                logs: [{
+                    id: 'log-1',
+                    type: 'text',
+                    content: <div className="text-xs text-slate-500">Drafting script based on topic: "{userInput}"...</div>
+                }]
             }
         }]);
 
@@ -152,28 +169,60 @@ export default function ChatbotCopilot({
 
         // 5. ScriptWriter Generates Script (Tool Call)
         const toolCallId = Date.now().toString() + '-tool';
-        setDisplayItems(prev => [...prev, {
-            type: 'tool_call',
-            id: toolCallId,
-            props: {
-                toolName: 'generate_video_script',
-                args: { topic: userInput },
-                status: 'pending'
-            }
-        }]);
+        setDisplayItems(prev => prev.map(item =>
+            item.id === scriptWriterId
+                ? {
+                    ...item,
+                    props: {
+                        ...item.props,
+                        logs: [...(item.props.logs || []), {
+                            id: toolCallId,
+                            type: 'tool_call',
+                            toolProps: {
+                                toolName: 'generate_video_script',
+                                args: { topic: userInput },
+                                status: 'pending',
+                                indent: false // No need for extra indent inside card
+                            }
+                        }]
+                    }
+                }
+                : item
+        ));
 
         await new Promise(resolve => setTimeout(resolve, 1500));
 
         // 6. Complete Tool Call & ScriptWriter
         setDisplayItems(prev => prev.map(item =>
-            item.id === toolCallId
-                ? { ...item, props: { ...item.props, status: 'success', result: "Script generated: 'In a world where AI...'" } }
+            item.id === scriptWriterId
+                ? {
+                    ...item,
+                    props: {
+                        ...item.props,
+                        logs: item.props.logs?.map((log: any) =>
+                            log.id === toolCallId
+                                ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: "Script generated: 'In a world where AI...'" } }
+                                : log
+                        )
+                    }
+                }
                 : item
         ));
 
         setDisplayItems(prev => prev.map(item =>
             item.id === scriptWriterId
-                ? { ...item, props: { ...item.props, status: 'done', children: <div className="text-xs text-slate-500">Script completed. Sending back to Director.</div> } }
+                ? {
+                    ...item,
+                    props: {
+                        ...item.props,
+                        status: 'done',
+                        logs: [...(item.props.logs || []), {
+                            id: Date.now().toString() + '-done',
+                            type: 'text',
+                            content: <div className="text-xs text-slate-500">Script completed. Sending back to Director.</div>
+                        }]
+                    }
+                }
                 : item
         ));
 
@@ -213,6 +262,239 @@ export default function ChatbotCopilot({
         }]);
     };
 
+    const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
+        // 1. Add User Message (only if not resuming)
+        if (!resume) {
+            const userMsgId = Date.now().toString();
+            setDisplayItems(prev => [...prev, {
+                type: 'message',
+                role: 'user',
+                content: userInput,
+                id: userMsgId
+            }]);
+        }
+
+        // 2. Connect to SSE Stream
+        const url = new URL(`/api/v1/stream/${projectId}`, window.location.origin);
+        url.searchParams.append('thread_id', threadId);
+        if (resume) {
+            url.searchParams.append('resume', 'true');
+        }
+        if (inputData) {
+            url.searchParams.append('user_input', JSON.stringify(inputData));
+        }
+
+        const eventSource = new EventSource(url.toString());
+
+        eventSource.addEventListener('plan', (e: any) => {
+            const data = JSON.parse(e.data);
+            setTodoItems(data.items);
+        });
+
+        eventSource.addEventListener('thinking', (e: any) => {
+            const data = JSON.parse(e.data);
+            setDisplayItems(prev => {
+                const lastItem = prev[prev.length - 1];
+                if (lastItem && lastItem.type === 'thinking') {
+                    // Update existing thinking block
+                    return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
+                } else {
+                    // Create new thinking block
+                    return [...prev, {
+                        type: 'thinking',
+                        id: Date.now().toString() + '-thinking',
+                        content: data.content
+                    }];
+                }
+            });
+        });
+
+        eventSource.addEventListener('text', (e: any) => {
+            const data = JSON.parse(e.data);
+            if (data.agent === 'Director') {
+                setDisplayItems(prev => [...prev, {
+                    type: 'message',
+                    role: 'assistant',
+                    content: data.content,
+                    id: Date.now().toString()
+                }]);
+            }
+        });
+
+        eventSource.addEventListener('tool_start', (e: any) => {
+            const data = JSON.parse(e.data);
+            const agentId = Date.now().toString() + '-' + data.agent.toLowerCase();
+
+            // For now, we assume tool calls come from sub-agents like ScriptWriter
+            // So we create/update the agent card
+            setDisplayItems(prev => {
+                // Check if agent card already exists (simplified logic)
+                const existingAgentIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
+
+                if (existingAgentIndex !== -1) {
+                    // Update existing agent card with new tool call log
+                    return prev.map((item, index) => {
+                        if (index === existingAgentIndex) {
+                            return {
+                                ...item,
+                                props: {
+                                    ...item.props,
+                                    logs: [...(item.props.logs || []), {
+                                        id: data.id,
+                                        type: 'tool_call',
+                                        toolProps: {
+                                            toolName: data.tool_name,
+                                            args: data.args,
+                                            status: 'pending',
+                                            indent: false
+                                        }
+                                    }]
+                                }
+                            };
+                        }
+                        return item;
+                    });
+                } else {
+                    // Create new agent card with tool call log
+                    return [...prev, {
+                        type: 'agent_card',
+                        id: agentId,
+                        props: {
+                            agentName: data.agent,
+                            status: 'working',
+                            persona: data.agent.toLowerCase(),
+                            logs: [{
+                                id: data.id,
+                                type: 'tool_call',
+                                toolProps: {
+                                    toolName: data.tool_name,
+                                    args: data.args,
+                                    status: 'pending',
+                                    indent: false
+                                }
+                            }]
+                        }
+                    }];
+                }
+            });
+        });
+
+        eventSource.addEventListener('tool_end', (e: any) => {
+            const data = JSON.parse(e.data);
+            setDisplayItems(prev => prev.map(item => {
+                if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                    return {
+                        ...item,
+                        props: {
+                            ...item.props,
+                            logs: item.props.logs?.map((log: any) =>
+                                log.id === data.id
+                                    ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
+                                    : log
+                            )
+                        }
+                    };
+                }
+                return item;
+            }));
+        });
+
+        eventSource.addEventListener('human_interrupt', (e: any) => {
+            const data = JSON.parse(e.data);
+            const approvalId = Date.now().toString() + '-approval';
+            setDisplayItems(prev => [...prev, {
+                type: 'approval_card',
+                id: approvalId,
+                props: {
+                    message: data.message,
+                    onApprove: () => {
+                        setDisplayItems(p => p.filter(i => i.id !== approvalId));
+                        // Resume the stream with approval data
+                        runStreamScenario('', true, { action: 'approve' });
+                    },
+                    onReject: () => {
+                        setDisplayItems(p => p.filter(i => i.id !== approvalId));
+                        // Resume the stream with reject data
+                        runStreamScenario('', true, { action: 'reject' });
+                    }
+                }
+            }]);
+            eventSource.close();
+        });
+
+        eventSource.addEventListener('node_proposal', (e: any) => {
+            const data = JSON.parse(e.data);
+            console.log('[ChatbotCopilot] Received node_proposal:', data);
+            const proposalId = Date.now().toString() + '-proposal';
+
+            setDisplayItems(prev => [...prev, {
+                type: 'node_proposal',
+                id: proposalId,
+                props: {
+                    proposal: {
+                        id: proposalId,
+                        ...data
+                    },
+                    onAccept: () => {
+                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                        // Add the node
+                        let createdNodeId: string | undefined;
+                        if (onAddNode) {
+                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: data.groupId });
+                        }
+                        // Add edge if upstream provided
+                        if (data.upstreamNodeId && onAddEdge && createdNodeId) {
+                            // Create edge from upstream to new node
+                            setTimeout(() => {
+                                onAddEdge({
+                                    id: `e-${data.upstreamNodeId}-${createdNodeId}`,
+                                    source: data.upstreamNodeId,
+                                    target: createdNodeId,
+                                    type: 'default'
+                                } as any);
+                            }, 100);
+                        }
+
+                        // Resume stream with accept
+                        runStreamScenario('', true, { action: 'accept', proposalId: data.id, createdNodeId, groupId: data.groupId });
+                    },
+                    onReject: () => {
+                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                        // Resume stream with reject
+                        runStreamScenario('', true, { action: 'reject', proposalId: data.id });
+                    },
+                    onAcceptAndRun: () => {
+                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                        // Add node with autoRun flag
+                        let createdNodeId: string | undefined;
+                        if (onAddNode) {
+                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: data.groupId, autoRun: true, upstreamNodeId: data.upstreamNodeId });
+                        }
+
+                        // Add edge if upstream provided
+                        if (data.upstreamNodeId && onAddEdge && createdNodeId) {
+                            setTimeout(() => {
+                                onAddEdge({
+                                    id: `e-${data.upstreamNodeId}-${createdNodeId}`,
+                                    source: data.upstreamNodeId,
+                                    target: createdNodeId,
+                                    type: 'default'
+                                } as any);
+                            }, 100);
+                        }
+
+                        // Resume stream with accept_and_run
+                        runStreamScenario('', true, { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: data.groupId });
+                    }
+                }
+            }]);
+        });
+
+        eventSource.onerror = () => {
+            eventSource.close();
+        };
+    };
+
     const handleSubmit = async (e?: React.FormEvent) => {
         e?.preventDefault();
         if (!input.trim()) return;
@@ -221,7 +503,7 @@ export default function ChatbotCopilot({
         setInput('');
 
         if (isDemoMode) {
-            await runDemoScenario(value);
+            await runStreamScenario(value);
         } else {
             await sendMessage({
                 role: 'user',
@@ -415,7 +697,7 @@ export default function ChatbotCopilot({
                                                 item.role === 'user' ? (
                                                     <UserMessage content={item.content} />
                                                 ) : (
-                                                    <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm text-sm">
+                                                    <div className="text-base text-slate-800 leading-relaxed px-1 font-display font-medium">
                                                         {item.content}
                                                     </div>
                                                 )
@@ -428,6 +710,12 @@ export default function ChatbotCopilot({
                                             )}
                                             {item.type === 'approval_card' && (
                                                 <ApprovalCard {...item.props} />
+                                            )}
+                                            {item.type === 'thinking' && (
+                                                <ThinkingProcess content={item.content} />
+                                            )}
+                                            {item.type === 'node_proposal' && (
+                                                <NodeProposalCard {...item.props} />
                                             )}
                                         </motion.div>
                                     ))}
@@ -460,10 +748,10 @@ export default function ChatbotCopilot({
                                         exit={{ opacity: 0, y: 10, scale: 0.9 }}
                                         className="absolute bottom-[88px] right-6 z-20 pointer-events-auto"
                                     >
-                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-full border border-slate-200 shadow-sm flex items-center gap-2">
+                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
                                             <div className="flex -space-x-2">
                                                 {selectedNodes.filter(n => n.data?.src).slice(0, 3).map((node) => (
-                                                    <div key={node.id} className="w-6 h-6 rounded-full ring-2 ring-white overflow-hidden bg-slate-100">
+                                                    <div key={node.id} className="w-6 h-6 rounded-md ring-2 ring-white overflow-hidden bg-slate-100">
                                                         <img src={node.data.src} alt="" className="w-full h-full object-cover" />
                                                     </div>
                                                 ))}
@@ -476,6 +764,13 @@ export default function ChatbotCopilot({
                                             )}
                                         </div>
                                     </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {/* Todo List Overlay */}
+                            <AnimatePresence>
+                                {todoItems.length > 0 && (
+                                    <TodoList items={todoItems} />
                                 )}
                             </AnimatePresence>
 

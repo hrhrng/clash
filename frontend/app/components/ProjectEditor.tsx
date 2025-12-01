@@ -40,6 +40,7 @@ import ActionBadge from './nodes/ActionBadge';
 import GroupNode from './nodes/GroupNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
+import { findNonOverlappingPosition } from '../utils/layout';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -57,9 +58,25 @@ const nodeTypes = {
     group: GroupNode,
 };
 
+const sanitizeNodes = (nodes: Node[]): Node[] => {
+    const nodeIds = new Set(nodes.map(n => n.id));
+    return nodes.map(node => {
+        if (node.parentId && !nodeIds.has(node.parentId)) {
+            console.warn(`[Sanitize] Removing invalid parentId ${node.parentId} from node ${node.id}`);
+            const { parentId, ...rest } = node;
+            // Reset to absolute position (or keep relative as absolute)
+            // Since parent is missing, we can't calculate true absolute, so we just keep the values
+            return { ...rest, parentId: undefined, extent: undefined };
+        }
+        return node;
+    });
+};
+
 export default function ProjectEditor({ project }: ProjectEditorProps) {
     // Initialize with data from DB, or defaults if empty
-    const initialNodes = (project.nodes as unknown as Node[]) || [];
+    // Sanitize initial nodes to prevent crashes if DB has bad data
+    const rawInitialNodes = (project.nodes as unknown as Node[]) || [];
+    const initialNodes = sanitizeNodes(rawInitialNodes);
     const initialEdges = (project.edges as unknown as Edge[]) || [];
 
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -86,9 +103,27 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
     // Sync local state when prop changes (e.g. after agent action revalidation)
     // Sync local state when prop changes (e.g. after agent action revalidation)
+    // Sync local state when prop changes (e.g. after agent action revalidation)
+    // Sync local state when prop changes (e.g. after agent action revalidation)
+    // Sync local state when prop changes (e.g. after agent action revalidation)
     useEffect(() => {
         if (project.nodes) {
-            setNodes((project.nodes as unknown as Node[]) || []);
+            const newNodes = (project.nodes as unknown as Node[]) || [];
+
+            setNodes((currentNodes) => {
+                const newIds = new Set(newNodes.map(n => n.id));
+
+                // Find nodes that are in current state but missing from new props
+                // We assume these are locally created nodes that haven't been saved/synced yet
+                const localNodesToKeep = currentNodes.filter(n => !newIds.has(n.id));
+
+                if (localNodesToKeep.length > 0) {
+                    // Merge: Use new nodes from props, but append local nodes that would otherwise be lost
+                    return [...sanitizeNodes(newNodes), ...localNodesToKeep];
+                }
+
+                return sanitizeNodes(newNodes);
+            });
         }
         if (project.edges) {
             setEdges((project.edges as unknown as Edge[]) || []);
@@ -144,7 +179,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
     ];
 
     const actionTools = [
-        { id: 'action-badge-image', label: 'Gen Image', icon: MagicWand },
+        { id: 'action-badge-image', label: 'Gen Image', icon: ImageIcon },
         { id: 'action-badge-video', label: 'Gen Video', icon: FilmSlate },
     ];
 
@@ -152,18 +187,18 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         let nodeType = type;
         let nodeData: any = { label: `New ${type}`, ...extraData };
 
-        if (type === 'action-badge-image') {
+        if (type === 'action-badge-image' || type === 'image-gen') {
             nodeType = 'action-badge';
-            nodeData = { ...nodeData, actionType: 'image-gen', modelName: 'Nano Banana' };
-        } else if (type === 'action-badge-video') {
+            nodeData = { actionType: 'image-gen', modelName: 'Nano Banana', ...nodeData };
+        } else if (type === 'action-badge-video' || type === 'video-gen') {
             nodeType = 'action-badge';
-            nodeData = { ...nodeData, actionType: 'video-gen', modelName: 'Veo3' };
+            nodeData = { actionType: 'video-gen', modelName: 'Veo3', ...nodeData };
         } else if (type === 'text') {
-            nodeData = { label: 'Text Node', ...nodeData, content: '# Hello World\nDouble click to edit.' };
+            nodeData = { label: 'Text Node', content: '# Hello World\nDouble click to edit.', ...nodeData };
         } else if (type === 'prompt') {
-            nodeData = { label: 'Prompt', ...nodeData, content: '# Prompt\nEnter your prompt here...' };
+            nodeData = { label: 'Prompt', content: '# Prompt\nEnter your prompt here...', ...nodeData };
         } else if (type === 'context') {
-            nodeData = { label: 'Context', ...nodeData, content: '# Context\nAdd background information here...' };
+            nodeData = { label: 'Context', content: '# Context\nAdd background information here...', ...nodeData };
         }
 
         // For group nodes, calculate z-index to be lower than existing groups (so it appears behind)
@@ -177,18 +212,149 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             zIndex = minZIndex - 1;
         }
 
-        const newNode: Node = {
-            id: `${nodes.length + 1}-${Date.now()}`,
-            type: nodeType,
-            data: nodeData,
-            position: {
-                x: Math.random() * 500,
-                y: Math.random() * 500,
-            },
-            style: nodeType === 'group' ? { width: 400, height: 400, zIndex } : undefined,
-            className: nodeType === 'group' ? 'group-node' : '',
-        };
-        setNodes((nds) => nds.concat(newNode));
+        const newNodeId = `${nodes.length + 1}-${Date.now()}`;
+
+        setNodes((nds) => {
+            // 1. Determine Dimensions FIRST
+            let defaultWidth = 300;
+            let defaultHeight = 300;
+
+            if (nodeType === 'group') {
+                defaultWidth = 400;
+                defaultHeight = 400;
+            } else if (nodeType === 'text') {
+                defaultWidth = 300;
+                defaultHeight = 400;
+            } else if (nodeType === 'action-badge') {
+                defaultWidth = 200;
+                defaultHeight = 60;
+            }
+
+            // 2. Determine Position with Collision Detection
+            let parentId = extraData.parentId;
+
+            // Validate parentId exists
+            if (parentId && !nds.find(n => n.id === parentId)) {
+                console.warn(`Parent node ${parentId} not found, creating node at root level`);
+                parentId = undefined;
+            }
+
+            let targetPos = { x: 100, y: 100 };
+
+            if (parentId) {
+                // Start at top-left of group
+                targetPos = { x: 50, y: 50 };
+
+                // Optional: Try to stack if there are existing children, but let collision detector handle the fine tuning
+                const children = nds.filter(n => n.parentId === parentId);
+                if (children.length > 0) {
+                    const bottomChild = children.reduce((prev, current) => {
+                        return (prev.position.y > current.position.y) ? prev : current;
+                    });
+                    const childHeight = bottomChild.height || Number(bottomChild.style?.height) || 200;
+                    targetPos = {
+                        x: 50,
+                        y: bottomChild.position.y + childHeight + 50
+                    };
+                }
+            }
+
+            const position = findNonOverlappingPosition(
+                targetPos,
+                defaultWidth,
+                defaultHeight,
+                nds,
+                nds,
+                parentId
+            );
+
+            const newNode: Node = {
+                id: newNodeId,
+                type: nodeType,
+                data: nodeData,
+                position,
+                parentId,
+                width: defaultWidth,
+                height: defaultHeight,
+                extent: undefined,
+                style: nodeType === 'group' ? { width: defaultWidth, height: defaultHeight, zIndex } : { width: defaultWidth, height: defaultHeight },
+                className: nodeType === 'group' ? 'group-node' : '',
+            };
+
+            // 3. Update nodes (Resize Group if needed)
+            return nds.map(node => {
+                if (node.id === parentId) {
+                    const parent = node;
+
+                    const getNodeDim = (n: Node, prop: 'width' | 'height', fallback: number) => {
+                        const styleVal = n.style?.[prop];
+                        if (typeof styleVal === 'number') return styleVal;
+                        if (typeof styleVal === 'string') return parseFloat(styleVal) || fallback;
+                        return n[prop] || fallback;
+                    };
+
+                    // Calculate bounding box of ALL children + new node
+                    const children = nds.filter(n => n.parentId === parentId);
+                    const allChildren = [...children, newNode];
+
+                    let maxRight = 0;
+                    let maxBottom = 0;
+                    const padding = 60; // Increased padding
+
+                    allChildren.forEach(child => {
+                        const isNew = child.id === newNode.id;
+                        let defaultW = 300;
+                        let defaultH = 300;
+
+                        // Determine type for dimension lookup
+                        const type = isNew ? nodeType : child.type;
+
+                        if (type === 'text') {
+                            defaultW = 300;
+                            defaultH = 400;
+                        } else if (type === 'action-badge') {
+                            defaultW = 200;
+                            defaultH = 60;
+                        }
+
+                        const w = getNodeDim(child, 'width', defaultW);
+                        const h = getNodeDim(child, 'height', defaultH);
+
+                        const right = child.position.x + w;
+                        const bottom = child.position.y + h;
+
+                        if (right > maxRight) maxRight = right;
+                        if (bottom > maxBottom) maxBottom = bottom;
+                    });
+
+                    const requiredWidth = maxRight + padding;
+                    const requiredHeight = maxBottom + padding;
+
+                    const currentWidth = getNodeDim(parent, 'width', 400);
+                    const currentHeight = getNodeDim(parent, 'height', 400);
+
+                    if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
+                        const newWidth = Math.max(currentWidth, requiredWidth);
+                        const newHeight = Math.max(currentHeight, requiredHeight);
+
+                        console.log('[addNode] Resizing group', parent.id, 'from', currentWidth, 'x', currentHeight, 'to', newWidth, 'x', newHeight);
+
+                        return {
+                            ...parent,
+                            width: newWidth,
+                            height: newHeight,
+                            style: {
+                                ...parent.style,
+                                width: newWidth,
+                                height: newHeight,
+                            }
+                        };
+                    }
+                }
+                return node;
+            }).concat(newNode);
+        });
+        return newNodeId;
     };
 
     const handleToolClick = (type: string) => {
@@ -231,9 +397,32 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         console.log('Executing command:', command);
         switch (command.type) {
             case 'ADD_NODE':
+                let { type, data, ...rest } = command.payload;
+
+                // Map legacy/agent types to action-badge
+                if (type === 'image-gen') {
+                    type = 'action-badge';
+                    data = { actionType: 'image-gen', modelName: 'Gemini 1.5 Flash', ...data };
+                    if (!rest.width) rest.width = 200;
+                    if (!rest.height) rest.height = 60;
+                } else if (type === 'video-gen') {
+                    type = 'action-badge';
+                    data = { actionType: 'video-gen', modelName: 'Veo3', ...data };
+                    if (!rest.width) rest.width = 200;
+                    if (!rest.height) rest.height = 60;
+                }
+
+                // Validate parentId if present
+                if (rest.parentId && !nodes.find(n => n.id === rest.parentId)) {
+                    console.warn(`Parent node ${rest.parentId} not found in command, creating node at root level`);
+                    delete rest.parentId;
+                }
+
                 const newNode: Node = {
                     id: `${nodes.length + 1}-${Date.now()}`,
-                    ...command.payload,
+                    type,
+                    data,
+                    ...rest,
                 };
                 setNodes((nds) => nds.concat(newNode));
                 break;
@@ -464,6 +653,9 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                 <Panel
                                     position="bottom-center"
                                     className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
+                                    style={{
+                                        transform: `translate(calc(-50% - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
+                                    }}
                                 >
                                     <div
                                         className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1"
@@ -500,12 +692,12 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                                     <motion.button
                                                         key={tool.id}
                                                         onClick={() => handleToolClick(tool.id)}
-                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 transition-all hover:bg-blue-100 hover:text-blue-700 border border-blue-200/50"
+                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
                                                         whileHover={{ scale: 1.1, y: -2 }}
                                                         whileTap={{ scale: 0.95 }}
                                                         title={tool.label}
                                                     >
-                                                        <Icon className="h-5 w-5" weight="fill" />
+                                                        <Icon className="h-5 w-5" weight="regular" />
                                                     </motion.button>
                                                 );
                                             })}
@@ -527,6 +719,8 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     isCollapsed={isSidebarCollapsed}
                                     onCollapseChange={setIsSidebarCollapsed}
                                     selectedNodes={selectedNodes}
+                                    onAddNode={addNode}
+                                    onAddEdge={onConnect}
                                 />
                             </div>
                         </div>

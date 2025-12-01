@@ -2,8 +2,16 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-
 import { CaretDown, CaretRight, CheckCircle, CircleNotch, PauseCircle, Robot, Crown, FilmStrip, Scroll, MagicWand, VideoCamera } from '@phosphor-icons/react';
+
+import { ToolCall, ToolCallProps } from './ToolCall';
+
+export interface AgentLog {
+    id: string;
+    type: 'text' | 'tool_call';
+    content?: React.ReactNode;
+    toolProps?: ToolCallProps;
+}
 
 interface AgentCardProps {
     agentName: string;
@@ -11,9 +19,10 @@ interface AgentCardProps {
     children?: React.ReactNode;
     isExpanded?: boolean;
     persona?: 'director' | 'scriptwriter' | 'videoproducer' | 'default';
+    logs?: AgentLog[];
 }
 
-export function AgentCard({ agentName, status, children, isExpanded: initialExpanded = true, persona = 'default' }: AgentCardProps) {
+export function AgentCard({ agentName, status, children, isExpanded: initialExpanded = true, persona = 'default', logs = [] }: AgentCardProps) {
     const [isExpanded, setIsExpanded] = useState(initialExpanded);
 
     const statusConfig = {
@@ -26,13 +35,14 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
     const personaConfig = {
         director: {
             icon: Crown,
-            color: 'text-white',
-            bg: 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 shadow-lg shadow-purple-500/30',
-            isPremium: true
+            color: 'text-slate-700',
+            bg: 'bg-slate-100',
+            isPremium: true,
+            ring: 'ring-1 ring-slate-200'
         },
-        scriptwriter: { icon: Scroll, color: 'text-amber-600', bg: 'bg-amber-100' },
-        videoproducer: { icon: VideoCamera, color: 'text-rose-600', bg: 'bg-rose-100' },
-        default: { icon: Robot, color: 'text-slate-600', bg: 'bg-slate-100' },
+        scriptwriter: { icon: Scroll, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
+        videoproducer: { icon: VideoCamera, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
+        default: { icon: Robot, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
     };
 
     const config = statusConfig[status];
@@ -42,13 +52,13 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
     const isPremium = (pConfig as any).isPremium;
 
     return (
-        <div className={`w-full rounded-xl bg-white shadow-sm overflow-hidden my-2 transition-all ${isPremium ? 'border border-purple-200 ring-1 ring-purple-100' : 'border border-slate-200'}`}>
+        <div className={`w-full rounded-xl bg-white shadow-sm overflow-hidden my-2 transition-all ${isPremium ? 'border border-slate-200 shadow-md' : 'border border-slate-200'}`}>
             <div
                 className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${pConfig.bg} relative flex items-center justify-center`}>
+                    <div className={`p-2 rounded-lg ${pConfig.bg} ${(pConfig as any).ring || ''} relative flex items-center justify-center`}>
                         <PersonaIcon
                             className={`w-4 h-4 ${pConfig.color}`}
                             weight="duotone"
@@ -60,10 +70,10 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                         )}
                     </div>
                     <div className="flex flex-col">
-                        <span className={`font-semibold text-sm ${isPremium ? 'text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600' : 'text-slate-700'}`}>
+                        <span className={`font-semibold text-sm ${isPremium ? 'text-slate-800' : 'text-slate-700'}`}>
                             {agentName}
                         </span>
-                        {isPremium && <span className="text-[10px] text-purple-400 font-medium uppercase tracking-wider leading-none">Orchestrator</span>}
+                        {isPremium && <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider leading-none">Orchestrator</span>}
                     </div>
                 </div>
 
@@ -89,6 +99,14 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                     >
                         <div className="px-4 pb-4 pt-0 border-t border-slate-100">
                             <div className="pt-3 space-y-2">
+                                {logs && logs.map(log => (
+                                    <div key={log.id} className="mb-2 last:mb-0">
+                                        {log.type === 'text' && log.content}
+                                        {log.type === 'tool_call' && log.toolProps && (
+                                            <ToolCall {...log.toolProps} />
+                                        )}
+                                    </div>
+                                ))}
                                 {children}
                             </div>
                         </div>

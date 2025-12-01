@@ -186,3 +186,40 @@ def text_message_part_template(text: str) -> dict:
         "type": "text",
         "text": text,
     }
+
+
+def get_asset_base64(asset_url: str) -> tuple[str, str]:
+    """
+    Helper to get base64 data and mime type from a URL or Data URI.
+    
+    Args:
+        asset_url: URL or Data URI
+        
+    Returns:
+        Tuple of (base64_data, mime_type)
+    """
+    import mimetypes
+    import requests
+    import base64
+    
+    if asset_url.startswith("data:"):
+        # Parse data URI
+        header, data = asset_url.split(",", 1)
+        mime_type = header.split(":")[1].split(";")[0]
+        return data, mime_type
+    else:
+        # Fetch from URL
+        response = requests.get(asset_url)
+        response.raise_for_status()
+        content = response.content
+        
+        # Guess mime type
+        mime_type = response.headers.get("Content-Type")
+        if not mime_type or mime_type == 'application/octet-stream':
+            mime_type = mimetypes.guess_type(asset_url)[0]
+        if not mime_type:
+            # Default fallback
+            mime_type = "image/png" if not asset_url.endswith(".mp4") else "video/mp4"
+        
+        base64_data = base64.b64encode(content).decode("utf-8")
+        return base64_data, mime_type

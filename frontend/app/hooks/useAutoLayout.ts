@@ -17,6 +17,73 @@ export function useAutoLayout() {
     const { getNodes, setNodes, getNode, getIntersectingNodes } = useReactFlow();
 
     /**
+     * Helper to apply group expansion and overlap resolution to a list of nodes
+     * Returns the updated list of nodes
+     */
+    const applyGroupExpansion = useCallback((nodes: Node[], groupId: string, newNode: Node): Node[] => {
+        const parentGroup = nodes.find((n) => n.id === groupId);
+        if (!parentGroup || parentGroup.type !== 'group') return nodes;
+
+        // Calculate absolute position of new node
+        const nodeSize = getNodeSize(newNode.type || 'default');
+        const groupAbsPos = getAbsolutePosition(parentGroup, nodes);
+
+        const newNodeAbsRect = {
+            x: groupAbsPos.x + newNode.position.x,
+            y: groupAbsPos.y + newNode.position.y,
+            width: newNode.width || (newNode.style?.width as number) || nodeSize.width,
+            height: newNode.height || (newNode.style?.height as number) || nodeSize.height,
+        };
+
+        const newSize = expandGroupToFit(parentGroup, newNodeAbsRect, nodes);
+        const currentSize = {
+            width: (parentGroup.style?.width as number) || 400,
+            height: (parentGroup.style?.height as number) || 400,
+        };
+
+        // Only update if size changed
+        if (newSize.width > currentSize.width || newSize.height > currentSize.height) {
+            // Update group size
+            let updatedNodes = nodes.map((n) => {
+                if (n.id === groupId) {
+                    return {
+                        ...n,
+                        style: { ...n.style, width: newSize.width, height: newSize.height },
+                        width: newSize.width,
+                        height: newSize.height,
+                    };
+                }
+                return n;
+            });
+
+            // Check for overlaps and resolve
+            const overlaps = resolveGroupOverlaps(groupId, updatedNodes);
+
+            if (overlaps.size > 0) {
+                updatedNodes = updatedNodes.map(n => {
+                    const update = overlaps.get(n.id);
+                    if (update) {
+                        return {
+                            ...n,
+                            position: update.position || n.position,
+                            style: {
+                                ...n.style,
+                                ...(update.size ? { width: update.size.width, height: update.size.height } : {})
+                            },
+                            ...(update.size ? { width: update.size.width, height: update.size.height } : {})
+                        };
+                    }
+                    return n;
+                });
+            }
+
+            return updatedNodes;
+        }
+
+        return nodes;
+    }, []);
+
+    /**
      * Add a node with automatic placement and group expansion
      * Uses React Flow's getIntersectingNodes for collision detection
      */
@@ -27,7 +94,9 @@ export function useAutoLayout() {
             offset: { x: number; y: number } = { x: 300, y: 0 }
         ): Node | null => {
             const parentNode = getNode(parentNodeId);
-            if (!parentNode) return null;
+            if (!parentNode) {
+                return null;
+            }
 
             const allNodes = getNodes();
             const nodeSize = getNodeSize(newNode.type);
@@ -86,7 +155,6 @@ export function useAutoLayout() {
             // Create the complete node object
             const completeNode: Node = {
                 id: newNode.id || `node-${Date.now()}`,
-                type: newNode.type,
                 position: relativePos,
                 parentId: parentGroupId,
                 data: newNode.data || {},
@@ -95,17 +163,21 @@ export function useAutoLayout() {
                 ...newNode,
             };
 
-            // Add the new node first
-            setNodes((nodes) => [...nodes, completeNode]);
+            // Atomic update: Add node AND expand group in one transaction
+            setNodes((currentNodes) => {
+                const nodesWithNew = [...currentNodes, completeNode];
 
-            // Auto-expand group if needed
-            if (parentGroupId) {
-                expandGroupForNode(parentGroupId, completeNode, allNodes);
-            }
+                if (parentGroupId) {
+                    const expanded = applyGroupExpansion(nodesWithNew, parentGroupId, completeNode);
+                    return expanded;
+                }
+
+                return nodesWithNew;
+            });
 
             return completeNode;
         },
-        [getNode, getNodes, setNodes, getIntersectingNodes]
+        [getNode, getNodes, setNodes, getIntersectingNodes, applyGroupExpansion]
     );
 
     /**
@@ -113,71 +185,18 @@ export function useAutoLayout() {
      */
     const expandGroupForNode = useCallback(
         (groupId: string, newNode: Node, currentNodes?: Node[]) => {
-            const allNodes = currentNodes || getNodes();
-            const parentGroup = allNodes.find((n) => n.id === groupId);
+            setNodes((nodes) => {
+                // If currentNodes is provided, we might be working with stale state if we're not careful,
+                // but usually this is called with fresh state. 
+                // However, to be safe and atomic, we should always use the 'nodes' from the setter callback
+                // as the base truth, unless we are sure 'currentNodes' is what we want to transform.
+                // The original implementation used 'allNodes = currentNodes || getNodes()', which is risky inside setNodes.
 
-            if (!parentGroup || parentGroup.type !== 'group') return;
-
-            // Calculate absolute position of new node
-            const nodeSize = getNodeSize(newNode.type || 'default');
-            const groupAbsPos = getAbsolutePosition(parentGroup, allNodes);
-
-            const newNodeAbsRect = {
-                x: groupAbsPos.x + newNode.position.x,
-                y: groupAbsPos.y + newNode.position.y,
-                width: newNode.width || (newNode.style?.width as number) || nodeSize.width,
-                height: newNode.height || (newNode.style?.height as number) || nodeSize.height,
-            };
-
-            const newSize = expandGroupToFit(parentGroup, newNodeAbsRect, allNodes);
-            const currentSize = {
-                width: (parentGroup.style?.width as number) || 400,
-                height: (parentGroup.style?.height as number) || 400,
-            };
-
-            // Only update if size changed
-            if (newSize.width > currentSize.width || newSize.height > currentSize.height) {
-                setNodes((nodes) => {
-                    // Update group size
-                    const updatedNodes = nodes.map((n) => {
-                        if (n.id === groupId) {
-                            return {
-                                ...n,
-                                style: { ...n.style, width: newSize.width, height: newSize.height },
-                            };
-                        }
-                        return n;
-                    });
-
-                    // Check for overlaps and resolve
-                    const overlaps = resolveGroupOverlaps(groupId, updatedNodes);
-                    overlaps.forEach((update, nodeId) => {
-                        const idx = updatedNodes.findIndex((n) => n.id === nodeId);
-                        if (idx !== -1) {
-                            if (update.position) {
-                                updatedNodes[idx] = {
-                                    ...updatedNodes[idx],
-                                    position: update.position,
-                                };
-                            }
-                            if (update.size) {
-                                updatedNodes[idx] = {
-                                    ...updatedNodes[idx],
-                                    style: {
-                                        ...updatedNodes[idx].style,
-                                        width: update.size.width,
-                                        height: update.size.height,
-                                    },
-                                };
-                            }
-                        }
-                    });
-
-                    return updatedNodes;
-                });
-            }
+                // We'll use the nodes passed to this updater function to ensure atomicity.
+                return applyGroupExpansion(nodes, groupId, newNode);
+            });
         },
-        [getNodes, setNodes]
+        [setNodes, applyGroupExpansion]
     );
 
     /**
@@ -203,22 +222,21 @@ export function useAutoLayout() {
 
             const completeNode: Node = {
                 id: node.id || `node-${Date.now()}`,
-                type: node.type,
                 position: placement.position,
                 parentId: groupId,
                 data: node.data || {},
                 ...node,
             };
 
-            // Add the node
-            setNodes((nodes) => [...nodes, completeNode]);
-
-            // Expand group if needed
-            expandGroupForNode(groupId, completeNode, allNodes);
+            // Atomic update
+            setNodes((nodes) => {
+                const nodesWithNew = [...nodes, completeNode];
+                return applyGroupExpansion(nodesWithNew, groupId, completeNode);
+            });
 
             return completeNode;
         },
-        [getNode, getNodes, setNodes, expandGroupForNode]
+        [getNode, getNodes, setNodes, applyGroupExpansion]
     );
 
     return {

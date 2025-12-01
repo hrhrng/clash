@@ -29,6 +29,7 @@ export const assets = sqliteTable('asset', {
     status: text('status').default('completed'), // "pending" | "processing" | "completed" | "failed"
     taskId: text('task_id'), // External task ID (e.g., Kling task ID)
     metadata: text('metadata', { mode: 'json' }), // Additional info (dimensions, duration, etc.)
+    description: text('description'), // AI-generated description
     createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`(strftime('%s', 'now'))`),
 }, (asset) => ({
     // Unique constraint: name must be unique within a project

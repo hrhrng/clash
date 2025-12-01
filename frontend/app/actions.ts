@@ -8,6 +8,7 @@ import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
 import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/lib/db/schema';
 import { getRequestContext } from '@cloudflare/next-on-pages';
+import { headers } from 'next/headers';
 
 // Helper to get DB (D1 in production/preview, local SQLite in dev)
 const getDb = async () => {
@@ -96,7 +97,7 @@ export interface Command {
 import { graph, AgentState } from './agent/graph';
 import { HumanMessage } from '@langchain/core/messages';
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
+// const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
 
 export async function sendMessage(projectId: string, content: string) {
     const db = await getDb();
@@ -139,6 +140,8 @@ export async function sendMessage(projectId: string, content: string) {
     return { success: true, commands };
 }
 
+
+
 export async function createAsset(data: {
     name: string;
     projectId: string;
@@ -149,9 +152,49 @@ export async function createAsset(data: {
     taskId?: string;
     metadata: string;
 }) {
-    const db = await getDb();
-    const [asset] = await db.insert(schema.assets).values(data).returning();
-    return asset;
+    console.log('createAsset called with:', data);
+    try {
+        const db = await getDb();
+
+        // Ensure taskId exists
+        const taskId = data.taskId || crypto.randomUUID();
+        const assetData = { ...data, taskId };
+
+        // Insert asset first
+        const [asset] = await db.insert(schema.assets).values({
+            ...assetData,
+            description: null // Start with null description
+        }).returning();
+
+        console.log('createAsset success:', asset);
+
+        // Trigger async description generation if completed immediately (e.g. upload)
+        if (data.status === 'completed') {
+            // Construct callback URL
+            const headersList = await headers();
+            const host = headersList.get('host');
+            const protocol = process.env.NODE_ENV === 'development' ? 'http' : 'https';
+            const callbackUrl = `${protocol}://${host}/api/internal/assets/update`;
+
+            // Fire and forget
+            fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/describe`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    url: data.url,
+                    task_id: taskId,
+                    callback_url: callbackUrl
+                }),
+            }).catch(err => console.error('Error triggering description generation:', err));
+        }
+
+        return asset;
+    } catch (error) {
+        console.error('createAsset failed:', error);
+        throw error;
+    }
 }
 
 export async function getAsset(id: string) {
