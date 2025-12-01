@@ -267,6 +267,12 @@ export default function ChatbotCopilot({
             }
         }]);
     };
+    // Use ref to access current nodes inside stale closures (EventSource listeners)
+    const nodesRef = useRef(nodes);
+    useEffect(() => {
+        nodesRef.current = nodes;
+    }, [nodes]);
+
     const [pendingResume, setPendingResume] = useState<{
         userInput: string;
         resume: boolean;
@@ -296,9 +302,17 @@ export default function ChatbotCopilot({
         }
     }, [nodes, pendingResume]);
 
-    // Helper to resolve name to ID using current nodes
+    // Helper to resolve name to ID using current nodes (via ref)
     const resolveName = (name: string) => {
-        const node = nodes.find(n => n.data?.label === name);
+        console.log(`[ChatbotCopilot] resolveName called for: "${name}"`);
+        const currentNodes = nodesRef.current;
+        console.log(`[ChatbotCopilot] Current nodes available (ref):`, currentNodes.map(n => ({ id: n.id, label: n.data?.label })));
+        const node = currentNodes.find(n => n.data?.label === name);
+        if (node) {
+            console.log(`[ChatbotCopilot] Found match! ID: ${node.id}`);
+        } else {
+            console.warn(`[ChatbotCopilot] No match found for "${name}"`);
+        }
         return node?.id;
     };
 
@@ -505,6 +519,11 @@ export default function ChatbotCopilot({
                     }
                 }
             }]);
+            eventSource.close();
+        });
+
+        eventSource.addEventListener('end', () => {
+            console.log('[ChatbotCopilot] Received end event. Closing stream.');
             eventSource.close();
         });
 

@@ -413,11 +413,35 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             
             logger.info(f"Resuming with action: {action}, proposal: {proposal_id}, created_node: {created_node_id}, group_id: {group_id}")
 
+            # Helper to find node ID by name in current context
+            def find_node_id_by_name(name: str, project_context: ProjectContext) -> str | None:
+                if not project_context:
+                    logger.warning("find_node_id_by_name called but project_context is None")
+                    return None
+                
+                logger.info(f"Searching for node with label: '{name}' in context with {len(project_context.nodes)} nodes")
+                for node in project_context.nodes:
+                    # logger.info(f"Checking node: {node.id}, label: {node.data.get('label')}")
+                    if node.data.get("label") == name:
+                        logger.info(f"Found match! ID: {node.id}")
+                        return node.id
+                
+                logger.warning(f"No node found with label: '{name}'")
+                return None
+
             if action == "accept":
                 if proposal_id == "proposal-root-group":
                     # Root Group created. Now propose Character Group inside it.
                     yield f"event: thinking\ndata: {json.dumps({'content': 'Main group created. Now let\'s add a specific character group inside it.'})}\n\n"
                     await asyncio.sleep(1)
+
+                    # Resolve Parent ID
+                    root_group_id = find_node_id_by_name("Character Settings", context)
+                    # Fallback to created_node_id if context not yet updated (though it should be)
+                    if not root_group_id:
+                        root_group_id = created_node_id
+                    
+                    logger.info(f"Resolved 'Character Settings' to ID: {root_group_id}")
 
                     proposal_data = {
                         "id": "proposal-char-group",
@@ -426,7 +450,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         "nodeData": {
                             "label": "Character: Neo",
                         },
-                        "groupName": "Character Settings", # Reference by Name
+                        "groupId": root_group_id, # Explicit ID
                         "message": "I'll create a sub-group for the character 'Neo' inside 'Character Settings'."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
@@ -437,6 +461,13 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     yield f"event: thinking\ndata: {json.dumps({'content': 'Character group ready. Let\'s add a description text node first.'})}\n\n"
                     await asyncio.sleep(1)
 
+                    # Resolve Parent ID
+                    char_group_id = find_node_id_by_name("Character: Neo", context)
+                    if not char_group_id:
+                        char_group_id = created_node_id
+                    
+                    logger.info(f"Resolved 'Character: Neo' to ID: {char_group_id}")
+
                     proposal_data = {
                         "id": "proposal-text-desc",
                         "type": "simple",
@@ -445,7 +476,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             "label": "Neo Description",
                             "content": "A cyberpunk hacker named Neo, wearing a long black coat and sunglasses. Neon rain background."
                         },
-                        "groupName": "Character: Neo", # Reference by Name
+                        "groupId": char_group_id, # Explicit ID
                         "message": "I'll add a text node describing Neo."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
@@ -456,62 +487,83 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     yield f"event: thinking\ndata: {json.dumps({'content': 'Description added. Now let\'s generate a portrait based on it.'})}\n\n"
                     await asyncio.sleep(1)
 
+                    # Resolve Parent ID and Upstream ID
+                    char_group_id = find_node_id_by_name("Character: Neo", context)
+                    text_node_id = find_node_id_by_name("Neo Description", context)
+                    
+                    if not text_node_id:
+                        text_node_id = created_node_id
+
+                    logger.info(f"Resolved 'Character: Neo' to {char_group_id}, 'Neo Description' to {text_node_id}")
+
                     proposal_data = {
                         "id": "proposal-image-portrait",
                         "type": "generative",
                         "nodeType": "action-badge-image",
                         "nodeData": {
-                            "label": "Portrait",
-                            "actionType": "image-gen",
-                            "modelName": "Nano Banana",
-                            "prompt": "Cyberpunk character portrait of Neo, neon lights, high detail"
+                            "label": "Portrait Gen",
+                            "prompt": "Cyberpunk hacker Neo, close up portrait, neon lights, high detail",
                         },
-                        "groupName": "Character: Neo", # Reference by Name
-                        "upstreamNodeName": "Neo Description", # Connect to Text Node
-                        "message": "I can generate a portrait for Neo, connected to the description."
+                        "groupId": char_group_id, # Explicit ID
+                        "upstreamNodeId": text_node_id, # Explicit ID
+                        "message": "I'll generate a portrait image based on the description."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
                     return
                 
                 elif proposal_id == "proposal-image-portrait":
-                     # Portrait Node created. Now propose second Image Gen Node (Action).
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Portrait added. Now let\'s add an action shot.'})}\n\n"
+                     # Portrait Node created. Now propose Action Pose.
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Portrait generator ready. Now let\'s add an action pose generator.'})}\n\n"
                     await asyncio.sleep(1)
+
+                    # Resolve Parent ID and Upstream ID
+                    char_group_id = find_node_id_by_name("Character: Neo", context)
+                    # CHANGE: Connect to Text Node (Description) instead of previous Action Node
+                    text_node_id = find_node_id_by_name("Neo Description", context)
+
+                    if not text_node_id:
+                        text_node_id = created_node_id # Fallback if previous was text node (unlikely here)
+                    
+                    logger.info(f"Resolved 'Character: Neo' to {char_group_id}, 'Neo Description' to {text_node_id}")
 
                     proposal_data = {
                         "id": "proposal-image-action",
                         "type": "generative",
                         "nodeType": "action-badge-image",
                         "nodeData": {
-                            "label": "Action Pose",
-                            "actionType": "image-gen",
-                            "modelName": "Nano Banana",
-                            "prompt": "Neo running on rooftops, cyberpunk city background, dynamic pose"
+                            "label": "Action Pose Gen",
+                            "prompt": "Cyberpunk hacker Neo, dodging bullets, dynamic action pose, matrix style",
                         },
-                        "groupName": "Character: Neo", # Reference by Name
-                        "upstreamNodeName": "Portrait", # Reference by Name
-                        "message": "And here is an action pose generation node, connected to the Portrait."
+                        "groupId": char_group_id, # Explicit ID
+                        "upstreamNodeId": text_node_id, # Explicit ID: Connect to Description
+                        "message": "I'll also generate an action pose image."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
                     return
 
                 elif proposal_id == "proposal-image-action":
                     yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'All nodes created! You can now run them.'})}\n\n"
+                    yield f"event: end\ndata: {{}}\n\n"
                     return
 
             elif action == "accept_and_run":
                 # Handle run logic if needed, or just acknowledge
                 yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Node created and running.'})}\n\n"
+                yield f"event: end\ndata: {{}}\n\n"
                 return
 
             elif action == "reject":
                 yield f"event: thinking\ndata: {json.dumps({'content': 'User rejected. Stopping.'})}\n\n"
                 await asyncio.sleep(1)
                 yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Okay, stopping here.'})}\n\n"
+                yield f"event: end\ndata: {{}}\n\n"
                 return
             
             else:
                 yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Resumed.'})}\n\n"
+                # Do not end here, as we might be waiting for more logic (though in this mock, maybe we should?)
+                # For now, let's assume 'Resumed' implies continuing, but if no more logic, we should probably end.
+                # But let's stick to the specific termination points first.
         
         logger.info(f"SSE stream finished for project: {project_id}")
 
