@@ -11,6 +11,7 @@ import ReactFlow, {
     Edge,
     Node,
     Panel,
+    NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { motion } from 'framer-motion';
@@ -97,6 +98,110 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
     // Selection state
     const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+
+    // Custom onNodesChange to handle recursive resizing
+    const handleNodesChange = useCallback((changes: NodeChange[]) => {
+        onNodesChange(changes);
+
+        // Check for dimension changes (resizing)
+        const resizeChanges = changes.filter(c => c.type === 'dimensions');
+        if (resizeChanges.length > 0) {
+            setNodes((currentNodes) => {
+                let updatedNodes = [...currentNodes];
+                let hasUpdates = false;
+
+                resizeChanges.forEach(change => {
+                    if (change.type === 'dimensions' && change.dimensions) {
+                        const node = updatedNodes.find(n => n.id === change.id);
+                        if (node && node.parentId) {
+                            // Update the node's dimensions in our temp list so the recursive logic sees the new size
+                            // Note: onNodesChange (called above) queues the state update, but 'currentNodes' here 
+                            // might be the *previous* state if React hasn't flushed yet. 
+                            // However, since we are inside setNodes callback, 'currentNodes' is the latest state *before* this update.
+                            // But onNodesChange also calls setNodes. This is tricky.
+                            // Actually, 'change.dimensions' has the NEW dimensions.
+
+                            // Let's manually update the node in our temp list to match the change
+                            const nodeIndex = updatedNodes.findIndex(n => n.id === change.id);
+                            if (nodeIndex !== -1) {
+                                updatedNodes[nodeIndex] = {
+                                    ...updatedNodes[nodeIndex],
+                                    width: change.dimensions.width,
+                                    height: change.dimensions.height,
+                                    // ReactFlow might also update style.width/height, but dimensions is the source of truth for layout
+                                };
+                            }
+
+                            // Now run recursive resize
+                            const resizeParentRecursive = (nodesList: Node[], childNode: Node): Node[] => {
+                                const pId = childNode.parentId;
+                                if (!pId) return nodesList;
+
+                                const parentIndex = nodesList.findIndex(n => n.id === pId);
+                                if (parentIndex === -1) return nodesList;
+
+                                const parent = nodesList[parentIndex];
+                                const children = nodesList.filter(n => n.parentId === pId);
+
+                                let maxRight = 0;
+                                let maxBottom = 0;
+                                const padding = 60;
+
+                                children.forEach(child => {
+                                    // For the node that changed, use its new dimensions (already in nodesList or childNode)
+                                    // For others, use their current dimensions
+                                    const w = child.width ?? Number(child.style?.width) ?? 0;
+                                    const h = child.height ?? Number(child.style?.height) ?? 0;
+                                    const x = child.position.x;
+                                    const y = child.position.y;
+
+                                    const right = x + w;
+                                    const bottom = y + h;
+
+                                    if (right > maxRight) maxRight = right;
+                                    if (bottom > maxBottom) maxBottom = bottom;
+                                });
+
+                                const requiredWidth = maxRight + padding;
+                                const requiredHeight = maxBottom + padding;
+
+                                const currentWidth = parent.width || Number(parent.style?.width) || 400;
+                                const currentHeight = parent.height || Number(parent.style?.height) || 400;
+
+                                if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
+                                    const newWidth = Math.max(currentWidth, requiredWidth);
+                                    const newHeight = Math.max(currentHeight, requiredHeight);
+
+                                    const newParent = {
+                                        ...parent,
+                                        width: newWidth,
+                                        height: newHeight,
+                                        style: {
+                                            ...parent.style,
+                                            width: newWidth,
+                                            height: newHeight,
+                                        }
+                                    };
+
+                                    const newNodesList = [...nodesList];
+                                    newNodesList[parentIndex] = newParent;
+                                    hasUpdates = true;
+
+                                    return resizeParentRecursive(newNodesList, newParent);
+                                }
+
+                                return nodesList;
+                            };
+
+                            updatedNodes = resizeParentRecursive(updatedNodes, updatedNodes[nodeIndex]);
+                        }
+                    }
+                });
+
+                return hasUpdates ? updatedNodes : currentNodes;
+            });
+        }
+    }, [onNodesChange, setNodes]);
 
     const onSelectionChange = useCallback(({ nodes }: { nodes: Node[] }) => {
         setSelectedNodes(nodes);
@@ -202,15 +307,25 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             nodeData = { label: 'Context', content: '# Context\nAdd background information here...', ...nodeData };
         }
 
-        // For group nodes, calculate z-index to be lower than existing groups (so it appears behind)
+        // For group nodes, calculate z-index
         let zIndex: number | undefined = undefined;
         if (nodeType === 'group') {
-            const groupNodes = nodes.filter((n) => n.type === 'group');
-            const minZIndex = groupNodes.reduce((min, n) => {
-                const nodeZIndex = Number(n.style?.zIndex ?? 0);
-                return Math.min(min, nodeZIndex);
-            }, 0);
-            zIndex = minZIndex - 1;
+            if (extraData.parentId) {
+                // Nested Group: Must be ABOVE parent
+                const parent = nodes.find(n => n.id === extraData.parentId);
+                const parentZIndex = Number(parent?.style?.zIndex ?? 0);
+                zIndex = parentZIndex + 1;
+                console.log(`[addNode] Creating nested group. Parent zIndex: ${parentZIndex}, New zIndex: ${zIndex}`);
+            } else {
+                // Root Group: Keep existing logic (behind other groups)
+                const groupNodes = nodes.filter((n) => n.type === 'group');
+                const minZIndex = groupNodes.reduce((min, n) => {
+                    const nodeZIndex = Number(n.style?.zIndex ?? 0);
+                    return Math.min(min, nodeZIndex);
+                }, 0);
+                zIndex = minZIndex - 1;
+                console.log(`[addNode] Creating root group. New zIndex: ${zIndex}`);
+            }
         }
 
         const newNodeId = `${nodes.length + 1}-${Date.now()}`;
@@ -235,9 +350,13 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             let parentId = extraData.parentId;
 
             // Validate parentId exists
-            if (parentId && !nds.find(n => n.id === parentId)) {
-                console.warn(`Parent node ${parentId} not found, creating node at root level`);
-                parentId = undefined;
+            if (parentId) {
+                const parentExists = nds.find(n => n.id === parentId);
+                console.log(`[addNode] Validating parentId: ${parentId}. Found: ${!!parentExists}`);
+                if (!parentExists) {
+                    console.warn(`Parent node ${parentId} not found in current nodes list (size: ${nds.length}), creating node at root level`);
+                    parentId = undefined;
+                }
             }
 
             let targetPos = { x: 100, y: 100 };
@@ -356,83 +475,77 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                 parentId,
                 width: defaultWidth,
                 height: defaultHeight,
+                // CRITICAL FIX: Do NOT set extent: 'parent'.
+                // If set to 'parent', React Flow restricts the node's movement to within the parent's bounds.
+                // This prevents the user from dragging the node OUT of the group to detach it.
+                // We want to allow dragging out, so we leave extent undefined.
                 extent: undefined,
                 style: nodeType === 'group' ? { width: defaultWidth, height: defaultHeight, zIndex } : { width: defaultWidth, height: defaultHeight },
                 className: nodeType === 'group' ? 'group-node' : '',
             };
 
-            // 3. Update nodes (Resize Group if needed)
-            return nds.map(node => {
-                if (node.id === parentId) {
-                    const parent = node;
+            // 3. Update nodes with Recursive Group Resizing
+            let updatedNodes = [...nds, newNode];
 
-                    const getNodeDim = (n: Node, prop: 'width' | 'height', fallback: number) => {
-                        const styleVal = n.style?.[prop];
-                        if (typeof styleVal === 'number') return styleVal;
-                        if (typeof styleVal === 'string') return parseFloat(styleVal) || fallback;
-                        return n[prop] || fallback;
-                    };
+            const resizeParentRecursive = (currentNodes: Node[], childNode: Node): Node[] => {
+                const pId = childNode.parentId;
+                if (!pId) return currentNodes;
 
-                    // Calculate bounding box of ALL children + new node
-                    const children = nds.filter(n => n.parentId === parentId);
-                    const allChildren = [...children, newNode];
+                const parentIndex = currentNodes.findIndex(n => n.id === pId);
+                if (parentIndex === -1) return currentNodes;
 
-                    let maxRight = 0;
-                    let maxBottom = 0;
-                    const padding = 60; // Increased padding
+                const parent = currentNodes[parentIndex];
 
-                    allChildren.forEach(child => {
-                        const isNew = child.id === newNode.id;
-                        let defaultW = 300;
-                        let defaultH = 300;
+                // Calculate bounding box of ALL children (including the new/updated child)
+                const children = currentNodes.filter(n => n.parentId === pId);
 
-                        // Determine type for dimension lookup
-                        const type = isNew ? nodeType : child.type;
+                let maxRight = 0;
+                let maxBottom = 0;
+                const padding = 60;
 
-                        if (type === 'text') {
-                            defaultW = 300;
-                            defaultH = 400;
-                        } else if (type === 'action-badge') {
-                            defaultW = 200;
-                            defaultH = 60;
-                        }
+                children.forEach(child => {
+                    const w = child.width || Number(child.style?.width) || 300;
+                    const h = child.height || Number(child.style?.height) || 300;
+                    const right = child.position.x + w;
+                    const bottom = child.position.y + h;
+                    if (right > maxRight) maxRight = right;
+                    if (bottom > maxBottom) maxBottom = bottom;
+                });
 
-                        const w = getNodeDim(child, 'width', defaultW);
-                        const h = getNodeDim(child, 'height', defaultH);
+                const requiredWidth = maxRight + padding;
+                const requiredHeight = maxBottom + padding;
 
-                        const right = child.position.x + w;
-                        const bottom = child.position.y + h;
+                const currentWidth = parent.width || Number(parent.style?.width) || 400;
+                const currentHeight = parent.height || Number(parent.style?.height) || 400;
 
-                        if (right > maxRight) maxRight = right;
-                        if (bottom > maxBottom) maxBottom = bottom;
-                    });
+                if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
+                    const newWidth = Math.max(currentWidth, requiredWidth);
+                    const newHeight = Math.max(currentHeight, requiredHeight);
 
-                    const requiredWidth = maxRight + padding;
-                    const requiredHeight = maxBottom + padding;
+                    console.log('[addNode] Resizing group', parent.id, 'from', currentWidth, 'x', currentHeight, 'to', newWidth, 'x', newHeight);
 
-                    const currentWidth = getNodeDim(parent, 'width', 400);
-                    const currentHeight = getNodeDim(parent, 'height', 400);
-
-                    if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
-                        const newWidth = Math.max(currentWidth, requiredWidth);
-                        const newHeight = Math.max(currentHeight, requiredHeight);
-
-                        console.log('[addNode] Resizing group', parent.id, 'from', currentWidth, 'x', currentHeight, 'to', newWidth, 'x', newHeight);
-
-                        return {
-                            ...parent,
+                    const newParent = {
+                        ...parent,
+                        width: newWidth,
+                        height: newHeight,
+                        style: {
+                            ...parent.style,
                             width: newWidth,
                             height: newHeight,
-                            style: {
-                                ...parent.style,
-                                width: newWidth,
-                                height: newHeight,
-                            }
-                        };
-                    }
+                        }
+                    };
+
+                    const newNodesList = [...currentNodes];
+                    newNodesList[parentIndex] = newParent;
+
+                    // Recurse up
+                    return resizeParentRecursive(newNodesList, newParent);
                 }
-                return node;
-            }).concat(newNode);
+
+                return currentNodes;
+            };
+
+            return resizeParentRecursive(updatedNodes, newNode);
         });
         return newNodeId;
     };
@@ -589,12 +702,18 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                             <ReactFlow
                                 nodes={nodes}
                                 edges={edges}
-                                onNodesChange={onNodesChange}
+                                onNodesChange={handleNodesChange}
                                 onEdgesChange={onEdgesChange}
                                 onConnect={onConnect}
                                 onSelectionChange={onSelectionChange}
                                 onNodeDragStop={(event, node) => {
-                                    // Helper to recursively calculate absolute position of a node
+                                    // LOGIC EXPLANATION:
+                                    // When a node is dragged, we need to check if it has been dropped inside a group
+                                    // or dragged out of its current parent.
+
+                                    // 1. Helper to recursively calculate absolute position of a node.
+                                    // This is necessary because node.position is relative to its parent.
+                                    // To check for intersections, we need everything in the same global coordinate system.
                                     const getAbsolutePosition = (n: Node): { x: number; y: number } => {
                                         if (!n.parentId) {
                                             return { x: n.position.x, y: n.position.y };
@@ -610,7 +729,8 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                         };
                                     };
 
-                                    // Helper to check if groupId is a descendant of nodeId (prevent circular nesting)
+                                    // 2. Helper to check if groupId is a descendant of nodeId.
+                                    // We must prevent circular nesting (e.g., putting Group A inside Group B, when Group B is inside Group A).
                                     const isDescendant = (groupId: string, nodeId: string): boolean => {
                                         const group = nodes.find((n) => n.id === groupId);
                                         if (!group || !group.parentId) return false;
@@ -618,7 +738,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                         return isDescendant(group.parentId, nodeId);
                                     };
 
-                                    // Check intersection with group nodes (including nested groups)
+                                    // 3. Check intersection with all other group nodes.
                                     const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
                                     const nodeRect = {
                                         x: node.position.x,
@@ -670,6 +790,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                             nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
                                         ) {
                                             // Pick the group with highest z-index (innermost/topmost group)
+                                            // This ensures that if groups are overlapping, we drop into the "top" one.
                                             const groupZIndex = Number(group.style?.zIndex ?? -1);
                                             if (groupZIndex > maxZIndex) {
                                                 maxZIndex = groupZIndex;
@@ -678,7 +799,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                         }
                                     }
 
-                                    // Update node if parent changed
+                                    // 4. Update node if parent changed
                                     if (newParentId !== node.parentId) {
                                         setNodes((nds) =>
                                             nds.map((n) => {
@@ -692,6 +813,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                                             // Calculate parent's absolute position
                                                             const parentAbsPos = getAbsolutePosition(parent);
 
+                                                            // Convert absolute coordinates back to relative coordinates for the new parent
                                                             newNode.position = {
                                                                 x: absoluteNodeRect.x - parentAbsPos.x,
                                                                 y: absoluteNodeRect.y - parentAbsPos.y,
@@ -706,15 +828,14 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                                                     ...newNode.style,
                                                                     zIndex: parentZIndex + 1, // Child group should be above parent
                                                                 };
-                                                                // Don't set extent for group nodes - they need freedom to move
                                                                 newNode.extent = undefined;
                                                             } else {
-                                                                // For non-group nodes, optionally constrain to parent
-                                                                // newNode.extent = 'parent';
+                                                                // For non-group nodes, we also leave extent undefined to allow dragging out later
+                                                                newNode.extent = undefined;
                                                             }
                                                         }
                                                     } else {
-                                                        // Becoming orphan, convert to absolute
+                                                        // Becoming orphan (detached from group), convert to absolute coordinates
                                                         newNode.position = {
                                                             x: absoluteNodeRect.x,
                                                             y: absoluteNodeRect.y,
@@ -836,6 +957,6 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                     </div>
                 </div>
             </MediaViewerProvider>
-        </ProjectProvider>
+        </ProjectProvider >
     );
 }
