@@ -323,6 +323,43 @@ async def cancel_workflow(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Project Context Models ---
+from typing import List, Dict, Optional
+
+class NodeModel(BaseModel):
+    id: str
+    type: str
+    data: Dict[str, Any]
+    position: Dict[str, float]
+    parentId: Optional[str] = None
+
+class EdgeModel(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: Optional[str] = None
+
+class ProjectContext(BaseModel):
+    nodes: List[NodeModel]
+    edges: List[EdgeModel]
+
+# In-memory store for project context
+_PROJECT_CONTEXTS: Dict[str, ProjectContext] = {}
+
+
+@app.post("/api/v1/project/{project_id}/context")
+async def update_project_context(project_id: str, context: ProjectContext):
+    """
+    Update the context (nodes and edges) for a specific project.
+    This allows the backend to be aware of the current frontend state.
+    """
+    logger.info(f"Received context update for project {project_id}")
+    logger.info(f"Nodes: {len(context.nodes)}, Edges: {len(context.edges)}")
+    # logger.debug(f"Context details: {context}") # Uncomment for full dump
+    _PROJECT_CONTEXTS[project_id] = context
+    return {"status": "success", "message": "Context updated"}
+        
+
 @app.get("/api/v1/stream/{project_id}")
 async def stream_workflow(project_id: str, thread_id: str, resume: bool = False, user_input: str = None):
     """
@@ -333,26 +370,29 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
     import json
     
     async def event_generator():
-        logger.info(f"Starting SSE stream for project: {project_id}, thread: {thread_id}, resume: {resume}, input: {user_input}")
+        # Retrieve context
+        context = _PROJECT_CONTEXTS.get(project_id)
+        context_info = f"Context: {len(context.nodes)} nodes, {len(context.edges)} edges" if context else "Context: None"
+        
+        logger.info(f"Starting SSE stream for project: {project_id}, thread: {thread_id}, resume: {resume}, input: {user_input}. {context_info}")
         
         if not resume:
-            # --- Initial Flow: Propose Group Node ---
-            logger.info("Starting initial flow: Proposing Group Node")
+            # --- Initial Flow: Propose Root Group ---
+            logger.info("Starting initial flow: Proposing Root Group")
             
             # 1. Thinking
-            yield f"event: thinking\ndata: {json.dumps({'content': 'User wants to create a story with visuals. I should start by organizing this in a Group.'})}\n\n"
+            yield f"event: thinking\ndata: {json.dumps({'content': 'User wants to create character settings. I will start with a main container group.'})}\n\n"
             await asyncio.sleep(1)
 
-            # 2. Propose Group Node
-            logger.debug("Yielding event: node_proposal (Group)")
+            # 2. Propose Root Group
             proposal_data = {
-                "id": "proposal-group",
+                "id": "proposal-root-group",
                 "type": "simple",
                 "nodeType": "group",
                 "nodeData": {
-                    "label": "Story Board",
+                    "label": "Character Settings",
                 },
-                "message": "I suggest creating a Group Node to organize the story elements."
+                "message": "I suggest creating a 'Character Settings' group to organize everything."
             }
             yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
             return
@@ -374,71 +414,100 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             logger.info(f"Resuming with action: {action}, proposal: {proposal_id}, created_node: {created_node_id}, group_id: {group_id}")
 
             if action == "accept":
-                if proposal_id == "proposal-group":
-                    # Group created. Now propose Text Node inside it.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Group created. Now let\'s add the script text inside it.'})}\n\n"
+                if proposal_id == "proposal-root-group":
+                    # Root Group created. Now propose Character Group inside it.
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Main group created. Now let\'s add a specific character group inside it.'})}\n\n"
                     await asyncio.sleep(1)
 
                     proposal_data = {
-                        "id": "proposal-text",
+                        "id": "proposal-char-group",
                         "type": "simple",
-                        "nodeType": "text",
+                        "nodeType": "group",
                         "nodeData": {
-                            "label": "Story Script",
-                            "content": "# The AI Future\n\nOnce upon a time..."
+                            "label": "Character: Neo",
                         },
-                        "groupId": created_node_id,
-                        "message": "I'll create a Text Node for the script inside the new group."
+                        "groupName": "Character Settings", # Reference by Name
+                        "message": "I'll create a sub-group for the character 'Neo' inside 'Character Settings'."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
                     return
 
-                elif proposal_id == "proposal-text":
-                    # Text created. Now propose Image Gen Node connected to it.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Script ready. Now let\'s generate an image based on it.'})}\n\n"
+                elif proposal_id == "proposal-char-group":
+                    # Character Group created. Now propose Text Node (Description).
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Character group ready. Let\'s add a description text node first.'})}\n\n"
                     await asyncio.sleep(1)
 
                     proposal_data = {
-                        "id": "proposal-image-gen",
+                        "id": "proposal-text-desc",
+                        "type": "simple",
+                        "nodeType": "text",
+                        "nodeData": {
+                            "label": "Neo Description",
+                            "content": "A cyberpunk hacker named Neo, wearing a long black coat and sunglasses. Neon rain background."
+                        },
+                        "groupName": "Character: Neo", # Reference by Name
+                        "message": "I'll add a text node describing Neo."
+                    }
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
+                    return
+
+                elif proposal_id == "proposal-text-desc":
+                    # Text Node created. Now propose first Image Gen Node (Portrait).
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Description added. Now let\'s generate a portrait based on it.'})}\n\n"
+                    await asyncio.sleep(1)
+
+                    proposal_data = {
+                        "id": "proposal-image-portrait",
                         "type": "generative",
                         "nodeType": "action-badge-image",
                         "nodeData": {
-                            "label": "Generate Image",
+                            "label": "Portrait",
                             "actionType": "image-gen",
-                            "modelName": "Nano Banana"
+                            "modelName": "Nano Banana",
+                            "prompt": "Cyberpunk character portrait of Neo, neon lights, high detail"
                         },
-                        "upstreamNodeId": created_node_id,
-                        "groupId": group_id, # Put it in the same group
-                        "message": "I can create an Image Generation node connected to the script."
+                        "groupName": "Character: Neo", # Reference by Name
+                        "upstreamNodeName": "Neo Description", # Connect to Text Node
+                        "message": "I can generate a portrait for Neo, connected to the description."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
                     return
                 
-                elif proposal_id == "proposal-image-gen":
-                     # Image Gen created (but not run).
-                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Image Generation node added. You can run it manually.'})}\n\n"
+                elif proposal_id == "proposal-image-portrait":
+                     # Portrait Node created. Now propose second Image Gen Node (Action).
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Portrait added. Now let\'s add an action shot.'})}\n\n"
+                    await asyncio.sleep(1)
+
+                    proposal_data = {
+                        "id": "proposal-image-action",
+                        "type": "generative",
+                        "nodeType": "action-badge-image",
+                        "nodeData": {
+                            "label": "Action Pose",
+                            "actionType": "image-gen",
+                            "modelName": "Nano Banana",
+                            "prompt": "Neo running on rooftops, cyberpunk city background, dynamic pose"
+                        },
+                        "groupName": "Character: Neo", # Reference by Name
+                        "upstreamNodeName": "Portrait", # Reference by Name
+                        "message": "And here is an action pose generation node, connected to the Portrait."
+                    }
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
+                    return
+
+                elif proposal_id == "proposal-image-action":
+                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'All nodes created! You can now run them.'})}\n\n"
                     return
 
             elif action == "accept_and_run":
-                if proposal_id == "proposal-image-gen":
-                    # Image Gen created and run.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Creating image node and starting generation...'})}\n\n"
-                    await asyncio.sleep(1)
-
-                    # Simulate Tool Execution
-                    import uuid
-                    tool_call_id = f"call_{str(uuid.uuid4())[:8]}"
-                    yield f"event: tool_start\ndata: {json.dumps({'agent': 'ImageProducer', 'tool_name': 'generate_image', 'args': {'prompt': 'AI Future'}, 'id': tool_call_id})}\n\n"
-                    await asyncio.sleep(3)
-                    yield f"event: tool_end\ndata: {json.dumps({'agent': 'ImageProducer', 'result': 'Image generated.', 'id': tool_call_id})}\n\n"
-                    
-                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Image generation started!'})}\n\n"
-                    return
+                # Handle run logic if needed, or just acknowledge
+                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Node created and running.'})}\n\n"
+                return
 
             elif action == "reject":
                 yield f"event: thinking\ndata: {json.dumps({'content': 'User rejected. Stopping.'})}\n\n"
                 await asyncio.sleep(1)
-                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Okay, I won\'t create that node.'})}\n\n"
+                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Okay, stopping here.'})}\n\n"
                 return
             
             else:
