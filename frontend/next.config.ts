@@ -10,6 +10,22 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true, // Cloudflare uses their own image optimization
   },
+  async rewrites() {
+    return [
+      {
+        source: '/api/generate/:path*',
+        destination: 'http://127.0.0.1:8000/api/generate/:path*',
+      },
+      {
+        source: '/api/describe',
+        destination: 'http://127.0.0.1:8000/api/describe',
+      },
+      {
+        source: '/api/v1/stream/:path*',
+        destination: 'http://127.0.0.1:8000/api/v1/stream/:path*',
+      },
+    ];
+  },
 };
 
 export default nextConfig;

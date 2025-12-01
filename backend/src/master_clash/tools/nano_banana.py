@@ -2,6 +2,9 @@
 from langchain_core.tools import tool
 from master_clash.config import get_settings
 from master_clash.utils import *
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Get settings instance
 settings = get_settings()
@@ -117,7 +120,7 @@ def _base_nano_banana_gen(
     system_prompt: str | None = "",
     images: list[str] | None = None,
     aspect_ratio: str | None = "16:9",
-    model_name: str | None = "google/gemini-2.5-flash-image",
+    model_name: str | None = "gemini-2.5-flash-image",
 ):
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langchain_google_genai import ChatGoogleGenerativeAI, Modality
@@ -146,11 +149,21 @@ def _base_nano_banana_gen(
         messages.append(SystemMessage(content=system_prompt))
     messages.append(HumanMessage(content=content))
 
-    # 调用模型
-    response = llm.invoke(messages)
+    try:
+        # 调用模型
+        response = llm.invoke(messages)
+        logger.info(f"Nano Banana Response: {response}")
+    except Exception as e:
+        logger.error(f"Error in nano_banana_gen: {str(e)}", exc_info=True)
+        raise e
 
     # 提取图片 base64
     def _get_image_base64(response: AIMessage) -> str:
+        # Handle string content (rare but possible)
+        if isinstance(response.content, str):
+            raise ValueError(f"Model returned text instead of image: {response.content}")
+
+        # Look for image block
         image_block = next(
             (
                 block
@@ -161,6 +174,19 @@ def _base_nano_banana_gen(
         )
         if image_block:
             return image_block["image_url"].get("url").split(",")[-1]
+            
+        # Look for text block to give better error
+        text_block = next(
+            (
+                block
+                for block in response.content
+                if isinstance(block, dict) and block.get("text")
+            ),
+            None,
+        )
+        if text_block:
+             raise ValueError(f"Model returned text instead of image: {text_block.get('text')}")
+             
         raise ValueError("No image generated in response")
 
     return _get_image_base64(response)
@@ -173,13 +199,14 @@ def nano_banana_gen(
     aspect_ratio: str | None = "4:3",
 ) -> str:
     """
-    Advanced Nano Banana image generation with Gemini 3 Pro Image Preview.
+    Advanced Nano Banana image generation with Gemini 2.5 Flash Image.
     Use it to edit or generate images with higher quality and more features.
     Args:
         text: Text prompt for image generation
         system_prompt: System-level instructions
         base64_images: List of base64-encoded images as visual anchors
         aspect_ratio: Desired aspect ratio for output image
+        model_name: Model to use for generation
     Returns:
         Generated image base64 data
     """
@@ -392,8 +419,3 @@ When generating images, use the nano_banana_pro_tool and reference images by the
 
     # Clean up
     clear_image_registry()
-
-
-if __name__ == "__main__":
-
-    test_agent_with_nano_banana()

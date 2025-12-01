@@ -5,6 +5,6 @@ export default defineConfig({
     out: './drizzle',
     dialect: 'sqlite',
     dbCredentials: {
-        url: './local.db',
+        url: 'local.db',
     },
 });

@@ -7,7 +7,7 @@
     "setup": "node scripts/setup.js",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "cd backend && make dev",
-    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev": "node scripts/start.js",
     "build:frontend": "cd frontend && npm run pages:build",
     "build:backend": "cd backend && docker build -t master-clash-backend .",
     "build": "npm run build:frontend && npm run build:backend",

@@ -6,6 +6,7 @@ import { TextT, X, Check } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import MilkdownEditor from '../MilkdownEditor';
+import ReactMarkdown from 'react-markdown';
 
 const TextNode = ({ data, selected, id }: NodeProps) => {
     const [showModal, setShowModal] = useState(false);
@@ -189,18 +190,9 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
 // Simple markdown preview component
 const MarkdownPreview = ({ content }: { content: string }) => {
     return (
-        <div
-            className="prose prose-lg max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-700 prose-a:text-purple-600 prose-code:text-purple-600 prose-code:bg-purple-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded"
-            dangerouslySetInnerHTML={{
-                __html: content
-                    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-                    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-                    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-                    .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-                    .replace(/\*(.*)\*/gim, '<em>$1</em>')
-                    .replace(/\n/gim, '<br />')
-            }}
-        />
+        <div className="prose prose-lg max-w-none prose-slate prose-headings:font-bold prose-headings:text-slate-900 prose-p:text-slate-700 prose-a:text-purple-600 prose-code:text-purple-600 prose-code:bg-purple-50 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded">
+            <ReactMarkdown>{content}</ReactMarkdown>
+        </div>
     );
 };
 

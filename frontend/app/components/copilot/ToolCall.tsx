@@ -4,15 +4,16 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Wrench, Check, X, CaretDown, CaretRight, CircleNotch } from '@phosphor-icons/react';
 
-interface ToolCallProps {
+export interface ToolCallProps {
     toolName: string;
     args: any;
     result?: any;
     status: 'pending' | 'success' | 'error';
     isExpanded?: boolean;
+    indent?: boolean;
 }
 
-export function ToolCall({ toolName, args, result, status, isExpanded: initialExpanded = false }: ToolCallProps) {
+export function ToolCall({ toolName, args, result, status, isExpanded: initialExpanded = false, indent = false }: ToolCallProps) {
     const [isExpanded, setIsExpanded] = useState(initialExpanded);
 
     const statusConfig = {
@@ -25,7 +26,7 @@ export function ToolCall({ toolName, args, result, status, isExpanded: initialEx
     const StatusIcon = config.icon;
 
     return (
-        <div className="w-full rounded-lg border border-slate-100 bg-slate-50/50 overflow-hidden text-sm">
+        <div className={`w-full rounded-lg border border-slate-100 bg-slate-50/50 overflow-hidden text-sm ${indent ? 'ml-6 w-[calc(100%-1.5rem)]' : ''}`}>
             <div
                 className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-slate-100 transition-colors"
                 onClick={() => setIsExpanded(!isExpanded)}

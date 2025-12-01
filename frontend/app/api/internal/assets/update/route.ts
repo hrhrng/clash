@@ -32,11 +32,13 @@ const getDb = async () => {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { taskId, status, url, metadata } = body;
+        const { taskId, status, url, metadata, description } = body;
 
         if (!taskId || !status) {
             return NextResponse.json({ error: 'Missing taskId or status' }, { status: 400 });
         }
+
+        console.log('[API] /api/internal/assets/update received:', { taskId, status, url });
 
         const db = await getDb();
 
@@ -46,19 +48,24 @@ export async function POST(request: Request) {
         });
 
         if (!asset) {
+            console.error('[API] Asset not found for taskId:', taskId);
             return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
         }
+
+        console.log('[API] Found asset:', asset.id, 'Current status:', asset.status);
 
         // Update asset
         await db.update(schema.assets)
             .set({
                 status,
                 url: url || asset.url,
+                description: description || asset.description,
                 metadata: metadata ? JSON.stringify(metadata) : asset.metadata,
-                updatedAt: new Date(), // Assuming updatedAt exists? Schema doesn't have it for assets, only createdAt.
-                // Let's check schema again. assets only has createdAt.
+                // updatedAt: new Date(), // Assuming updatedAt exists? Schema doesn't have it for assets, only createdAt.
             })
             .where(eq(schema.assets.id, asset.id));
+
+        console.log('[API] Asset updated successfully');
 
         return NextResponse.json({ success: true });
 

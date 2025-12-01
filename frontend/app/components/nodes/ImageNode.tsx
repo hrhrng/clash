@@ -1,11 +1,9 @@
-import { memo, useState } from 'react';
-import { Handle, Position, NodeProps } from 'reactflow';
-import { Image as ImageIcon } from '@phosphor-icons/react';
+import { memo, useState, useEffect } from 'react';
+import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
+import { Image as ImageIcon, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 
 import { getAsset } from '../../actions';
-import { useEffect } from 'react';
-import { useReactFlow } from 'reactflow';
 
 const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Image Node');
@@ -13,34 +11,61 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const { setNodes } = useReactFlow();
     const [status, setStatus] = useState(data.status || (data.src ? 'completed' : 'pending'));
     const [imageUrl, setImageUrl] = useState(data.src);
+    const [description, setDescription] = useState(data.description || '');
+    const [showDescription, setShowDescription] = useState(false);
 
     useEffect(() => {
-        if (status === 'pending' && data.assetId) {
+        // Poll if pending OR (completed but missing description)
+        const shouldPoll = (status === 'pending') || (status === 'completed' && !description);
+
+        if (shouldPoll && data.assetId) {
             const interval = setInterval(async () => {
                 try {
-                    const asset = await getAsset(data.assetId);
-                    if (asset && asset.status === 'completed') {
-                        setStatus('completed');
-                        setImageUrl(asset.url);
-                        setNodes((nds) =>
-                            nds.map((node) => {
-                                if (node.id === id) {
-                                    return {
-                                        ...node,
-                                        data: {
-                                            ...node.data,
-                                            src: asset.url,
-                                            status: 'completed',
-                                        },
-                                    };
-                                }
-                                return node;
-                            })
-                        );
-                        clearInterval(interval);
-                    } else if (asset && asset.status === 'failed') {
-                        setStatus('failed');
-                        clearInterval(interval);
+                    console.log(`[ImageNode] Polling asset ${data.assetId}...`);
+                    const res = await fetch(`/api/assets/${data.assetId}`);
+                    if (res.ok) {
+                        const asset = await res.json();
+                        console.log(`[ImageNode] Polling response for ${data.assetId}:`, { status: asset.status, url: asset.url });
+                        if (asset) {
+                            // Update status if changed
+                            if (asset.status !== status) {
+                                console.log(`[ImageNode] Status changed: ${status} -> ${asset.status}`);
+                                setStatus(asset.status);
+                            }
+
+                            // Update URL if changed
+                            if (asset.url !== imageUrl) {
+                                setImageUrl(asset.url);
+                            }
+
+                            // Update description if available
+                            if (asset.description && asset.description !== description) {
+                                setDescription(asset.description);
+                            }
+
+                            // Update node data
+                            setNodes((nds) =>
+                                nds.map((node) => {
+                                    if (node.id === id) {
+                                        return {
+                                            ...node,
+                                            data: {
+                                                ...node.data,
+                                                src: asset.url,
+                                                status: asset.status,
+                                                description: asset.description,
+                                            },
+                                        };
+                                    }
+                                    return node;
+                                })
+                            );
+
+                            // Stop polling if completed and description exists (or failed)
+                            if (asset.status === 'failed' || (asset.status === 'completed' && asset.description)) {
+                                clearInterval(interval);
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error("Polling error:", e);
@@ -48,7 +73,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
             }, 3000);
             return () => clearInterval(interval);
         }
-    }, [status, data.assetId, id, setNodes]);
+    }, [status, description, data.assetId, id, setNodes, imageUrl]);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -103,6 +128,18 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                             alt={label}
                             className="w-full h-auto object-cover max-h-[300px]"
                         />
+                        {/* Top Right Controls */}
+                        <div className="absolute top-2 right-2 flex gap-1 z-10">
+                            <button
+                                className="rounded-full bg-black/50 p-1 text-white backdrop-blur-sm hover:bg-black/70 transition-colors"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowDescription(!showDescription);
+                                }}
+                            >
+                                <TextT size={12} weight="bold" />
+                            </button>
+                        </div>
                     </div>
                 ) : status === 'pending' ? (
                     <div className="flex h-32 items-center justify-center bg-slate-50 text-slate-400">
@@ -124,6 +161,17 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                             <ImageIcon size={32} />
                             <span className="text-xs">No Image</span>
                         </div>
+                    </div>
+                )}
+
+                {/* Description Box */}
+                {showDescription && (
+                    <div className="p-3 bg-slate-50 border-t border-slate-100" onDoubleClick={(e) => e.stopPropagation()}>
+                        <textarea
+                            className="w-full h-24 text-xs text-slate-600 bg-transparent resize-none focus:outline-none"
+                            value={description || (status === 'completed' ? 'Generating description...' : 'No description available.')}
+                            readOnly
+                        />
                     </div>
                 )}
             </div>

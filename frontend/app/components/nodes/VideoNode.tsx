@@ -1,10 +1,9 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
-import { FilmSlate } from '@phosphor-icons/react';
+import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 
 import { getAsset } from '../../actions';
-import { useEffect } from 'react';
 
 const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
@@ -12,15 +11,34 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const { setNodes } = useReactFlow();
     const [status, setStatus] = useState(data.status || (data.src ? 'completed' : 'pending'));
     const [videoUrl, setVideoUrl] = useState(data.src);
+    const [description, setDescription] = useState(data.description || '');
+    const [showDescription, setShowDescription] = useState(false);
 
     useEffect(() => {
-        if (status === 'pending' && data.assetId) {
+        // Poll if pending OR (completed but missing description)
+        const shouldPoll = (status === 'pending') || (status === 'completed' && !description);
+
+        if (shouldPoll && data.assetId) {
             const interval = setInterval(async () => {
                 try {
                     const asset = await getAsset(data.assetId);
-                    if (asset && asset.status === 'completed') {
-                        setStatus('completed');
-                        setVideoUrl(asset.url);
+                    if (asset) {
+                        // Update status if changed
+                        if (asset.status !== status) {
+                            setStatus(asset.status);
+                        }
+
+                        // Update URL if changed
+                        if (asset.url !== videoUrl) {
+                            setVideoUrl(asset.url);
+                        }
+
+                        // Update description if available
+                        if (asset.description && asset.description !== description) {
+                            setDescription(asset.description);
+                        }
+
+                        // Update node data
                         setNodes((nds) =>
                             nds.map((node) => {
                                 if (node.id === id) {
@@ -29,17 +47,19 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                         data: {
                                             ...node.data,
                                             src: asset.url,
-                                            status: 'completed',
+                                            status: asset.status,
+                                            description: asset.description,
                                         },
                                     };
                                 }
                                 return node;
                             })
                         );
-                        clearInterval(interval);
-                    } else if (asset && asset.status === 'failed') {
-                        setStatus('failed');
-                        clearInterval(interval);
+
+                        // Stop polling if completed and description exists (or failed)
+                        if (asset.status === 'failed' || (asset.status === 'completed' && asset.description)) {
+                            clearInterval(interval);
+                        }
                     }
                 } catch (e) {
                     console.error("Polling error:", e);
@@ -47,7 +67,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
             }, 3000);
             return () => clearInterval(interval);
         }
-    }, [status, data.assetId, id, setNodes]);
+    }, [status, description, data.assetId, id, setNodes, videoUrl]);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -102,11 +122,25 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             controls={false} // Disable default controls in node view to prevent conflict
                             className="w-full h-auto max-h-[300px] object-cover pointer-events-none" // Disable pointer events on video to allow double click on container
                         />
-                        <div className="absolute top-2 right-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm">
-                            Video
+
+                        {/* Top Right Controls */}
+                        <div className="absolute top-2 right-2 flex gap-1 z-10">
+                            <button
+                                className="rounded-full bg-black/50 p-1 text-white backdrop-blur-sm hover:bg-black/70 transition-colors"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowDescription(!showDescription);
+                                }}
+                            >
+                                <TextT size={12} weight="bold" />
+                            </button>
+                            <div className="rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm">
+                                Video
+                            </div>
                         </div>
+
                         {/* Play overlay hint */}
-                        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 bg-black/10">
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 bg-black/10 pointer-events-none">
                             <div className="rounded-full bg-white/20 p-2 backdrop-blur-sm">
                                 <FilmSlate size={24} className="text-white" weight="fill" />
                             </div>
@@ -132,6 +166,17 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             <FilmSlate size={32} />
                             <span className="text-xs">No Video</span>
                         </div>
+                    </div>
+                )}
+
+                {/* Description Box */}
+                {showDescription && (
+                    <div className="p-3 bg-slate-50 border-t border-slate-100" onDoubleClick={(e) => e.stopPropagation()}>
+                        <textarea
+                            className="w-full h-24 text-xs text-slate-600 bg-transparent resize-none focus:outline-none"
+                            value={description || (status === 'completed' ? 'Generating description...' : 'No description available.')}
+                            readOnly
+                        />
                     </div>
                 )}
             </div>
