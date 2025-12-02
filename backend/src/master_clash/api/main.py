@@ -368,6 +368,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
     """
     import asyncio
     import json
+    import uuid
     
     async def event_generator():
         # Retrieve context
@@ -380,21 +381,37 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             # --- Initial Flow: Propose Root Group ---
             logger.info("Starting initial flow: Proposing Root Group")
             
+            # --- Complex Workflow: ScriptWriter -> Director -> ConceptArtist ---
+            
             # 1. Thinking
-            yield f"event: thinking\ndata: {json.dumps({'content': 'User wants to create character settings. I will start with a main container group.'})}\n\n"
+            yield f"event: thinking\ndata: {json.dumps({'content': 'User wants to create a character. I need a script first, then I will organize the board and ask for concept art.'})}\n\n"
             await asyncio.sleep(1)
 
-            # 2. Propose Root Group
-            proposal_data = {
-                "id": "proposal-root-group",
+            # 2. Delegate to ScriptWriter
+            yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Delegating to ScriptWriter to draft the character background.'})}\n\n"
+            await asyncio.sleep(0.5)
+
+            # 3. ScriptWriter Tool Call
+            tool_id_script = "call_" + str(uuid.uuid4())[:8]
+            yield f"event: tool_start\ndata: {json.dumps({'agent': 'ScriptWriter', 'tool_name': 'write_script', 'args': {'topic': 'Cyberpunk Hacker Neo'}, 'id': tool_id_script})}\n\n"
+            await asyncio.sleep(2.0) # Simulate writing
+
+            script_content = "# Neo - The One\n\nA skilled hacker living a double life. By day, a software engineer; by night, a rebel searching for the truth."
+            yield f"event: tool_end\ndata: {json.dumps({'agent': 'ScriptWriter', 'result': 'Script drafted.', 'id': tool_id_script})}\n\n"
+            await asyncio.sleep(0.5)
+
+            # 4. Director Proposes Text Node (Script)
+            proposal_data_script = {
+                "id": "proposal-script-text",
                 "type": "simple",
-                "nodeType": "group",
+                "nodeType": "text",
                 "nodeData": {
-                    "label": "Character Settings",
+                    "label": "Neo Script",
+                    "content": script_content
                 },
-                "message": "I suggest creating a 'Character Settings' group to organize everything."
+                "message": "Here is the script drafted by ScriptWriter. I'll place it on the board."
             }
-            yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
+            yield f"event: node_proposal\ndata: {json.dumps(proposal_data_script)}\n\n"
             return
 
         else:
@@ -421,7 +438,6 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 
                 logger.info(f"Searching for node with label: '{name}' in context with {len(project_context.nodes)} nodes")
                 for node in project_context.nodes:
-                    # logger.info(f"Checking node: {node.id}, label: {node.data.get('label')}")
                     if node.data.get("label") == name:
                         logger.info(f"Found match! ID: {node.id}")
                         return node.id
@@ -430,119 +446,72 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 return None
 
             if action == "accept":
-                if proposal_id == "proposal-root-group":
-                    # Root Group created. Now propose Character Group inside it.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Main group created. Now let\'s add a specific character group inside it.'})}\n\n"
+                if proposal_id == "proposal-script-text":
+                    # Script Text Node created. Now propose Group.
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Script placed. Now creating a group to hold the visual concepts.'})}\n\n"
                     await asyncio.sleep(1)
 
-                    # Resolve Parent ID
-                    root_group_id = find_node_id_by_name("Character Settings", context)
-                    # Fallback to created_node_id if context not yet updated (though it should be)
-                    if not root_group_id:
-                        root_group_id = created_node_id
-                    
-                    logger.info(f"Resolved 'Character Settings' to ID: {root_group_id}")
+                    # Resolve Upstream ID (Script Node)
+                    script_node_id = find_node_id_by_name("Neo Script", context)
+                    if not script_node_id:
+                        script_node_id = created_node_id
 
-                    proposal_data = {
-                        "id": "proposal-char-group",
+                    proposal_data_group = {
+                        "id": "proposal-concept-group",
                         "type": "simple",
                         "nodeType": "group",
                         "nodeData": {
-                            "label": "Character: Neo",
+                            "label": "Concept Art: Neo",
                         },
-                        "groupId": root_group_id, # Explicit ID
-                        "message": "I'll create a sub-group for the character 'Neo' inside 'Character Settings'."
+                        "upstreamNodeId": script_node_id, # Place next to script
+                        "message": "I'll create a group for the concept art."
                     }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_group)}\n\n"
                     return
 
-                elif proposal_id == "proposal-char-group":
-                    # Character Group created. Now propose Text Node (Description).
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Character group ready. Let\'s add a description text node first.'})}\n\n"
+                elif proposal_id == "proposal-concept-group":
+                    # Group created. Now Delegate to ConceptArtist.
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Group ready. Asking ConceptArtist to generate visuals.'})}\n\n"
                     await asyncio.sleep(1)
 
-                    # Resolve Parent ID
-                    char_group_id = find_node_id_by_name("Character: Neo", context)
-                    if not char_group_id:
-                        char_group_id = created_node_id
-                    
-                    logger.info(f"Resolved 'Character: Neo' to ID: {char_group_id}")
+                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Delegating to ConceptArtist to design the character.'})}\n\n"
+                    await asyncio.sleep(0.5)
 
-                    proposal_data = {
-                        "id": "proposal-text-desc",
-                        "type": "simple",
-                        "nodeType": "text",
-                        "nodeData": {
-                            "label": "Neo Description",
-                            "content": "A cyberpunk hacker named Neo, wearing a long black coat and sunglasses. Neon rain background."
-                        },
-                        "groupId": char_group_id, # Explicit ID
-                        "message": "I'll add a text node describing Neo."
-                    }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
-                    return
+                    # ConceptArtist Tool Call
+                    tool_id_concept = "call_" + str(uuid.uuid4())[:8]
+                    yield f"event: tool_start\ndata: {json.dumps({'agent': 'ConceptArtist', 'tool_name': 'generate_concept', 'args': {'style': 'Cyberpunk', 'subject': 'Neo'}, 'id': tool_id_concept})}\n\n"
+                    await asyncio.sleep(2.0) # Simulate generation
 
-                elif proposal_id == "proposal-text-desc":
-                    # Text Node created. Now propose first Image Gen Node (Portrait).
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Description added. Now let\'s generate a portrait based on it.'})}\n\n"
-                    await asyncio.sleep(1)
+                    yield f"event: tool_end\ndata: {json.dumps({'agent': 'ConceptArtist', 'result': 'Concept generated: Neon-lit hacker portrait.', 'id': tool_id_concept})}\n\n"
+                    await asyncio.sleep(0.5)
 
-                    # Resolve Parent ID and Upstream ID
-                    char_group_id = find_node_id_by_name("Character: Neo", context)
-                    text_node_id = find_node_id_by_name("Neo Description", context)
-                    
-                    if not text_node_id:
-                        text_node_id = created_node_id
+                    # Resolve Parent ID (Group)
+                    group_node_id = find_node_id_by_name("Concept Art: Neo", context)
+                    if not group_node_id:
+                        group_node_id = created_node_id
 
-                    logger.info(f"Resolved 'Character: Neo' to {char_group_id}, 'Neo Description' to {text_node_id}")
+                    # Resolve Script Node ID for connection
+                    script_node_id = find_node_id_by_name("Neo Script", context)
 
-                    proposal_data = {
-                        "id": "proposal-image-portrait",
+                    # ConceptArtist Proposes Image Node
+                    proposal_data_image = {
+                        "id": "proposal-concept-image",
                         "type": "generative",
                         "nodeType": "action-badge-image",
                         "nodeData": {
-                            "label": "Portrait Gen",
-                            "prompt": "Cyberpunk hacker Neo, close up portrait, neon lights, high detail",
+                            "label": "Neo Portrait Gen",
+                            # "prompt": "Cyberpunk hacker Neo, neon rain, high contrast, digital art", # Removed to force upstream usage
                         },
-                        "groupId": char_group_id, # Explicit ID
-                        "upstreamNodeId": text_node_id, # Explicit ID
-                        "message": "I'll generate a portrait image based on the description."
+                        "groupId": group_node_id, # Inside the group
+                        "upstreamNodeId": script_node_id, # Connect to Script
+                        "message": "I've designed a concept. Shall I add this generation node?"
                     }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_image)}\n\n"
                     return
                 
-                elif proposal_id == "proposal-image-portrait":
-                     # Portrait Node created. Now propose Action Pose.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Portrait generator ready. Now let\'s add an action pose generator.'})}\n\n"
-                    await asyncio.sleep(1)
-
-                    # Resolve Parent ID and Upstream ID
-                    char_group_id = find_node_id_by_name("Character: Neo", context)
-                    # CHANGE: Connect to Text Node (Description) instead of previous Action Node
-                    text_node_id = find_node_id_by_name("Neo Description", context)
-
-                    if not text_node_id:
-                        text_node_id = created_node_id # Fallback if previous was text node (unlikely here)
-                    
-                    logger.info(f"Resolved 'Character: Neo' to {char_group_id}, 'Neo Description' to {text_node_id}")
-
-                    proposal_data = {
-                        "id": "proposal-image-action",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {
-                            "label": "Action Pose Gen",
-                            "prompt": "Cyberpunk hacker Neo, dodging bullets, dynamic action pose, matrix style",
-                        },
-                        "groupId": char_group_id, # Explicit ID
-                        "upstreamNodeId": text_node_id, # Explicit ID: Connect to Description
-                        "message": "I'll also generate an action pose image."
-                    }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data)}\n\n"
-                    return
-
-                elif proposal_id == "proposal-image-action":
-                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'All nodes created! You can now run them.'})}\n\n"
+                elif proposal_id == "proposal-concept-image":
+                     # Image Node created. Workflow Complete.
+                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Workflow complete! You have the script and the concept art setup.'})}\n\n"
                     yield f"event: end\ndata: {{}}\n\n"
                     return
 
