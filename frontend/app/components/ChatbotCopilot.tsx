@@ -387,139 +387,163 @@ export default function ChatbotCopilot({
         };
 
         eventSource.addEventListener('plan', (e: any) => {
-            const data = JSON.parse(e.data);
-            setTodoItems(data.items);
+            try {
+                const data = JSON.parse(e.data);
+                setTodoItems(data.items);
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing plan event:', err);
+            }
         });
 
         eventSource.addEventListener('thinking', (e: any) => {
-            const data = JSON.parse(e.data);
-            setDisplayItems(prev => {
-                const lastItem = prev[prev.length - 1];
-                if (lastItem && lastItem.type === 'thinking') {
-                    // Update existing thinking block
-                    return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
-                } else {
-                    // Create new thinking block
-                    return [...prev, {
-                        type: 'thinking',
-                        id: Date.now().toString() + '-thinking',
-                        content: data.content
-                    }];
-                }
-            });
+            try {
+                const data = JSON.parse(e.data);
+                setDisplayItems(prev => {
+                    const lastItem = prev[prev.length - 1];
+                    if (lastItem && lastItem.type === 'thinking') {
+                        // Update existing thinking block
+                        return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
+                    } else {
+                        // Create new thinking block
+                        return [...prev, {
+                            type: 'thinking',
+                            id: Date.now().toString() + '-thinking',
+                            content: data.content
+                        }];
+                    }
+                });
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing thinking event:', err);
+            }
         });
 
         eventSource.addEventListener('text', (e: any) => {
-            const data = JSON.parse(e.data);
-            if (data.agent === 'Director') {
-                setDisplayItems(prev => [...prev, {
-                    type: 'message',
-                    role: 'assistant',
-                    content: data.content,
-                    id: Date.now().toString()
-                }]);
+            try {
+                const data = JSON.parse(e.data);
+                if (data.agent === 'Director') {
+                    setDisplayItems(prev => [...prev, {
+                        type: 'message',
+                        role: 'assistant',
+                        content: data.content,
+                        id: Date.now().toString()
+                    }]);
+                }
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing text event:', err);
             }
         });
 
         eventSource.addEventListener('tool_start', (e: any) => {
-            const data = JSON.parse(e.data);
-            const agentId = Date.now().toString() + '-' + data.agent.toLowerCase();
+            try {
+                const data = JSON.parse(e.data);
+                const agentId = Date.now().toString() + '-' + data.agent.toLowerCase();
 
-            // For now, we assume tool calls come from sub-agents like ScriptWriter
-            // So we create/update the agent card
-            setDisplayItems(prev => {
-                // Check if agent card already exists (simplified logic)
-                const existingAgentIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
+                // For now, we assume tool calls come from sub-agents like ScriptWriter
+                // So we create/update the agent card
+                setDisplayItems(prev => {
+                    // Check if agent card already exists (simplified logic)
+                    const existingAgentIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
 
-                if (existingAgentIndex !== -1) {
-                    // Update existing agent card with new tool call log
-                    return prev.map((item, index) => {
-                        if (index === existingAgentIndex) {
-                            return {
-                                ...item,
-                                props: {
-                                    ...item.props,
-                                    logs: [...(item.props.logs || []), {
-                                        id: data.id,
-                                        type: 'tool_call',
-                                        toolProps: {
-                                            toolName: data.tool_name,
-                                            args: data.args,
-                                            status: 'pending',
-                                            indent: false
-                                        }
-                                    }]
-                                }
-                            };
-                        }
-                        return item;
-                    });
-                } else {
-                    // Create new agent card with tool call log
-                    return [...prev, {
-                        type: 'agent_card',
-                        id: agentId,
-                        props: {
-                            agentName: data.agent,
-                            status: 'working',
-                            persona: data.agent.toLowerCase(),
-                            logs: [{
-                                id: data.id,
-                                type: 'tool_call',
-                                toolProps: {
-                                    toolName: data.tool_name,
-                                    args: data.args,
-                                    status: 'pending',
-                                    indent: false
-                                }
-                            }]
-                        }
-                    }];
-                }
-            });
+                    if (existingAgentIndex !== -1) {
+                        // Update existing agent card with new tool call log
+                        return prev.map((item, index) => {
+                            if (index === existingAgentIndex) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        logs: [...(item.props.logs || []), {
+                                            id: data.id,
+                                            type: 'tool_call',
+                                            toolProps: {
+                                                toolName: data.tool_name,
+                                                args: data.args,
+                                                status: 'pending',
+                                                indent: false
+                                            }
+                                        }]
+                                    }
+                                };
+                            }
+                            return item;
+                        });
+                    } else {
+                        // Create new agent card with tool call log
+                        return [...prev, {
+                            type: 'agent_card',
+                            id: agentId,
+                            props: {
+                                agentName: data.agent,
+                                status: 'working',
+                                persona: data.agent.toLowerCase(),
+                                logs: [{
+                                    id: data.id,
+                                    type: 'tool_call',
+                                    toolProps: {
+                                        toolName: data.tool_name,
+                                        args: data.args,
+                                        status: 'pending',
+                                        indent: false
+                                    }
+                                }]
+                            }
+                        }];
+                    }
+                });
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing tool_start event:', err);
+            }
         });
 
         eventSource.addEventListener('tool_end', (e: any) => {
-            const data = JSON.parse(e.data);
-            setDisplayItems(prev => prev.map(item => {
-                if (item.type === 'agent_card' && item.props.agentName === data.agent) {
-                    return {
-                        ...item,
-                        props: {
-                            ...item.props,
-                            logs: item.props.logs?.map((log: any) =>
-                                log.id === data.id
-                                    ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
-                                    : log
-                            )
-                        }
-                    };
-                }
-                return item;
-            }));
+            try {
+                const data = JSON.parse(e.data);
+                setDisplayItems(prev => prev.map(item => {
+                    if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                        return {
+                            ...item,
+                            props: {
+                                ...item.props,
+                                logs: item.props.logs?.map((log: any) =>
+                                    log.id === data.id
+                                        ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
+                                        : log
+                                )
+                            }
+                        };
+                    }
+                    return item;
+                }));
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing tool_end event:', err);
+            }
         });
 
         eventSource.addEventListener('human_interrupt', (e: any) => {
-            const data = JSON.parse(e.data);
-            const approvalId = Date.now().toString() + '-approval';
-            setDisplayItems(prev => [...prev, {
-                type: 'approval_card',
-                id: approvalId,
-                props: {
-                    message: data.message,
-                    onApprove: () => {
-                        setDisplayItems(p => p.filter(i => i.id !== approvalId));
-                        // Resume the stream with approval data
-                        runStreamScenario('', true, { action: 'approve' });
-                    },
-                    onReject: () => {
-                        setDisplayItems(p => p.filter(i => i.id !== approvalId));
-                        // Resume the stream with reject data
-                        runStreamScenario('', true, { action: 'reject' });
+            try {
+                const data = JSON.parse(e.data);
+                const approvalId = Date.now().toString() + '-approval';
+                setDisplayItems(prev => [...prev, {
+                    type: 'approval_card',
+                    id: approvalId,
+                    props: {
+                        message: data.message,
+                        onApprove: () => {
+                            setDisplayItems(p => p.filter(i => i.id !== approvalId));
+                            // Resume the stream with approval data
+                            runStreamScenario('', true, { action: 'approve' });
+                        },
+                        onReject: () => {
+                            setDisplayItems(p => p.filter(i => i.id !== approvalId));
+                            // Resume the stream with reject data
+                            runStreamScenario('', true, { action: 'reject' });
+                        }
                     }
-                }
-            }]);
-            eventSource.close();
+                }]);
+                eventSource.close();
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing human_interrupt event:', err);
+            }
         });
 
         eventSource.addEventListener('end', () => {
@@ -528,106 +552,110 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('node_proposal', (e: any) => {
-            const data = JSON.parse(e.data);
-            console.log('[ChatbotCopilot] Received node_proposal:', data);
-            const proposalId = Date.now().toString() + '-proposal';
+            try {
+                const data = JSON.parse(e.data);
+                console.log('[ChatbotCopilot] Received node_proposal:', data);
+                const proposalId = Date.now().toString() + '-proposal';
 
-            // Resolve Names to IDs using local helper
-            let resolvedGroupId = data.groupId;
-            if (data.groupName) {
-                const foundId = resolveName(data.groupName);
-                if (foundId) {
-                    resolvedGroupId = foundId;
-                    console.log(`[ChatbotCopilot] Resolved groupName "${data.groupName}" to ID "${foundId}"`);
-                } else {
-                    console.warn(`[ChatbotCopilot] Could not resolve groupName "${data.groupName}"`);
-                }
-            }
-
-            let resolvedUpstreamNodeId = data.upstreamNodeId;
-            if (data.upstreamNodeName) {
-                const foundId = resolveName(data.upstreamNodeName);
-                if (foundId) {
-                    resolvedUpstreamNodeId = foundId;
-                    console.log(`[ChatbotCopilot] Resolved upstreamNodeName "${data.upstreamNodeName}" to ID "${foundId}"`);
-                } else {
-                    console.warn(`[ChatbotCopilot] Could not resolve upstreamNodeName "${data.upstreamNodeName}"`);
-                }
-            }
-
-            setDisplayItems(prev => [...prev, {
-                type: 'node_proposal',
-                id: proposalId,
-                props: {
-                    proposal: {
-                        id: proposalId,
-                        ...data
-                    },
-                    onAccept: () => {
-                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                        // Add the node
-                        let createdNodeId: string | undefined;
-                        if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId });
-                        }
-                        // Add edge if upstream provided
-                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
-                            // Create edge from upstream to new node
-                            setTimeout(() => {
-                                onAddEdge({
-                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                    source: resolvedUpstreamNodeId,
-                                    target: createdNodeId,
-                                    type: 'default'
-                                } as any);
-                            }, 100);
-                        }
-
-                        // Resume stream AFTER state update
-                        setPendingResume({
-                            userInput: '',
-                            resume: true,
-                            inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                            expectedNodeId: createdNodeId // Wait for this node!
-                        });
-                    },
-                    onReject: () => {
-                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                        // Resume stream with reject
-                        runStreamScenario('', true, { action: 'reject', proposalId: data.id });
-                    },
-                    onAcceptAndRun: () => {
-                        setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                        // Add node with autoRun flag
-                        let createdNodeId: string | undefined;
-                        if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId, autoRun: true, upstreamNodeId: resolvedUpstreamNodeId });
-                        }
-
-                        // Add edge if upstream provided
-                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
-                            // Create edge from upstream to new node
-                            setTimeout(() => {
-                                onAddEdge({
-                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                    source: resolvedUpstreamNodeId,
-                                    target: createdNodeId,
-                                    type: 'default'
-                                } as any);
-                            }, 100);
-                        }
-
-                        // Resume stream AFTER state update
-                        setPendingResume({
-                            userInput: '',
-                            resume: true,
-                            inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                            expectedNodeId: createdNodeId // Wait for this node!
-                        });
+                // Resolve Names to IDs using local helper
+                let resolvedGroupId = data.groupId;
+                if (data.groupName) {
+                    const foundId = resolveName(data.groupName);
+                    if (foundId) {
+                        resolvedGroupId = foundId;
+                        console.log(`[ChatbotCopilot] Resolved groupName "${data.groupName}" to ID "${foundId}"`);
+                    } else {
+                        console.warn(`[ChatbotCopilot] Could not resolve groupName "${data.groupName}"`);
                     }
                 }
-            }]);
-            eventSource.close();
+
+                let resolvedUpstreamNodeId = data.upstreamNodeId;
+                if (data.upstreamNodeName) {
+                    const foundId = resolveName(data.upstreamNodeName);
+                    if (foundId) {
+                        resolvedUpstreamNodeId = foundId;
+                        console.log(`[ChatbotCopilot] Resolved upstreamNodeName "${data.upstreamNodeName}" to ID "${foundId}"`);
+                    } else {
+                        console.warn(`[ChatbotCopilot] Could not resolve upstreamNodeName "${data.upstreamNodeName}"`);
+                    }
+                }
+
+                setDisplayItems(prev => [...prev, {
+                    type: 'node_proposal',
+                    id: proposalId,
+                    props: {
+                        proposal: {
+                            id: proposalId,
+                            ...data
+                        },
+                        onAccept: () => {
+                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                            // Add the node
+                            let createdNodeId: string | undefined;
+                            if (onAddNode) {
+                                createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId });
+                            }
+                            // Add edge if upstream provided
+                            if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                                // Create edge from upstream to new node
+                                setTimeout(() => {
+                                    onAddEdge({
+                                        id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                        source: resolvedUpstreamNodeId,
+                                        target: createdNodeId,
+                                        type: 'default'
+                                    } as any);
+                                }, 100);
+                            }
+
+                            // Resume stream AFTER state update
+                            setPendingResume({
+                                userInput: '',
+                                resume: true,
+                                inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                                expectedNodeId: createdNodeId // Wait for this node!
+                            });
+                        },
+                        onReject: () => {
+                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                            // Resume stream with reject
+                            runStreamScenario('', true, { action: 'reject', proposalId: data.id });
+                        },
+                        onAcceptAndRun: () => {
+                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                            // Add node with autoRun flag
+                            let createdNodeId: string | undefined;
+                            if (onAddNode) {
+                                createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId, autoRun: true, upstreamNodeId: resolvedUpstreamNodeId });
+                            }
+
+                            // Add edge if upstream provided
+                            if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                                // Create edge from upstream to new node
+                                setTimeout(() => {
+                                    onAddEdge({
+                                        id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                        source: resolvedUpstreamNodeId,
+                                        target: createdNodeId,
+                                        type: 'default'
+                                    } as any);
+                                }, 100);
+                            }
+
+                            // Resume stream AFTER state update
+                            setPendingResume({
+                                userInput: '',
+                                resume: true,
+                                inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                                expectedNodeId: createdNodeId // Wait for this node!
+                            });
+                        }
+                    }
+                }]);
+                eventSource.close();
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing node_proposal event:', err);
+            }
         });
     };
 
