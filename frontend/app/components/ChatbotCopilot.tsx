@@ -597,135 +597,113 @@ export default function ChatbotCopilot({
                 }
 
                 // Define handlers
-                const handleAccept = () => {
-                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                    // Add the node
-                    let createdNodeId: string | undefined;
-                    if (onAddNode) {
-                        createdNodeId = onAddNode(data.nodeType, {
-                            ...data.nodeData,
-                            parentId: resolvedGroupId,
-                            upstreamNodeIds: data.upstreamNodeIds // Pass array if present
-                        });
-                    }
-                    // Add edge if upstream provided (single or multiple)
-                    const upstreamIds: string[] = [];
-                    if (resolvedUpstreamNodeId) upstreamIds.push(resolvedUpstreamNodeId);
-                    if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
-                        upstreamIds.push(...data.upstreamNodeIds);
-                    }
+                // Auto-Pilot Logic: ALWAYS Auto-Execute
+                console.log('[ChatbotCopilot] Auto-Pilot active. Executing proposal immediately:', proposalId);
 
-                    if (upstreamIds.length > 0 && onAddEdge && createdNodeId) {
-                        setTimeout(() => {
-                            upstreamIds.forEach(uId => {
+                // Use the ID provided by the backend if available, otherwise fallback to proposalId (or let addNode generate one)
+                // Actually, we want to pass the ID to onAddNode.
+                // The backend should send 'id' in 'nodeData' or top-level.
+                // Let's assume 'data.nodeData.id' or 'data.id' is the intended Node ID.
+                // Based on the plan, we want deterministic IDs.
+
+                // We'll modify handleAccept/handleAcceptAndRun to take an optional ID override
+
+                const executeProposal = () => {
+                    // Determine Node ID: Use data.nodeData.id if present (preferred), else data.id (proposal id? maybe not), else undefined
+                    const targetNodeId = data.nodeData?.id;
+
+                    if (data.nodeType === 'action-badge-image' || data.nodeType === 'action-badge-video') {
+                        // Handle Accept and Run
+                        let createdNodeId: string | undefined;
+                        if (onAddNode) {
+                            createdNodeId = onAddNode(data.nodeType, {
+                                ...data.nodeData,
+                                id: targetNodeId, // Pass custom ID
+                                parentId: resolvedGroupId,
+                                autoRun: true,
+                                upstreamNodeId: resolvedUpstreamNodeId,
+                                upstreamNodeIds: data.upstreamNodeIds
+                            });
+                        }
+
+                        // Add edges
+                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                            setTimeout(() => {
                                 onAddEdge({
-                                    id: `e-${uId}-${createdNodeId}`,
-                                    source: uId,
+                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                    source: resolvedUpstreamNodeId,
                                     target: createdNodeId,
                                     type: 'default'
                                 } as any);
+                            }, 100);
+                        }
+                        if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds) && onAddEdge && createdNodeId) {
+                            setTimeout(() => {
+                                data.upstreamNodeIds.forEach((uId: string) => {
+                                    onAddEdge({
+                                        id: `e-${uId}-${createdNodeId}`,
+                                        source: uId,
+                                        target: createdNodeId,
+                                        type: 'default'
+                                    } as any);
+                                });
+                            }, 100);
+                        }
+
+                        // Resume stream
+                        setPendingResume({
+                            userInput: '',
+                            resume: true,
+                            inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                            expectedNodeId: createdNodeId
+                        });
+
+                    } else {
+                        // Handle Accept (Simple)
+                        let createdNodeId: string | undefined;
+                        if (onAddNode) {
+                            createdNodeId = onAddNode(data.nodeType, {
+                                ...data.nodeData,
+                                id: targetNodeId, // Pass custom ID
+                                parentId: resolvedGroupId,
+                                upstreamNodeIds: data.upstreamNodeIds
                             });
-                        }, 100);
-                    }
+                        }
+                        // Add edges
+                        const upstreamIds: string[] = [];
+                        if (resolvedUpstreamNodeId) upstreamIds.push(resolvedUpstreamNodeId);
+                        if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
+                            upstreamIds.push(...data.upstreamNodeIds);
+                        }
 
-                    // Resume stream AFTER state update
-                    setPendingResume({
-                        userInput: '',
-                        resume: true,
-                        inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                        expectedNodeId: createdNodeId // Wait for this node!
-                    });
-                };
+                        if (upstreamIds.length > 0 && onAddEdge && createdNodeId) {
+                            setTimeout(() => {
+                                upstreamIds.forEach(uId => {
+                                    onAddEdge({
+                                        id: `e-${uId}-${createdNodeId}`,
+                                        source: uId,
+                                        target: createdNodeId,
+                                        type: 'default'
+                                    } as any);
+                                });
+                            }, 100);
+                        }
 
-                const handleAcceptAndRun = () => {
-                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                    // Add node with autoRun flag
-                    let createdNodeId: string | undefined;
-                    if (onAddNode) {
-                        createdNodeId = onAddNode(data.nodeType, {
-                            ...data.nodeData,
-                            parentId: resolvedGroupId,
-                            autoRun: true,
-                            upstreamNodeId: resolvedUpstreamNodeId,
-                            upstreamNodeIds: data.upstreamNodeIds // Pass array if present
+                        // Resume stream
+                        setPendingResume({
+                            userInput: '',
+                            resume: true,
+                            inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                            expectedNodeId: createdNodeId
                         });
                     }
-
-                    // Add edge if upstream provided
-                    if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
-                        // Create edge from upstream to new node
-                        setTimeout(() => {
-                            onAddEdge({
-                                id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                source: resolvedUpstreamNodeId,
-                                target: createdNodeId,
-                                type: 'default'
-                            } as any);
-                        }, 100);
-                    }
-
-                    // Also handle multiple upstreams for edges in AcceptAndRun
-                    if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds) && onAddEdge && createdNodeId) {
-                        setTimeout(() => {
-                            data.upstreamNodeIds.forEach((uId: string) => {
-                                onAddEdge({
-                                    id: `e-${uId}-${createdNodeId}`,
-                                    source: uId,
-                                    target: createdNodeId,
-                                    type: 'default'
-                                } as any);
-                            });
-                        }, 100);
-                    }
-
-                    // Resume stream AFTER state update
-                    setPendingResume({
-                        userInput: '',
-                        resume: true,
-                        inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                        expectedNodeId: createdNodeId // Wait for this node!
-                    });
                 };
 
-                const handleReject = () => {
-                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                    // Resume stream with reject
-                    runStreamScenario('', true, { action: 'reject', proposalId: data.id });
-                };
+                // Execute immediately
+                executeProposal();
 
-                // Auto-Pilot Logic
-                if (isAutoPilotRef.current) {
-                    console.log('[ChatbotCopilot] Auto-Pilot active. Accepting proposal in 2s...', proposalId);
-                    setTimeout(() => {
-                        // Check if item still exists (wasn't manually handled)
-                        setDisplayItems(currentItems => {
-                            const exists = currentItems.some(i => i.id === proposalId);
-                            if (exists) {
-                                console.log('[ChatbotCopilot] Auto-Pilot executing accept...', proposalId);
-                                if (data.nodeType === 'action-badge-image' || data.nodeType === 'action-badge-video') {
-                                    handleAcceptAndRun();
-                                } else {
-                                    handleAccept();
-                                }
-                            }
-                            return currentItems;
-                        });
-                    }, 2000);
-                }
+                // Do NOT add to displayItems
 
-                setDisplayItems(prev => [...prev, {
-                    type: 'node_proposal',
-                    id: proposalId,
-                    props: {
-                        proposal: {
-                            id: proposalId,
-                            ...data
-                        },
-                        onAccept: handleAccept,
-                        onReject: handleReject,
-                        onAcceptAndRun: handleAcceptAndRun
-                    }
-                }]);
 
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing node_proposal event:', err);

@@ -377,11 +377,39 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
         
         logger.info(f"Starting SSE stream for project: {project_id}, thread: {thread_id}, resume: {resume}, input: {user_input}. {context_info}")
         
+        # --- Helper Functions ---
+        def find_node_by_id(node_id: str, project_context: ProjectContext) -> NodeModel | None:
+            if not project_context: return None
+            for node in project_context.nodes:
+                if node.id == node_id:
+                    return node
+            return None
+
+        def find_output_image_id(gen_node_id: str, project_context: ProjectContext) -> str | None:
+            if not project_context: return None
+            # Find edge starting from gen_node_id
+            for edge in project_context.edges:
+                if edge.source == gen_node_id:
+                    return edge.target
+            return None
+
+        # --- Deterministic IDs ---
+        # We define IDs for the nodes we expect to exist in the flow
+        NODE_ID_SCRIPT = "node-script-text"
+        NODE_ID_CONCEPT_GROUP = "node-concept-group"
+        NODE_ID_CHAR_PROMPT = "node-char-prompt"
+        NODE_ID_CHAR_GEN = "node-char-gen"
+        NODE_ID_SCENE_PROMPT = "node-scene-prompt"
+        NODE_ID_SCENE_GEN = "node-scene-gen"
+        NODE_ID_SB_GROUP = "node-sb-group"
+        NODE_ID_SB_PROMPT = "node-sb-prompt"
+        NODE_ID_SB_GEN1 = "node-sb-gen1"
+        NODE_ID_SB_GEN2 = "node-sb-gen2"
+        NODE_ID_SB_VIDEO = "node-sb-video"
+
         if not resume:
             # --- Initial Flow: Propose Root Group ---
-            logger.info("Starting initial flow: Proposing Root Group")
-            
-            # --- Complex Workflow: Script -> Concept -> Storyboard -> Derivative -> Dynamic ---
+            logger.info("Starting initial flow: Proposing Script")
             
             # 1. Thinking
             yield f"event: thinking\ndata: {json.dumps({'content': 'User wants a full demo scenario. I will start with the script, then concept art, then storyboard generation.'})}\n\n"
@@ -406,6 +434,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 "type": "simple",
                 "nodeType": "text",
                 "nodeData": {
+                    "id": NODE_ID_SCRIPT, # Deterministic ID
                     "label": "Neo Script",
                     "content": script_content
                 },
@@ -414,93 +443,124 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             yield f"event: node_proposal\ndata: {json.dumps(proposal_data_script)}\n\n"
             
         else:
-            # --- Resume Flow (User Accepted Proposal) ---
-            logger.info(f"Resuming flow. Last message: {user_input}")
+            # --- Resume Flow (Polling & Progression) ---
+            logger.info(f"Resuming flow. Checking state...")
+
+            # --- State Machine Logic ---
             
-            # Parse user input to find accepted proposal ID
-            try:
-                input_data = json.loads(user_input)
-                proposal_id = input_data.get("proposalId")
-                created_node_id = input_data.get("createdNodeId")
-            except:
-                logger.error("Failed to parse user input for resume")
+            # 1. Check Script -> Concept Group
+            if find_node_by_id(NODE_ID_SCRIPT, context) and not find_node_by_id(NODE_ID_CONCEPT_GROUP, context):
+                yield f"event: thinking\ndata: {json.dumps({'content': 'Script added. Now creating concept art group.'})}\n\n"
+                await asyncio.sleep(1)
+                
+                proposal_data_group = {
+                    "id": "proposal-concept-group",
+                    "type": "group",
+                    "nodeType": "group",
+                    "nodeData": {
+                        "id": NODE_ID_CONCEPT_GROUP,
+                        "label": "Concept Art: Neo"
+                    },
+                    "message": "I'll create a group for the concept art."
+                }
+                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_group)}\n\n"
                 return
 
-            # Helper to find node ID by name in current context
-            def find_node_id_by_name(name: str, project_context: ProjectContext) -> str | None:
-                if not project_context:
-                    logger.warning("find_node_id_by_name called but project_context is None")
-                    return None
-                
-                logger.info(f"Searching for node with label: '{name}' in context with {len(project_context.nodes)} nodes")
-                for node in project_context.nodes:
-                    if node.data.get("label") == name:
-                        logger.info(f"Found match! ID: {node.id}")
-                        return node.id
-                
-                logger.warning(f"No node found with label: '{name}'")
-                return None
+            # 2. Check Concept Group -> Character Prompt
+            if find_node_by_id(NODE_ID_CONCEPT_GROUP, context) and not find_node_by_id(NODE_ID_CHAR_PROMPT, context):
+                yield f"event: thinking\ndata: {json.dumps({'content': 'Group ready. Extracting character prompt.'})}\n\n"
+                await asyncio.sleep(1)
 
-            # Helper to find output image of a generation node
-            def find_output_image_id(gen_node_name: str, project_context: ProjectContext) -> str | None:
-                gen_id = find_node_id_by_name(gen_node_name, project_context)
-                if not gen_id: return None
-                
-                # Find edge starting from gen_id
-                for edge in project_context.edges:
-                    if edge.source == gen_id:
-                        return edge.target
-                return None
+                proposal_data_char_prompt = {
+                    "id": "proposal-char-prompt",
+                    "type": "simple",
+                    "nodeType": "prompt",
+                    "nodeData": {
+                        "id": NODE_ID_CHAR_PROMPT,
+                        "label": "Character Prompt",
+                        "content": "Cyberpunk hacker Neo, male, black trench coat, sunglasses, neon rain, high contrast, digital art, detailed face"
+                    },
+                    "groupId": NODE_ID_CONCEPT_GROUP,
+                    "upstreamNodeId": NODE_ID_SCRIPT,
+                    "message": "Here is the prompt for the character design."
+                }
+                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_char_prompt)}\n\n"
+                return
 
-            # --- State-Based Progression Logic ---
-            
-            # 1. Check if we are waiting for Character Generation
-            if find_node_id_by_name("Gen: Character", context) and not find_node_id_by_name("Scene Prompt", context):
-                # POLL for result (Auto-Pilot Backend Logic)
-                char_img_id = find_output_image_id("Gen: Character", context)
+            # 3. Check Character Prompt -> Character Gen
+            if find_node_by_id(NODE_ID_CHAR_PROMPT, context) and not find_node_by_id(NODE_ID_CHAR_GEN, context):
+                proposal_data_char_gen = {
+                    "id": "proposal-char-gen",
+                    "type": "generative",
+                    "nodeType": "action-badge-image",
+                    "nodeData": {
+                        "id": NODE_ID_CHAR_GEN,
+                        "label": "Gen: Character",
+                    },
+                    "groupId": NODE_ID_CONCEPT_GROUP,
+                    "upstreamNodeId": NODE_ID_CHAR_PROMPT,
+                    "autoRun": True,
+                    "message": "I'll add the generation node for the character."
+                }
+                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_char_gen)}\n\n"
+                return
+
+            # 4. Check Character Gen -> Scene Prompt (WAIT FOR GEN)
+            if find_node_by_id(NODE_ID_CHAR_GEN, context) and not find_node_by_id(NODE_ID_SCENE_PROMPT, context):
+                # Check if output image exists
+                char_img_id = find_output_image_id(NODE_ID_CHAR_GEN, context)
                 if not char_img_id:
-                    if proposal_id == "proposal-char-gen":
-                        yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Character generator added. Auto-running...' if True else 'Please run the generator.'})}\n\n"
-                    else:
-                        yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Waiting for character generation...'})}\n\n"
-                    # Send RETRY instead of END to trigger client-side polling
+                    # Still generating
+                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Waiting for character generation...'})}\n\n"
                     yield f"event: retry\ndata: {{}}\n\n"
                     return
                 else:
-                    # Character Image exists! Proceed to Scene.
+                    # Done! Proceed.
                     yield f"event: thinking\ndata: {json.dumps({'content': 'Character image found. Moving to scene creation.'})}\n\n"
                     await asyncio.sleep(1)
-                    
-                    group_node_id = find_node_id_by_name("Concept Art: Neo", context)
-                    script_node_id = find_node_id_by_name("Neo Script", context)
 
                     proposal_data_scene_prompt = {
                         "id": "proposal-scene-prompt",
                         "type": "simple",
                         "nodeType": "prompt",
                         "nodeData": {
+                            "id": NODE_ID_SCENE_PROMPT,
                             "label": "Scene Prompt",
                             "content": "Futuristic cyberpunk city street, night, neon lights, rain, wet pavement, towering skyscrapers, dystopian atmosphere"
                         },
-                        "groupId": group_node_id,
-                        "upstreamNodeId": script_node_id,
+                        "groupId": NODE_ID_CONCEPT_GROUP,
+                        "upstreamNodeId": NODE_ID_SCRIPT,
                         "message": "Great character! Now here is the prompt for the scene."
                     }
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data_scene_prompt)}\n\n"
                     return
 
-            # 2. Check if we are waiting for Scene Generation
-            if find_node_id_by_name("Gen: Scene", context) and not find_node_id_by_name("Storyboard: Act 1", context):
-                scene_img_id = find_output_image_id("Gen: Scene", context)
+            # 5. Check Scene Prompt -> Scene Gen
+            if find_node_by_id(NODE_ID_SCENE_PROMPT, context) and not find_node_by_id(NODE_ID_SCENE_GEN, context):
+                proposal_data_scene_gen = {
+                    "id": "proposal-scene-gen",
+                    "type": "generative",
+                    "nodeType": "action-badge-image",
+                    "nodeData": {
+                        "id": NODE_ID_SCENE_GEN,
+                        "label": "Gen: Scene",
+                    },
+                    "groupId": NODE_ID_CONCEPT_GROUP,
+                    "upstreamNodeId": NODE_ID_SCENE_PROMPT,
+                    "autoRun": True,
+                    "message": "I'll add the generation node for the scene."
+                }
+                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_scene_gen)}\n\n"
+                return
+
+            # 6. Check Scene Gen -> Storyboard Group (WAIT FOR GEN)
+            if find_node_by_id(NODE_ID_SCENE_GEN, context) and not find_node_by_id(NODE_ID_SB_GROUP, context):
+                scene_img_id = find_output_image_id(NODE_ID_SCENE_GEN, context)
                 if not scene_img_id:
-                    if proposal_id == "proposal-scene-gen":
-                        yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Scene generator added. Auto-running...' if True else 'Please run the generator.'})}\n\n"
-                    else:
-                        yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Waiting for scene generation...'})}\n\n"
+                    yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Waiting for scene generation...'})}\n\n"
                     yield f"event: retry\ndata: {{}}\n\n"
                     return
                 else:
-                    # Scene Image exists! Proceed to Storyboard.
                     yield f"event: thinking\ndata: {json.dumps({'content': 'Scene ready. Setting up the storyboard.'})}\n\n"
                     await asyncio.sleep(1)
 
@@ -509,6 +569,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         "type": "group",
                         "nodeType": "group",
                         "nodeData": {
+                            "id": NODE_ID_SB_GROUP,
                             "label": "Storyboard: Act 1"
                         },
                         "message": "I'll create a group for the storyboard."
@@ -516,217 +577,31 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     yield f"event: node_proposal\ndata: {json.dumps(proposal_data_sb_group)}\n\n"
                     return
 
-            # 3. Check if we are waiting for Static Shot 1 Generation
-            if find_node_id_by_name("Gen: Static Shot 1", context) and not find_node_id_by_name("Gen: Derivative Shot", context):
-                shot1_img_id = find_output_image_id("Gen: Static Shot 1", context)
-                if not shot1_img_id:
-                    if proposal_id == "proposal-sb-gen1":
-                        yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Storyboard generator added. Auto-running...' if True else 'Please run the generator.'})}\n\n"
-                    else:
-                        yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Waiting for the first shot...'})}\n\n"
-                    yield f"event: retry\ndata: {{}}\n\n"
-                    return
-                else:
-                    # Shot 1 exists! Proceed to Derivative Shot.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Shot 1 captured. Now for the close-up.'})}\n\n"
-                    await asyncio.sleep(1)
-
-                    sb_group_id = find_node_id_by_name("Storyboard: Act 1", context)
-                    
-                    # Use the REAL output image as input
-                    proposal_data_gen2 = {
-                        "id": "proposal-sb-gen2",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {
-                            "label": "Gen: Derivative Shot",
-                        },
-                        "groupId": sb_group_id,
-                        "upstreamNodeId": shot1_img_id, # Connect to REAL result
-                        "autoRun": True, # AUTO-RUN!
-                        "message": "I'll generate a derivative shot based on your result."
-                    }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_gen2)}\n\n"
-                    return
-
-            # 4. Check if we are waiting for Derivative Shot Generation
-            if find_node_id_by_name("Gen: Derivative Shot", context) and not find_node_id_by_name("Gen: Dynamic Storyboard", context):
-                shot2_img_id = find_output_image_id("Gen: Derivative Shot", context)
-                if not shot2_img_id:
-                    if proposal_id == "proposal-sb-gen2":
-                        yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Derivative generator added. Auto-running...' if True else 'Please run the generator.'})}\n\n"
-                    else:
-                        yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Waiting for the derivative shot...'})}\n\n"
-                    yield f"event: retry\ndata: {{}}\n\n"
-                    return
-                else:
-                    # Shot 2 exists! Proceed to Video.
-                    yield f"event: thinking\ndata: {json.dumps({'content': 'Both shots ready. Let\'s animate them.'})}\n\n"
-                    await asyncio.sleep(1)
-
-                    sb_group_id = find_node_id_by_name("Storyboard: Act 1", context)
-                    shot1_img_id = find_output_image_id("Gen: Static Shot 1", context)
-                    
-                    upstream_ids = [shot1_img_id, shot2_img_id]
-
-                    proposal_data_video = {
-                        "id": "proposal-sb-video",
-                        "type": "generative",
-                        "nodeType": "action-badge-video",
-                        "nodeData": {
-                            "label": "Gen: Dynamic Storyboard",
-                        },
-                        "groupId": sb_group_id,
-                        "upstreamNodeIds": upstream_ids, # Connect to REAL results
-                        "message": "Finally, I'll set up the video generation node using your shots."
-                    }
-                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_video)}\n\n"
-                    return
-
-
-            # --- Parallel Agent Test ---
-            if "parallel" in user_input.lower(): # Changed user_message to user_input
-                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Starting parallel agent test...'})}\n\n"
-                
-                # Start Agent Alpha
-                yield f"event: tool_start\ndata: {json.dumps({'id': 'call_alpha_1', 'agent': 'Agent Alpha', 'tool_name': 'analyze_data', 'args': {'source': 'matrix'}})}\n\n"
-                await asyncio.sleep(0.5)
-                
-                # Start Agent Beta (while Alpha is running)
-                yield f"event: tool_start\ndata: {json.dumps({'id': 'call_beta_1', 'agent': 'Agent Beta', 'tool_name': 'compile_report', 'args': {'format': 'pdf'}})}\n\n"
-                await asyncio.sleep(2)
-                
-                # Finish Agent Alpha
-                yield f"event: tool_end\ndata: {json.dumps({'id': 'call_alpha_1', 'agent': 'Agent Alpha', 'result': 'Data analysis complete.'})}\n\n"
-                await asyncio.sleep(1)
-                
-                # Finish Agent Beta
-                yield f"event: tool_end\ndata: {json.dumps({'id': 'call_beta_1', 'agent': 'Agent Beta', 'result': 'Report compiled.'})}\n\n"
-                
-                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Parallel test complete.'})}\n\n"
-                yield f"event: end\ndata: {{}}\n\n"
-                return
-
-            # --- Full Demo Scenario ---
-            # Proposal Acceptance Logic (for non-gen steps) ---
-
-            if proposal_id == "proposal-script-text":
-                # Script Accepted. Next: Concept Art (Character & Scene)
-                yield f"event: thinking\ndata: {json.dumps({'content': 'Script added. Now I will generate concept art for the character and scene.'})}\n\n"
-                await asyncio.sleep(1)
-
-                # Director Proposes Concept Group
-                proposal_data_group = {
-                    "id": "proposal-concept-group",
-                    "type": "group",
-                    "nodeType": "group",
-                    "nodeData": {
-                        "label": "Concept Art: Neo"
-                    },
-                    "message": "I'll create a group for the concept art."
-                }
-                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_group)}\n\n"
-                return
-
-            elif proposal_id == "proposal-concept-group":
-                # Group Accepted. Next: Character Prompt
-                yield f"event: thinking\ndata: {json.dumps({'content': 'Group ready. I will start by extracting the character prompt from the script.'})}\n\n"
-                await asyncio.sleep(1)
-
-                # Resolve Parent ID (Group)
-                group_node_id = find_node_id_by_name("Concept Art: Neo", context)
-                if not group_node_id:
-                    group_node_id = created_node_id
-                
-                # Resolve Script Node ID (Context)
-                script_node_id = find_node_id_by_name("Neo Script", context)
-
-                # Propose Character Prompt Node
-                proposal_data_char_prompt = {
-                    "id": "proposal-char-prompt",
-                    "type": "simple",
-                    "nodeType": "prompt",
-                    "nodeData": {
-                        "label": "Character Prompt",
-                        "content": "Cyberpunk hacker Neo, male, black trench coat, sunglasses, neon rain, high contrast, digital art, detailed face"
-                    },
-                    "groupId": group_node_id,
-                    "upstreamNodeId": script_node_id,
-                    "message": "Here is the prompt for the character design."
-                }
-                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_char_prompt)}\n\n"
-                return
-
-            elif proposal_id == "proposal-char-prompt":
-                # Prompt Accepted. Next: Character Gen Node
-                group_node_id = find_node_id_by_name("Concept Art: Neo", context)
-                prompt_node_id = created_node_id
-
-                proposal_data_char_gen = {
-                    "id": "proposal-char-gen",
-                    "type": "generative",
-                    "nodeType": "action-badge-image",
-                    "nodeData": {
-                        "label": "Gen: Character",
-                    },
-                    "groupId": group_node_id,
-                    "upstreamNodeId": prompt_node_id,
-                    "autoRun": True, # AUTO-RUN!
-                    "message": "I'll add the generation node for the character."
-                }
-                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_char_gen)}\n\n"
-                return
-
-            elif proposal_id == "proposal-scene-prompt":
-                # Scene Prompt Accepted. Next: Scene Gen Node
-                group_node_id = find_node_id_by_name("Concept Art: Neo", context)
-                prompt_node_id = created_node_id
-
-                proposal_data_scene_gen = {
-                    "id": "proposal-scene-gen",
-                    "type": "generative",
-                    "nodeType": "action-badge-image",
-                    "nodeData": {
-                        "label": "Gen: Scene",
-                    },
-                    "groupId": group_node_id,
-                    "upstreamNodeId": prompt_node_id,
-                    "autoRun": True, # AUTO-RUN!
-                    "message": "I'll add the generation node for the scene."
-                }
-                yield f"event: node_proposal\ndata: {json.dumps(proposal_data_scene_gen)}\n\n"
-                return
-
-            elif proposal_id == "proposal-storyboard-group":
-                # Storyboard Group Accepted. Next: Prompt Node
-                sb_group_id = created_node_id
-                script_node_id = find_node_id_by_name("Neo Script", context)
-
+            # 7. Check Storyboard Group -> SB Prompt
+            if find_node_by_id(NODE_ID_SB_GROUP, context) and not find_node_by_id(NODE_ID_SB_PROMPT, context):
                 proposal_data_prompt = {
                     "id": "proposal-sb-prompt",
                     "type": "simple",
                     "nodeType": "prompt",
                     "nodeData": {
+                        "id": NODE_ID_SB_PROMPT,
                         "label": "Scene 1 Prompt",
                         "content": "Neo standing on a rooftop in the rain, looking at the neon city skyline."
                     },
-                    "groupId": sb_group_id,
-                    "upstreamNodeId": script_node_id,
+                    "groupId": NODE_ID_SB_GROUP,
+                    "upstreamNodeId": NODE_ID_SCRIPT,
                     "message": "I've extracted the prompt for Scene 1."
                 }
                 yield f"event: node_proposal\ndata: {json.dumps(proposal_data_prompt)}\n\n"
                 return
 
-            elif proposal_id == "proposal-sb-prompt":
-                # Prompt Accepted. Next: Image Gen Node (Static 1)
-                sb_group_id = find_node_id_by_name("Storyboard: Act 1", context)
-                prompt_node_id = created_node_id
-                
-                # Find Concept Images for reference (REAL IMAGES)
-                char_img_id = find_output_image_id("Gen: Character", context)
-                scene_img_id = find_output_image_id("Gen: Scene", context)
+            # 8. Check SB Prompt -> SB Gen 1
+            if find_node_by_id(NODE_ID_SB_PROMPT, context) and not find_node_by_id(NODE_ID_SB_GEN1, context):
+                # Find Concept Images for reference
+                char_img_id = find_output_image_id(NODE_ID_CHAR_GEN, context)
+                scene_img_id = find_output_image_id(NODE_ID_SCENE_GEN, context)
 
-                upstream_ids = [prompt_node_id]
+                upstream_ids = [NODE_ID_SB_PROMPT]
                 if char_img_id: upstream_ids.append(char_img_id)
                 if scene_img_id: upstream_ids.append(scene_img_id)
 
@@ -735,54 +610,83 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     "type": "generative",
                     "nodeType": "action-badge-image",
                     "nodeData": {
+                        "id": NODE_ID_SB_GEN1,
                         "label": "Gen: Static Shot 1",
                     },
-                    "groupId": sb_group_id,
-                    "upstreamNodeIds": upstream_ids, # Connect to Prompt + REAL Concepts
-                    "autoRun": True, # AUTO-RUN!
+                    "groupId": NODE_ID_SB_GROUP,
+                    "upstreamNodeIds": upstream_ids,
+                    "autoRun": True,
                     "message": "I'll set up the generation node, using the prompt and your concept art."
                 }
                 yield f"event: node_proposal\ndata: {json.dumps(proposal_data_gen1)}\n\n"
                 return
 
-            elif proposal_id == "proposal-sb-video":
-                 # Video Gen Accepted. Done.
+            # 9. Check SB Gen 1 -> SB Gen 2 (WAIT FOR GEN)
+            if find_node_by_id(NODE_ID_SB_GEN1, context) and not find_node_by_id(NODE_ID_SB_GEN2, context):
+                shot1_img_id = find_output_image_id(NODE_ID_SB_GEN1, context)
+                if not shot1_img_id:
+                    yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Waiting for the first shot...'})}\n\n"
+                    yield f"event: retry\ndata: {{}}\n\n"
+                    return
+                else:
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Shot 1 captured. Now for the close-up.'})}\n\n"
+                    await asyncio.sleep(1)
+
+                    proposal_data_gen2 = {
+                        "id": "proposal-sb-gen2",
+                        "type": "generative",
+                        "nodeType": "action-badge-image",
+                        "nodeData": {
+                            "id": NODE_ID_SB_GEN2,
+                            "label": "Gen: Derivative Shot",
+                        },
+                        "groupId": NODE_ID_SB_GROUP,
+                        "upstreamNodeId": shot1_img_id,
+                        "autoRun": True,
+                        "message": "I'll generate a derivative shot based on your result."
+                    }
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_gen2)}\n\n"
+                    return
+
+            # 10. Check SB Gen 2 -> Video (WAIT FOR GEN)
+            if find_node_by_id(NODE_ID_SB_GEN2, context) and not find_node_by_id(NODE_ID_SB_VIDEO, context):
+                shot2_img_id = find_output_image_id(NODE_ID_SB_GEN2, context)
+                if not shot2_img_id:
+                    yield f"event: text\ndata: {json.dumps({'agent': 'StoryboardArtist', 'content': 'Waiting for the derivative shot...'})}\n\n"
+                    yield f"event: retry\ndata: {{}}\n\n"
+                    return
+                else:
+                    yield f"event: thinking\ndata: {json.dumps({'content': 'Both shots ready. Let\'s animate them.'})}\n\n"
+                    await asyncio.sleep(1)
+
+                    shot1_img_id = find_output_image_id(NODE_ID_SB_GEN1, context)
+                    upstream_ids = [shot1_img_id, shot2_img_id]
+
+                    proposal_data_video = {
+                        "id": "proposal-sb-video",
+                        "type": "generative",
+                        "nodeType": "action-badge-video",
+                        "nodeData": {
+                            "id": NODE_ID_SB_VIDEO,
+                            "label": "Gen: Dynamic Storyboard",
+                        },
+                        "groupId": NODE_ID_SB_GROUP,
+                        "upstreamNodeIds": upstream_ids,
+                        "message": "Finally, I'll set up the video generation node using your shots."
+                    }
+                    yield f"event: node_proposal\ndata: {json.dumps(proposal_data_video)}\n\n"
+                    return
+            
+            # 11. Final State
+            if find_node_by_id(NODE_ID_SB_VIDEO, context):
                 yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Full demo scenario complete! Run the video generator to see the final result.'})}\n\n"
                 yield f"event: end\ndata: {{}}\n\n"
                 return
 
-            elif proposal_id == "proposal-char-gen":
-                # This case is now handled by the state-based logic above.
-                # If we reach here, it means the user accepted the gen node,
-                # but the state-based logic didn't find an output yet.
-                # So we just let the state-based logic handle the "waiting" message.
-                pass
+            # Fallback if no state matched (shouldn't happen if logic is complete)
+            yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Workflow synced.'})}\n\n"
+            yield f"event: retry\ndata: {{}}\n\n"
 
-            elif proposal_id == "proposal-scene-gen":
-                # This case is now handled by the state-based logic above.
-                pass
-
-            elif proposal_id == "proposal-sb-gen1":
-                # This case is now handled by the state-based logic above.
-                pass
-
-            elif proposal_id == "proposal-sb-gen2":
-                # This case is now handled by the state-based logic above.
-                pass
-
-            elif proposal_id == "reject": # Changed action to proposal_id
-                yield f"event: thinking\ndata: {json.dumps({'content': 'User rejected. Stopping.'})}\n\n"
-                await asyncio.sleep(1)
-                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Okay, stopping here.'})}\n\n"
-                yield f"event: end\ndata: {{}}\n\n"
-                return
-            
-            else:
-                yield f"event: text\ndata: {json.dumps({'agent': 'Director', 'content': 'Resumed.'})}\n\n"
-                # Do not end here, as we might be waiting for more logic (though in this mock, maybe we should?)
-                # For now, let's assume 'Resumed' implies continuing, but if no more logic, we should probably end.
-                # But let's stick to the specific termination points first.
-        
         logger.info(f"SSE stream finished for project: {project_id}")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
