@@ -43,6 +43,7 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
         scriptwriter: { icon: Scroll, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
         videoproducer: { icon: VideoCamera, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
         conceptartist: { icon: MagicWand, color: 'text-purple-600', bg: 'bg-purple-50', ring: 'ring-1 ring-purple-200' },
+        storyboardartist: { icon: FilmStrip, color: 'text-indigo-600', bg: 'bg-indigo-50', ring: 'ring-1 ring-indigo-200' },
         default: { icon: Robot, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
     };
 

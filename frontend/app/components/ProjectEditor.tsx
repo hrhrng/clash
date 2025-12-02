@@ -344,6 +344,9 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             } else if (nodeType === 'action-badge') {
                 defaultWidth = 200;
                 defaultHeight = 60;
+            } else if (nodeType === 'prompt') {
+                defaultWidth = 300;
+                defaultHeight = 150;
             }
 
             // 2. Determine Position with Collision Detection
