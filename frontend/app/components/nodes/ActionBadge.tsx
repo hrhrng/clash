@@ -42,23 +42,32 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
         console.log('[ActionBadge] useEffect triggered', {
             autoRun: data.autoRun,
             upstreamNodeId: data.upstreamNodeId,
+            upstreamNodeIds: data.upstreamNodeIds,
             nodeId: id,
             edgesCount: edges.length,
             isExecuting
         });
 
         if (data.autoRun && !isExecuting) {
-            // If upstreamNodeId is specified, wait for the connection to exist
+            // Check for single upstream connection
             if (data.upstreamNodeId) {
                 const hasConnection = edges.some(e => e.target === id && e.source === data.upstreamNodeId);
-                console.log('[ActionBadge] Checking connection', {
-                    hasConnection,
-                    targetId: id,
-                    sourceId: data.upstreamNodeId,
-                    edges: edges.map(e => ({ source: e.source, target: e.target }))
-                });
                 if (!hasConnection) {
-                    console.log('[ActionBadge] Waiting for upstream connection...');
+                    console.log('[ActionBadge] Waiting for upstream connection (single)...');
+                    return;
+                }
+            }
+
+            // Check for multiple upstream connections
+            if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
+                const connectedSources = edges.filter(e => e.target === id).map(e => e.source);
+                const allConnected = data.upstreamNodeIds.every((uid: string) => connectedSources.includes(uid));
+
+                if (!allConnected) {
+                    console.log('[ActionBadge] Waiting for upstream connections (multiple)...', {
+                        required: data.upstreamNodeIds,
+                        connected: connectedSources
+                    });
                     return;
                 }
             }
@@ -72,7 +81,7 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 handleExecute();
             }, 500);
         }
-    }, [data.autoRun, edges, data.upstreamNodeId, id, isExecuting]);
+    }, [data.autoRun, edges, data.upstreamNodeId, data.upstreamNodeIds, id, isExecuting]);
 
     // Execute action: generate image or video
     const handleExecute = async () => {
@@ -92,15 +101,19 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
             const parentId = currentNode?.parentId;
 
             // Extract prompt from connected text nodes
+            // Extract prompt from connected nodes (prioritize PromptNode, then TextNode)
             let prompt = data.prompt || '';
+            const promptNode = connectedNodes.find(n => n?.type === 'prompt');
             const textNode = connectedNodes.find(n => n?.type === 'text');
-            if (textNode) {
+
+            if (promptNode) {
+                prompt = promptNode.data.content || prompt;
+            } else if (textNode) {
                 prompt = textNode.data.content || prompt;
             }
 
             if (!prompt) {
-                // throw new Error('No prompt provided. Connect a text node or add a prompt.');
-                prompt = "A futuristic city with flying cars"; // Default for testing
+                throw new Error('No prompt provided. Connect a text/prompt node.');
             }
 
             // Generate unique asset name

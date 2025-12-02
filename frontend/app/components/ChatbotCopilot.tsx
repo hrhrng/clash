@@ -65,6 +65,13 @@ export default function ChatbotCopilot({
 
     const [displayItems, setDisplayItems] = useState<any[]>([]);
     const [isDemoMode, setIsDemoMode] = useState(true);
+    const [isAutoPilot, setIsAutoPilot] = useState(true);
+    const isAutoPilotRef = useRef(isAutoPilot);
+
+    useEffect(() => {
+        isAutoPilotRef.current = isAutoPilot;
+    }, [isAutoPilot]);
+
     const [threadId, setThreadId] = useState<string>(() => Date.now().toString());
     const [sessionHistory, setSessionHistory] = useState<string[]>([]);
     const [showHistory, setShowHistory] = useState(false);
@@ -546,6 +553,15 @@ export default function ChatbotCopilot({
             }
         });
 
+        eventSource.addEventListener('retry', () => {
+            console.log('[ChatbotCopilot] Received retry event. Retrying in 2s...');
+            eventSource.close();
+            setTimeout(() => {
+                // Resume stream (syncs new context)
+                runStreamScenario('', true);
+            }, 2000);
+        });
+
         eventSource.addEventListener('end', () => {
             console.log('[ChatbotCopilot] Received end event. Closing stream.');
             eventSource.close();
@@ -580,6 +596,123 @@ export default function ChatbotCopilot({
                     }
                 }
 
+                // Define handlers
+                const handleAccept = () => {
+                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                    // Add the node
+                    let createdNodeId: string | undefined;
+                    if (onAddNode) {
+                        createdNodeId = onAddNode(data.nodeType, {
+                            ...data.nodeData,
+                            parentId: resolvedGroupId,
+                            upstreamNodeIds: data.upstreamNodeIds // Pass array if present
+                        });
+                    }
+                    // Add edge if upstream provided (single or multiple)
+                    const upstreamIds: string[] = [];
+                    if (resolvedUpstreamNodeId) upstreamIds.push(resolvedUpstreamNodeId);
+                    if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
+                        upstreamIds.push(...data.upstreamNodeIds);
+                    }
+
+                    if (upstreamIds.length > 0 && onAddEdge && createdNodeId) {
+                        setTimeout(() => {
+                            upstreamIds.forEach(uId => {
+                                onAddEdge({
+                                    id: `e-${uId}-${createdNodeId}`,
+                                    source: uId,
+                                    target: createdNodeId,
+                                    type: 'default'
+                                } as any);
+                            });
+                        }, 100);
+                    }
+
+                    // Resume stream AFTER state update
+                    setPendingResume({
+                        userInput: '',
+                        resume: true,
+                        inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                        expectedNodeId: createdNodeId // Wait for this node!
+                    });
+                };
+
+                const handleAcceptAndRun = () => {
+                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                    // Add node with autoRun flag
+                    let createdNodeId: string | undefined;
+                    if (onAddNode) {
+                        createdNodeId = onAddNode(data.nodeType, {
+                            ...data.nodeData,
+                            parentId: resolvedGroupId,
+                            autoRun: true,
+                            upstreamNodeId: resolvedUpstreamNodeId,
+                            upstreamNodeIds: data.upstreamNodeIds // Pass array if present
+                        });
+                    }
+
+                    // Add edge if upstream provided
+                    if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                        // Create edge from upstream to new node
+                        setTimeout(() => {
+                            onAddEdge({
+                                id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
+                                source: resolvedUpstreamNodeId,
+                                target: createdNodeId,
+                                type: 'default'
+                            } as any);
+                        }, 100);
+                    }
+
+                    // Also handle multiple upstreams for edges in AcceptAndRun
+                    if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds) && onAddEdge && createdNodeId) {
+                        setTimeout(() => {
+                            data.upstreamNodeIds.forEach((uId: string) => {
+                                onAddEdge({
+                                    id: `e-${uId}-${createdNodeId}`,
+                                    source: uId,
+                                    target: createdNodeId,
+                                    type: 'default'
+                                } as any);
+                            });
+                        }, 100);
+                    }
+
+                    // Resume stream AFTER state update
+                    setPendingResume({
+                        userInput: '',
+                        resume: true,
+                        inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                        expectedNodeId: createdNodeId // Wait for this node!
+                    });
+                };
+
+                const handleReject = () => {
+                    setDisplayItems(p => p.filter(i => i.id !== proposalId));
+                    // Resume stream with reject
+                    runStreamScenario('', true, { action: 'reject', proposalId: data.id });
+                };
+
+                // Auto-Pilot Logic
+                if (isAutoPilotRef.current) {
+                    console.log('[ChatbotCopilot] Auto-Pilot active. Accepting proposal in 2s...', proposalId);
+                    setTimeout(() => {
+                        // Check if item still exists (wasn't manually handled)
+                        setDisplayItems(currentItems => {
+                            const exists = currentItems.some(i => i.id === proposalId);
+                            if (exists) {
+                                console.log('[ChatbotCopilot] Auto-Pilot executing accept...', proposalId);
+                                if (data.nodeType === 'action-badge-image' || data.nodeType === 'action-badge-video') {
+                                    handleAcceptAndRun();
+                                } else {
+                                    handleAccept();
+                                }
+                            }
+                            return currentItems;
+                        });
+                    }, 2000);
+                }
+
                 setDisplayItems(prev => [...prev, {
                     type: 'node_proposal',
                     id: proposalId,
@@ -588,71 +721,12 @@ export default function ChatbotCopilot({
                             id: proposalId,
                             ...data
                         },
-                        onAccept: () => {
-                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                            // Add the node
-                            let createdNodeId: string | undefined;
-                            if (onAddNode) {
-                                createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId });
-                            }
-                            // Add edge if upstream provided
-                            if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
-                                // Create edge from upstream to new node
-                                setTimeout(() => {
-                                    onAddEdge({
-                                        id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                        source: resolvedUpstreamNodeId,
-                                        target: createdNodeId,
-                                        type: 'default'
-                                    } as any);
-                                }, 100);
-                            }
-
-                            // Resume stream AFTER state update
-                            setPendingResume({
-                                userInput: '',
-                                resume: true,
-                                inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                                expectedNodeId: createdNodeId // Wait for this node!
-                            });
-                        },
-                        onReject: () => {
-                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                            // Resume stream with reject
-                            runStreamScenario('', true, { action: 'reject', proposalId: data.id });
-                        },
-                        onAcceptAndRun: () => {
-                            setDisplayItems(p => p.filter(i => i.id !== proposalId));
-                            // Add node with autoRun flag
-                            let createdNodeId: string | undefined;
-                            if (onAddNode) {
-                                createdNodeId = onAddNode(data.nodeType, { ...data.nodeData, parentId: resolvedGroupId, autoRun: true, upstreamNodeId: resolvedUpstreamNodeId });
-                            }
-
-                            // Add edge if upstream provided
-                            if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
-                                // Create edge from upstream to new node
-                                setTimeout(() => {
-                                    onAddEdge({
-                                        id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                        source: resolvedUpstreamNodeId,
-                                        target: createdNodeId,
-                                        type: 'default'
-                                    } as any);
-                                }, 100);
-                            }
-
-                            // Resume stream AFTER state update
-                            setPendingResume({
-                                userInput: '',
-                                resume: true,
-                                inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                                expectedNodeId: createdNodeId // Wait for this node!
-                            });
-                        }
+                        onAccept: handleAccept,
+                        onReject: handleReject,
+                        onAcceptAndRun: handleAcceptAndRun
                     }
                 }]);
-                eventSource.close();
+
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing node_proposal event:', err);
             }
@@ -794,6 +868,26 @@ export default function ChatbotCopilot({
                                 <ClockCounterClockwise className="w-5 h-5" weight="bold" />
                                 {sessionHistory.length > 0 && (
                                     <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white" />
+                                )}
+                            </motion.button>
+                            {/* Auto-Pilot Toggle */}
+                            <motion.button
+                                onClick={() => setIsAutoPilot(!isAutoPilot)}
+                                className={`p-2 rounded-lg transition-colors relative ${isAutoPilot ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100/50 text-slate-400'}`}
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.9 }}
+                                title={isAutoPilot ? "Pause Auto-Pilot" : "Resume Auto-Pilot"}
+                            >
+                                {isAutoPilot ? (
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                                        <span className="text-xs font-bold">AUTO</span>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-1">
+                                        <div className="w-2 h-2 rounded-full bg-slate-300" />
+                                        <span className="text-xs font-bold">PAUSED</span>
+                                    </div>
                                 )}
                             </motion.button>
                         </div>
