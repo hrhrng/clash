@@ -115,14 +115,22 @@ export function findNonOverlappingPosition(
     checkOverlap?: (testNode: { position: { x: number; y: number }; width: number; height: number }) => boolean
 ): { x: number; y: number } {
     const maxAttempts = 50;
-    const offsetStep = 50;
+    const gridStepX = 50; // Horizontal step
+    const gridStepY = 50; // Vertical step
+    const maxCols = 5;    // Try 5 columns to the right before moving down
+
+    // Grid Scan Strategy:
+    // 1. Try target position
+    // 2. Try moving RIGHT (up to maxCols)
+    // 3. Try moving DOWN and reset X to target
+    // 4. Repeat
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        // Try positions in a spiral pattern
-        const angle = (attempt * Math.PI * 2) / 8;
-        const distance = Math.floor(attempt / 8) * offsetStep;
-        const x = targetPos.x + Math.cos(angle) * distance;
-        const y = targetPos.y + Math.sin(angle) * distance;
+        const col = attempt % maxCols;
+        const row = Math.floor(attempt / maxCols);
+
+        const x = targetPos.x + (col * gridStepX);
+        const y = targetPos.y + (row * gridStepY);
 
         // If checkOverlap function is provided (from React Flow), use it
         if (checkOverlap) {
@@ -161,10 +169,10 @@ export function findNonOverlappingPosition(
         }
     }
 
-    // Fallback: just offset by attempts * offsetStep
+    // Fallback: just offset downwards significantly to avoid total overlap
     return {
-        x: targetPos.x + maxAttempts * offsetStep,
-        y: targetPos.y,
+        x: targetPos.x,
+        y: targetPos.y + (maxAttempts / maxCols) * gridStepY + 100,
     };
 }
 
