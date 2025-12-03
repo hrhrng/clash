@@ -39,8 +39,10 @@ import ContextNode from './nodes/ContextNode';
 import AudioNode from './nodes/AudioNode';
 import ActionBadge from './nodes/ActionBadge';
 import GroupNode from './nodes/GroupNode';
+import VideoEditorNode from './nodes/VideoEditorNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
+import { VideoEditorProvider } from './VideoEditorContext';
 import { findNonOverlappingPosition } from '../utils/layout';
 import { getLayoutedElements } from '../utils/elkLayout';
 
@@ -58,6 +60,7 @@ const nodeTypes = {
     audio: AudioNode,
     'action-badge': ActionBadge,
     group: GroupNode,
+    'video-editor': VideoEditorNode,
 };
 
 const sanitizeNodes = (nodes: Node[]): Node[] => {
@@ -258,6 +261,66 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         }
     }, [project.nodes, project.edges, setNodes, setEdges]);
 
+    // Sync connected assets to VideoEditorNode
+    useEffect(() => {
+        setNodes((currentNodes) => {
+            let hasChanges = false;
+            const updatedNodes = currentNodes.map((node) => {
+                if (node.type === 'video-editor') {
+                    // Find all edges connected to this node's 'assets' handle
+                    const connectedEdges = edges.filter(
+                        (e) => e.target === node.id && e.targetHandle === 'assets'
+                    );
+
+                    // Map edges to source nodes and extract asset data
+                    const newInputs = connectedEdges.map((edge) => {
+                        const sourceNode = currentNodes.find((n) => n.id === edge.source);
+                        if (!sourceNode) return null;
+
+                        // Extract relevant data based on node type
+                        if (['image', 'video', 'audio'].includes(sourceNode.type || '')) {
+                            return {
+                                id: sourceNode.id,
+                                type: sourceNode.type,
+                                src: sourceNode.data.src,
+                                name: sourceNode.data.label || sourceNode.type,
+                                // Add other fields if needed
+                            };
+                        }
+                        return null;
+                    }).filter(Boolean); // Remove nulls
+
+                    // Compare with existing inputs to avoid unnecessary updates
+                    const currentInputs = node.data.inputs || [];
+                    const isDifferent = JSON.stringify(newInputs) !== JSON.stringify(currentInputs);
+
+                    if (isDifferent) {
+                        hasChanges = true;
+                        return {
+                            ...node,
+                            data: {
+                                ...node.data,
+                                inputs: newInputs,
+                            },
+                        };
+                    }
+                }
+                return node;
+            });
+
+            return hasChanges ? updatedNodes : currentNodes;
+        });
+    }, [edges, nodes, setNodes]); // Intentionally omitting 'nodes' from dependency to avoid infinite loop, 
+    // but we need access to current nodes. setNodes(callback) gives us current nodes.
+    // However, we need source node data. If source node data changes (e.g. image generated), 
+    // we want to update. 
+    // If we omit 'nodes', we won't trigger on source node updates.
+    // If we include 'nodes', we risk loops.
+    // SOLUTION: Use a specific selector or check for specific data changes.
+    // For now, let's try including 'nodes' but rely on the JSON.stringify check to stop the loop.
+    // React Flow's setNodes with callback is safe, but the effect triggering is the issue.
+    // Let's add 'nodes' to dependency but rely on the strict check.
+
     // Auto-save on change (debounced in a real app, but simple here)
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -303,6 +366,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         { id: 'image', label: 'Image', icon: ImageIcon },
         { id: 'video', label: 'Video', icon: FilmSlate },
         { id: 'audio', label: 'Audio', icon: SpeakerHigh },
+        { id: 'video-editor', label: 'Editor', icon: FilmSlate },
         { id: 'group', label: 'Group', icon: Plus },
     ];
 
@@ -327,6 +391,8 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             nodeData = { label: 'Prompt', content: '# Prompt\nEnter your prompt here...', ...nodeData };
         } else if (type === 'context') {
             nodeData = { label: 'Context', content: '# Context\nAdd background information here...', ...nodeData };
+        } else if (type === 'video-editor') {
+            nodeData = { label: 'Video Editor', inputs: [], ...nodeData };
         }
 
         // For group nodes, calculate z-index
@@ -369,6 +435,9 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             } else if (nodeType === 'prompt') {
                 defaultWidth = 300;
                 defaultHeight = 150;
+            } else if (nodeType === 'video-editor') {
+                defaultWidth = 250;
+                defaultHeight = 200;
             }
 
             // 2. Determine Position with Collision Detection
@@ -669,319 +738,321 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
     return (
         <ProjectProvider projectId={project.id}>
-            <MediaViewerProvider>
-                <div className="flex h-screen w-full flex-col bg-white overflow-hidden">
-                    {/* Hidden File Input */}
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        className="hidden"
-                        onChange={handleFileChange}
-                    />
+            <VideoEditorProvider>
+                <MediaViewerProvider>
+                    <div className="flex h-screen w-full flex-col bg-white overflow-hidden">
+                        {/* Hidden File Input */}
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            onChange={handleFileChange}
+                        />
 
-                    {/* Top Toolbar */}
+                        {/* Top Toolbar */}
 
 
-                    {/* Main Canvas Area */}
-                    <div className="flex flex-1 overflow-hidden relative">
-                        {/* Header Panel - Moved out of ReactFlow to prevent layout shifts */}
-                        <div id="editor-header" className="absolute top-4 left-4 z-[60] pointer-events-none">
-                            <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
-                                <Link href="/">
-                                    <motion.button
-                                        className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.95 }}
-                                    >
-                                        <span className="font-display font-medium text-2xl tracking-tight">
-                                            Clash
+                        {/* Main Canvas Area */}
+                        <div className="flex flex-1 overflow-hidden relative">
+                            {/* Header Panel - Moved out of ReactFlow to prevent layout shifts */}
+                            <div id="editor-header" className="absolute top-4 left-4 z-[60] pointer-events-none">
+                                <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
+                                    <Link href="/">
+                                        <motion.button
+                                            className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
+                                            whileHover={{ scale: 1.05 }}
+                                            whileTap={{ scale: 0.95 }}
+                                        >
+                                            <span className="font-display font-medium text-2xl tracking-tight">
+                                                Clash
+                                            </span>
+                                        </motion.button>
+                                    </Link>
+                                    <span className="text-slate-300 text-xl font-light">/</span>
+                                    <div className="grid items-center justify-items-start">
+                                        {/* Invisible span to set width */}
+                                        <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
+                                            {projectName || 'Untitled'}
                                         </span>
-                                    </motion.button>
-                                </Link>
-                                <span className="text-slate-300 text-xl font-light">/</span>
-                                <div className="grid items-center justify-items-start">
-                                    {/* Invisible span to set width */}
-                                    <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
-                                        {projectName || 'Untitled'}
-                                    </span>
-                                    <input
-                                        className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
+                                        <input
+                                            className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
+                                            size={1}
+                                            value={projectName}
+                                            onChange={(e) => setProjectName(e.target.value)}
+                                            onBlur={() => {
+                                                if (projectName !== project.name) {
+                                                    updateProjectName(project.id, projectName);
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.currentTarget.blur();
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="absolute inset-0 z-0">
+                                <ReactFlow
+                                    nodes={nodes}
+                                    edges={edges}
+                                    onNodesChange={handleNodesChange}
+                                    onEdgesChange={onEdgesChange}
+                                    onConnect={onConnect}
+                                    onSelectionChange={onSelectionChange}
+                                    onNodeDragStop={(event, node) => {
+                                        // LOGIC EXPLANATION:
+                                        // When a node is dragged, we need to check if it has been dropped inside a group
+                                        // or dragged out of its current parent.
+
+                                        // 1. Helper to recursively calculate absolute position of a node.
+                                        // This is necessary because node.position is relative to its parent.
+                                        // To check for intersections, we need everything in the same global coordinate system.
+                                        const getAbsolutePosition = (n: Node): { x: number; y: number } => {
+                                            if (!n.parentId) {
+                                                return { x: n.position.x, y: n.position.y };
+                                            }
+                                            const parent = nodes.find((p) => p.id === n.parentId);
+                                            if (!parent) {
+                                                return { x: n.position.x, y: n.position.y };
+                                            }
+                                            const parentAbsPos = getAbsolutePosition(parent);
+                                            return {
+                                                x: parentAbsPos.x + n.position.x,
+                                                y: parentAbsPos.y + n.position.y,
+                                            };
+                                        };
+
+                                        // 2. Helper to check if groupId is a descendant of nodeId.
+                                        // We must prevent circular nesting (e.g., putting Group A inside Group B, when Group B is inside Group A).
+                                        const isDescendant = (groupId: string, nodeId: string): boolean => {
+                                            const group = nodes.find((n) => n.id === groupId);
+                                            if (!group || !group.parentId) return false;
+                                            if (group.parentId === nodeId) return true;
+                                            return isDescendant(group.parentId, nodeId);
+                                        };
+
+                                        // 3. Check intersection with all other group nodes.
+                                        const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
+                                        const nodeRect = {
+                                            x: node.position.x,
+                                            y: node.position.y,
+                                            width: node.width || (node.type === 'group' ? 400 : 300),
+                                            height: node.height || (node.type === 'group' ? 400 : 400),
+                                        };
+
+                                        // Calculate absolute position for the dragged node
+                                        const absoluteNodePos = getAbsolutePosition(node);
+                                        const absoluteNodeRect = {
+                                            x: absoluteNodePos.x,
+                                            y: absoluteNodePos.y,
+                                            width: nodeRect.width,
+                                            height: nodeRect.height,
+                                        };
+
+                                        let newParentId: string | undefined = undefined;
+                                        let maxZIndex = -Infinity;
+
+                                        for (const group of groupNodes) {
+                                            // Skip if this group is a descendant of the node (prevent circular nesting)
+                                            if (isDescendant(group.id, node.id)) continue;
+
+                                            const groupRect = {
+                                                x: group.position.x,
+                                                y: group.position.y,
+                                                width: group.style?.width || 400,
+                                                height: group.style?.height || 400,
+                                            };
+
+                                            // Calculate absolute position of group
+                                            const absoluteGroupPos = getAbsolutePosition(group);
+                                            const absoluteGroupRect = {
+                                                x: absoluteGroupPos.x,
+                                                y: absoluteGroupPos.y,
+                                                width: groupRect.width,
+                                                height: groupRect.height,
+                                            };
+
+                                            // Check if node center is inside the group
+                                            const nodeCenterX = absoluteNodeRect.x + nodeRect.width / 2;
+                                            const nodeCenterY = absoluteNodeRect.y + nodeRect.height / 2;
+
+                                            if (
+                                                nodeCenterX > absoluteGroupRect.x &&
+                                                nodeCenterX < absoluteGroupRect.x + (absoluteGroupRect.width as number) &&
+                                                nodeCenterY > absoluteGroupRect.y &&
+                                                nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
+                                            ) {
+                                                // Pick the group with highest z-index (innermost/topmost group)
+                                                // This ensures that if groups are overlapping, we drop into the "top" one.
+                                                const groupZIndex = Number(group.style?.zIndex ?? -1);
+                                                if (groupZIndex > maxZIndex) {
+                                                    maxZIndex = groupZIndex;
+                                                    newParentId = group.id;
+                                                }
+                                            }
+                                        }
+
+                                        // 4. Update node if parent changed
+                                        if (newParentId !== node.parentId) {
+                                            setNodes((nds) =>
+                                                nds.map((n) => {
+                                                    if (n.id === node.id) {
+                                                        const newNode = { ...n, parentId: newParentId };
+
+                                                        // Adjust position to be relative to new parent (or absolute if no parent)
+                                                        if (newParentId) {
+                                                            const parent = nodes.find((p) => p.id === newParentId);
+                                                            if (parent) {
+                                                                // Calculate parent's absolute position
+                                                                const parentAbsPos = getAbsolutePosition(parent);
+
+                                                                // Convert absolute coordinates back to relative coordinates for the new parent
+                                                                newNode.position = {
+                                                                    x: absoluteNodeRect.x - parentAbsPos.x,
+                                                                    y: absoluteNodeRect.y - parentAbsPos.y,
+                                                                };
+
+                                                                // For group nodes, ensure they remain editable and above parent
+                                                                if (node.type === 'group') {
+                                                                    const parentZIndex = Number(parent.style?.zIndex ?? 0);
+                                                                    newNode.draggable = true;
+                                                                    newNode.selectable = true;
+                                                                    newNode.style = {
+                                                                        ...newNode.style,
+                                                                        zIndex: parentZIndex + 1, // Child group should be above parent
+                                                                    };
+                                                                    newNode.extent = undefined;
+                                                                } else {
+                                                                    // For non-group nodes, we also leave extent undefined to allow dragging out later
+                                                                    newNode.extent = undefined;
+                                                                }
+                                                            }
+                                                        } else {
+                                                            // Becoming orphan (detached from group), convert to absolute coordinates
+                                                            newNode.position = {
+                                                                x: absoluteNodeRect.x,
+                                                                y: absoluteNodeRect.y,
+                                                            };
+                                                            newNode.extent = undefined;
+                                                        }
+                                                        return newNode;
+                                                    }
+                                                    return n;
+                                                })
+                                            );
+                                        }
+                                    }}
+
+                                    nodeTypes={nodeTypes}
+                                    fitView
+                                    minZoom={0.1}
+                                    proOptions={{ hideAttribution: true }}
+                                >
+                                    <Background
+                                        variant={BackgroundVariant.Dots}
+                                        gap={12}
                                         size={1}
-                                        value={projectName}
-                                        onChange={(e) => setProjectName(e.target.value)}
-                                        onBlur={() => {
-                                            if (projectName !== project.name) {
-                                                updateProjectName(project.id, projectName);
-                                            }
+                                        color="#e2e8f0"
+                                    />
+
+
+
+                                    {/* Left Toolbar */}
+                                    {/* Bottom Dock Tools */}
+                                    <Panel
+                                        position="bottom-center"
+                                        className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
+                                        style={{
+                                            transform: `translate(calc(-50 % - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
                                         }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.currentTarget.blur();
-                                            }
-                                        }}
+                                    >
+                                        <div
+                                            className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1"
+                                        >
+
+                                            {/* Assets Section */}
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Assets</span>
+                                                {assetTools.map((tool) => {
+                                                    const Icon = tool.icon;
+                                                    return (
+                                                        <motion.button
+                                                            key={tool.id}
+                                                            onClick={() => handleToolClick(tool.id)}
+                                                            className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
+                                                            whileHover={{ scale: 1.1, y: -2 }}
+                                                            whileTap={{ scale: 0.95 }}
+                                                            title={tool.label}
+                                                        >
+                                                            <Icon className="h-5 w-5" weight="regular" />
+                                                        </motion.button>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            <div className="h-8 w-px bg-slate-200" />
+
+                                            {/* Actions Section */}
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Actions</span>
+                                                {actionTools.map((tool) => {
+                                                    const Icon = tool.icon;
+                                                    return (
+                                                        <motion.button
+                                                            key={tool.id}
+                                                            onClick={() => handleToolClick(tool.id)}
+                                                            className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
+                                                            whileHover={{ scale: 1.1, y: -2 }}
+                                                            whileTap={{ scale: 0.95 }}
+                                                            title={tool.label}
+                                                        >
+                                                            <Icon className="h-5 w-5" weight="regular" />
+                                                        </motion.button>
+                                                    );
+                                                })}
+
+                                                {/* Auto Layout Button */}
+                                                <motion.button
+                                                    onClick={onLayout}
+                                                    className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
+                                                    whileHover={{ scale: 1.1, y: -2 }}
+                                                    whileTap={{ scale: 0.95 }}
+                                                    title="Auto Layout"
+                                                >
+                                                    <MagicWand className="h-5 w-5" weight="regular" />
+                                                </motion.button>
+                                            </div>
+
+                                        </div>
+                                    </Panel>
+                                </ReactFlow>
+                            </div>
+
+                            <div id="copilot-container" className="fixed right-0 top-0 bottom-0 z-40 pointer-events-none">
+                                <div className="pointer-events-auto h-full">
+                                    <ChatbotCopilot
+                                        projectId={project.id}
+                                        initialMessages={project.messages}
+                                        onCommand={handleCommand}
+                                        width={sidebarWidth}
+                                        onWidthChange={setSidebarWidth}
+                                        isCollapsed={isSidebarCollapsed}
+                                        onCollapseChange={setIsSidebarCollapsed}
+                                        selectedNodes={selectedNodes}
+                                        onAddNode={addNode}
+                                        onAddEdge={onConnect}
+                                        findNodeIdByName={findNodeIdByName}
+                                        nodes={nodes}
+                                        edges={edges}
                                     />
                                 </div>
                             </div>
                         </div>
-                        <div className="absolute inset-0 z-0">
-                            <ReactFlow
-                                nodes={nodes}
-                                edges={edges}
-                                onNodesChange={handleNodesChange}
-                                onEdgesChange={onEdgesChange}
-                                onConnect={onConnect}
-                                onSelectionChange={onSelectionChange}
-                                onNodeDragStop={(event, node) => {
-                                    // LOGIC EXPLANATION:
-                                    // When a node is dragged, we need to check if it has been dropped inside a group
-                                    // or dragged out of its current parent.
-
-                                    // 1. Helper to recursively calculate absolute position of a node.
-                                    // This is necessary because node.position is relative to its parent.
-                                    // To check for intersections, we need everything in the same global coordinate system.
-                                    const getAbsolutePosition = (n: Node): { x: number; y: number } => {
-                                        if (!n.parentId) {
-                                            return { x: n.position.x, y: n.position.y };
-                                        }
-                                        const parent = nodes.find((p) => p.id === n.parentId);
-                                        if (!parent) {
-                                            return { x: n.position.x, y: n.position.y };
-                                        }
-                                        const parentAbsPos = getAbsolutePosition(parent);
-                                        return {
-                                            x: parentAbsPos.x + n.position.x,
-                                            y: parentAbsPos.y + n.position.y,
-                                        };
-                                    };
-
-                                    // 2. Helper to check if groupId is a descendant of nodeId.
-                                    // We must prevent circular nesting (e.g., putting Group A inside Group B, when Group B is inside Group A).
-                                    const isDescendant = (groupId: string, nodeId: string): boolean => {
-                                        const group = nodes.find((n) => n.id === groupId);
-                                        if (!group || !group.parentId) return false;
-                                        if (group.parentId === nodeId) return true;
-                                        return isDescendant(group.parentId, nodeId);
-                                    };
-
-                                    // 3. Check intersection with all other group nodes.
-                                    const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
-                                    const nodeRect = {
-                                        x: node.position.x,
-                                        y: node.position.y,
-                                        width: node.width || (node.type === 'group' ? 400 : 300),
-                                        height: node.height || (node.type === 'group' ? 400 : 400),
-                                    };
-
-                                    // Calculate absolute position for the dragged node
-                                    const absoluteNodePos = getAbsolutePosition(node);
-                                    const absoluteNodeRect = {
-                                        x: absoluteNodePos.x,
-                                        y: absoluteNodePos.y,
-                                        width: nodeRect.width,
-                                        height: nodeRect.height,
-                                    };
-
-                                    let newParentId: string | undefined = undefined;
-                                    let maxZIndex = -Infinity;
-
-                                    for (const group of groupNodes) {
-                                        // Skip if this group is a descendant of the node (prevent circular nesting)
-                                        if (isDescendant(group.id, node.id)) continue;
-
-                                        const groupRect = {
-                                            x: group.position.x,
-                                            y: group.position.y,
-                                            width: group.style?.width || 400,
-                                            height: group.style?.height || 400,
-                                        };
-
-                                        // Calculate absolute position of group
-                                        const absoluteGroupPos = getAbsolutePosition(group);
-                                        const absoluteGroupRect = {
-                                            x: absoluteGroupPos.x,
-                                            y: absoluteGroupPos.y,
-                                            width: groupRect.width,
-                                            height: groupRect.height,
-                                        };
-
-                                        // Check if node center is inside the group
-                                        const nodeCenterX = absoluteNodeRect.x + nodeRect.width / 2;
-                                        const nodeCenterY = absoluteNodeRect.y + nodeRect.height / 2;
-
-                                        if (
-                                            nodeCenterX > absoluteGroupRect.x &&
-                                            nodeCenterX < absoluteGroupRect.x + (absoluteGroupRect.width as number) &&
-                                            nodeCenterY > absoluteGroupRect.y &&
-                                            nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
-                                        ) {
-                                            // Pick the group with highest z-index (innermost/topmost group)
-                                            // This ensures that if groups are overlapping, we drop into the "top" one.
-                                            const groupZIndex = Number(group.style?.zIndex ?? -1);
-                                            if (groupZIndex > maxZIndex) {
-                                                maxZIndex = groupZIndex;
-                                                newParentId = group.id;
-                                            }
-                                        }
-                                    }
-
-                                    // 4. Update node if parent changed
-                                    if (newParentId !== node.parentId) {
-                                        setNodes((nds) =>
-                                            nds.map((n) => {
-                                                if (n.id === node.id) {
-                                                    const newNode = { ...n, parentId: newParentId };
-
-                                                    // Adjust position to be relative to new parent (or absolute if no parent)
-                                                    if (newParentId) {
-                                                        const parent = nodes.find((p) => p.id === newParentId);
-                                                        if (parent) {
-                                                            // Calculate parent's absolute position
-                                                            const parentAbsPos = getAbsolutePosition(parent);
-
-                                                            // Convert absolute coordinates back to relative coordinates for the new parent
-                                                            newNode.position = {
-                                                                x: absoluteNodeRect.x - parentAbsPos.x,
-                                                                y: absoluteNodeRect.y - parentAbsPos.y,
-                                                            };
-
-                                                            // For group nodes, ensure they remain editable and above parent
-                                                            if (node.type === 'group') {
-                                                                const parentZIndex = Number(parent.style?.zIndex ?? 0);
-                                                                newNode.draggable = true;
-                                                                newNode.selectable = true;
-                                                                newNode.style = {
-                                                                    ...newNode.style,
-                                                                    zIndex: parentZIndex + 1, // Child group should be above parent
-                                                                };
-                                                                newNode.extent = undefined;
-                                                            } else {
-                                                                // For non-group nodes, we also leave extent undefined to allow dragging out later
-                                                                newNode.extent = undefined;
-                                                            }
-                                                        }
-                                                    } else {
-                                                        // Becoming orphan (detached from group), convert to absolute coordinates
-                                                        newNode.position = {
-                                                            x: absoluteNodeRect.x,
-                                                            y: absoluteNodeRect.y,
-                                                        };
-                                                        newNode.extent = undefined;
-                                                    }
-                                                    return newNode;
-                                                }
-                                                return n;
-                                            })
-                                        );
-                                    }
-                                }}
-
-                                nodeTypes={nodeTypes}
-                                fitView
-                                minZoom={0.1}
-                                proOptions={{ hideAttribution: true }}
-                            >
-                                <Background
-                                    variant={BackgroundVariant.Dots}
-                                    gap={12}
-                                    size={1}
-                                    color="#e2e8f0"
-                                />
-
-
-
-                                {/* Left Toolbar */}
-                                {/* Bottom Dock Tools */}
-                                <Panel
-                                    position="bottom-center"
-                                    className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
-                                    style={{
-                                        transform: `translate(calc(-50 % - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
-                                    }}
-                                >
-                                    <div
-                                        className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1"
-                                    >
-
-                                        {/* Assets Section */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Assets</span>
-                                            {assetTools.map((tool) => {
-                                                const Icon = tool.icon;
-                                                return (
-                                                    <motion.button
-                                                        key={tool.id}
-                                                        onClick={() => handleToolClick(tool.id)}
-                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                        whileHover={{ scale: 1.1, y: -2 }}
-                                                        whileTap={{ scale: 0.95 }}
-                                                        title={tool.label}
-                                                    >
-                                                        <Icon className="h-5 w-5" weight="regular" />
-                                                    </motion.button>
-                                                );
-                                            })}
-                                        </div>
-
-                                        <div className="h-8 w-px bg-slate-200" />
-
-                                        {/* Actions Section */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Actions</span>
-                                            {actionTools.map((tool) => {
-                                                const Icon = tool.icon;
-                                                return (
-                                                    <motion.button
-                                                        key={tool.id}
-                                                        onClick={() => handleToolClick(tool.id)}
-                                                        className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                        whileHover={{ scale: 1.1, y: -2 }}
-                                                        whileTap={{ scale: 0.95 }}
-                                                        title={tool.label}
-                                                    >
-                                                        <Icon className="h-5 w-5" weight="regular" />
-                                                    </motion.button>
-                                                );
-                                            })}
-
-                                            {/* Auto Layout Button */}
-                                            <motion.button
-                                                onClick={onLayout}
-                                                className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                whileHover={{ scale: 1.1, y: -2 }}
-                                                whileTap={{ scale: 0.95 }}
-                                                title="Auto Layout"
-                                            >
-                                                <MagicWand className="h-5 w-5" weight="regular" />
-                                            </motion.button>
-                                        </div>
-
-                                    </div>
-                                </Panel>
-                            </ReactFlow>
-                        </div>
-
-                        <div id="copilot-container" className="fixed right-0 top-0 bottom-0 z-40 pointer-events-none">
-                            <div className="pointer-events-auto h-full">
-                                <ChatbotCopilot
-                                    projectId={project.id}
-                                    initialMessages={project.messages}
-                                    onCommand={handleCommand}
-                                    width={sidebarWidth}
-                                    onWidthChange={setSidebarWidth}
-                                    isCollapsed={isSidebarCollapsed}
-                                    onCollapseChange={setIsSidebarCollapsed}
-                                    selectedNodes={selectedNodes}
-                                    onAddNode={addNode}
-                                    onAddEdge={onConnect}
-                                    findNodeIdByName={findNodeIdByName}
-                                    nodes={nodes}
-                                    edges={edges}
-                                />
-                            </div>
-                        </div>
                     </div>
-                </div>
-            </MediaViewerProvider>
+                </MediaViewerProvider>
+            </VideoEditorProvider>
         </ProjectProvider >
     );
 }
