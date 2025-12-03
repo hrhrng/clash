@@ -458,24 +458,25 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
             // If no parentId, try to place to the right of the entire graph
             if (!parentId && nds.length > 0) {
                 let maxX = -Infinity;
-                let minY = Infinity;
-                let maxY = -Infinity;
+                let lastNodeY = 100; // Default Y if no nodes found (unlikely)
 
                 nds.forEach(n => {
                     // Only consider root nodes or top-level groups
                     if (!n.parentId) {
                         const x = n.position.x + (n.width || Number(n.style?.width) || 300);
-                        if (x > maxX) maxX = x;
-                        if (n.position.y < minY) minY = n.position.y;
-                        if (n.position.y > maxY) maxY = n.position.y;
+                        if (x > maxX) {
+                            maxX = x;
+                            // Track the Y of the right-most node to align with it
+                            lastNodeY = n.position.y;
+                        }
                     }
                 });
 
                 if (maxX > -Infinity) {
-                    // Place to the right of the right-most node
+                    // Place to the right of the right-most node, aligned to its TOP (stable Y)
                     targetPos = {
                         x: maxX + 100,
-                        y: (minY + maxY) / 2 || 100 // Center vertically relative to graph content
+                        y: lastNodeY // Align with the last node's Y instead of centering
                     };
                 }
             }

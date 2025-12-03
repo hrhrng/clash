@@ -368,7 +368,7 @@ export default function ChatbotCopilot({
 
         // 3. Connect to SSE Stream
         console.log('[ChatbotCopilot] Connecting to SSE stream...');
-        const url = new URL(`/api/v1/stream/${projectId}`, window.location.origin);
+        const url = new URL(`http://localhost:8000/api/v1/stream/${projectId}`);
         url.searchParams.append('thread_id', threadId);
         if (resume) {
             url.searchParams.append('resume', 'true');
@@ -385,12 +385,11 @@ export default function ChatbotCopilot({
 
         eventSource.onerror = (e) => {
             console.error('[ChatbotCopilot] SSE Stream error:', e);
-            // Check readyState
+            console.error('[ChatbotCopilot] ReadyState:', eventSource.readyState);
             if (eventSource.readyState === EventSource.CLOSED) {
                 console.log('[ChatbotCopilot] SSE Stream closed.');
-            } else if (eventSource.readyState === EventSource.CONNECTING) {
-                console.log('[ChatbotCopilot] SSE Stream reconnecting...');
             }
+            eventSource.close();
         };
 
         eventSource.addEventListener('plan', (e: any) => {
@@ -403,28 +402,70 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('thinking', (e: any) => {
+            console.log('[ChatbotCopilot] Received thinking:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                setDisplayItems(prev => {
-                    const lastItem = prev[prev.length - 1];
-                    if (lastItem && lastItem.type === 'thinking') {
-                        // Update existing thinking block
-                        return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
-                    } else {
-                        // Create new thinking block
-                        return [...prev, {
-                            type: 'thinking',
-                            id: Date.now().toString() + '-thinking',
-                            content: data.content
-                        }];
-                    }
-                });
+                const agentName = data.agent;
+
+                if (agentName && ['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
+                    setDisplayItems(prev => {
+                        const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === agentName);
+
+                        if (existingIndex !== -1) {
+                            return prev.map((item, index) => {
+                                if (index === existingIndex) {
+                                    return {
+                                        ...item,
+                                        props: {
+                                            ...item.props,
+                                            logs: [...(item.props.logs || []), {
+                                                id: data.id ? `${data.id}-thinking` : `thinking-${Date.now()}`,
+                                                type: 'text',
+                                                content: <div className="text-slate-600 italic">{data.content}</div>
+                                            }]
+                                        }
+                                    };
+                                }
+                                return item;
+                            });
+                        } else {
+                            return [...prev, {
+                                type: 'agent_card',
+                                id: `agent-${agentName}-${Date.now()}`,
+                                props: {
+                                    agentName: agentName,
+                                    status: 'working',
+                                    persona: agentName.toLowerCase(),
+                                    logs: [{
+                                        id: data.id || Date.now().toString(),
+                                        type: 'text',
+                                        content: <div className="text-slate-600 italic">{data.content}</div>
+                                    }]
+                                }
+                            }];
+                        }
+                    });
+                } else {
+                    setDisplayItems(prev => {
+                        const lastItem = prev[prev.length - 1];
+                        if (lastItem && lastItem.type === 'thinking') {
+                            return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
+                        } else {
+                            return [...prev, {
+                                type: 'thinking',
+                                id: Date.now().toString() + '-thinking',
+                                content: data.content
+                            }];
+                        }
+                    });
+                }
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing thinking event:', err);
             }
         });
 
         eventSource.addEventListener('text', (e: any) => {
+            console.log('[ChatbotCopilot] Received text:', e.data);
             try {
                 const data = JSON.parse(e.data);
                 if (data.agent === 'Director') {
@@ -441,6 +482,7 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('tool_start', (e: any) => {
+            console.log('[ChatbotCopilot] Received tool_start:', e.data);
             try {
                 const data = JSON.parse(e.data);
                 const agentId = Date.now().toString() + '-' + data.agent.toLowerCase();
@@ -503,6 +545,7 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('tool_end', (e: any) => {
+            console.log('[ChatbotCopilot] Received tool_end:', e.data);
             try {
                 const data = JSON.parse(e.data);
                 setDisplayItems(prev => prev.map(item => {
@@ -523,6 +566,88 @@ export default function ChatbotCopilot({
                 }));
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing tool_end event:', err);
+            }
+        });
+
+        eventSource.addEventListener('sub_agent_start', (e: any) => {
+            console.log('[ChatbotCopilot] Received sub_agent_start:', e.data);
+            try {
+                const data = JSON.parse(e.data);
+                setDisplayItems(prev => {
+                    const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
+                    if (existingIndex !== -1) {
+                        return prev.map((item, index) => {
+                            if (index === existingIndex) {
+                                const logs = item.props.logs || [];
+                                const lastLog = logs[logs.length - 1];
+                                // Deduplicate if same task
+                                if (lastLog && lastLog.taskName === data.task) {
+                                    return {
+                                        ...item,
+                                        props: { ...item.props, status: 'working' }
+                                    };
+                                }
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        status: 'working',
+                                        logs: [...logs, {
+                                            id: data.id,
+                                            type: 'text',
+                                            taskName: data.task,
+                                            content: <div className="text-blue-600 font-medium text-xs mt-2">Starting: {data.task}</div>
+                                        }]
+                                    }
+                                };
+                            }
+                            return item;
+                        });
+                    } else {
+                        return [...prev, {
+                            type: 'agent_card',
+                            id: `agent-${data.agent}-${Date.now()}`,
+                            props: {
+                                agentName: data.agent,
+                                status: 'working',
+                                persona: data.agent.toLowerCase(),
+                                logs: [{
+                                    id: data.id,
+                                    type: 'text',
+                                    taskName: data.task,
+                                    content: <div className="text-blue-600 font-medium text-xs">Starting: {data.task}</div>
+                                }]
+                            }
+                        }];
+                    }
+                });
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing sub_agent_start:', err);
+            }
+        });
+
+        eventSource.addEventListener('sub_agent_end', (e: any) => {
+            try {
+                const data = JSON.parse(e.data);
+                setDisplayItems(prev => prev.map(item => {
+                    if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                        return {
+                            ...item,
+                            props: {
+                                ...item.props,
+                                status: 'done',
+                                logs: [...(item.props.logs || []), {
+                                    id: data.id + '-end',
+                                    type: 'text',
+                                    content: <div className="text-green-600 font-medium text-xs mb-2">Completed: {data.result}</div>
+                                }]
+                            }
+                        };
+                    }
+                    return item;
+                }));
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing sub_agent_end:', err);
             }
         });
 

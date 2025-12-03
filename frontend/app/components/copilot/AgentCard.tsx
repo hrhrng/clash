@@ -11,6 +11,7 @@ export interface AgentLog {
     type: 'text' | 'tool_call';
     content?: React.ReactNode;
     toolProps?: ToolCallProps;
+    taskName?: string;
 }
 
 interface AgentCardProps {
@@ -18,7 +19,7 @@ interface AgentCardProps {
     status: 'working' | 'done' | 'waiting' | 'failed';
     children?: React.ReactNode;
     isExpanded?: boolean;
-    persona?: 'director' | 'scriptwriter' | 'videoproducer' | 'conceptartist' | 'default';
+    persona?: 'director' | 'scriptwriter' | 'videoproducer' | 'conceptartist' | 'storyboardartist' | 'default';
     logs?: AgentLog[];
 }
 
