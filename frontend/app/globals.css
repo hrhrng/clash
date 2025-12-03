@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@source "../remotion-fast";
 
 :root {
   --background: #ffffff;

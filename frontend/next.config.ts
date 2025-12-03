@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '50mb',
     },
   },
+  transpilePackages: ['@remotion-fast/ui', '@remotion-fast/core', '@remotion-fast/remotion-components'],
   // Cloudflare Workers/Pages compatibility
   images: {
     unoptimized: true, // Cloudflare uses their own image optimization
