@@ -4,6 +4,7 @@ SQLite client for accessing the frontend database.
 This allows the backend to create asset records in the frontend's SQLite database.
 """
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,38 @@ class FrontendDatabase:
         if row:
             return dict(row)
         return None
+
+    def get_project_by_id(self, project_id: str) -> dict[str, Any] | None:
+        """
+        Fetch a project row by ID.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM project WHERE id = ?", (project_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def get_project_nodes_edges(self, project_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """
+        Retrieve nodes and edges JSON blobs for a project.
+        """
+        project = self.get_project_by_id(project_id)
+        if not project:
+            return [], []
+
+        nodes_raw = project.get("nodes") or "[]"
+        edges_raw = project.get("edges") or "[]"
+
+        try:
+            nodes = json.loads(nodes_raw)
+        except Exception:
+            nodes = []
+        try:
+            edges = json.loads(edges_raw)
+        except Exception:
+            edges = []
+        return nodes, edges
 
     def get_asset_by_name(self, name: str, project_id: str) -> dict[str, Any] | None:
         """

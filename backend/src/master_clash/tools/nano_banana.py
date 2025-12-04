@@ -380,14 +380,14 @@ def test_agent_with_nano_banana():
     from master_clash.utils import image_to_base64
 
     # Step 1: Register images with descriptive names
-    register_image("cat_original", image_to_base64("./assets/cuddly_cat_hat.png"))
+    register_image("cat_original", image_to_base64("./backend/assets/cuddly_cat_hat.png"))
 
     # Step 2: Build system prompt with available images
     system_prompt = """You are an AI assistant with image generation capabilities.
 When generating images, use the nano_banana_pro_tool and reference images by their names in the image_names parameter."""
 
     model = ChatGoogleGenerativeAI(
-        model="gemini-3-pro-preview",
+        model="gemini-2.5-pro",
         temperature=0.7,
         base_url=settings.google_ai_studio_base_url,
         transport="rest",

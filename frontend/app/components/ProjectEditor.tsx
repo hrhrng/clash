@@ -43,8 +43,9 @@ import VideoEditorNode from './nodes/VideoEditorNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
 import { VideoEditorProvider } from './VideoEditorContext';
-import { findNonOverlappingPosition } from '../utils/layout';
-import { getLayoutedElements } from '../utils/elkLayout';
+import { findNonOverlappingPosition, getAbsolutePosition } from '../utils/layout';
+import { getLayoutedElements, getSmartLayoutedElements } from '../utils/elkLayout';
+import { generateSemanticId } from '../utils/semanticId';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -490,17 +491,41 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                 // 1. Upstream Node Placement (Highest Priority)
                 if (extraData.upstreamNodeId) {
                     const upstreamNode = nds.find(n => n.id === extraData.upstreamNodeId);
-                    if (upstreamNode && upstreamNode.parentId === parentId) {
+                    if (upstreamNode) {
+                        // Calculate Upstream Node's Absolute Position
+                        const upstreamAbsPos = getAbsolutePosition(upstreamNode, nds);
                         const upstreamWidth = upstreamNode.width || Number(upstreamNode.style?.width) || 300;
                         const upstreamHeight = upstreamNode.height || Number(upstreamNode.style?.height) || 300;
+                        const upstreamCenterY = upstreamAbsPos.y + (upstreamHeight / 2);
 
-                        // Center vertically relative to upstream node
-                        const centerY = upstreamNode.position.y + (upstreamHeight / 2);
-                        const newNodeY = centerY - (defaultHeight / 2);
+                        // Calculate Parent Group's Absolute Position
+                        const parentGroup = nds.find(n => n.id === parentId);
+                        const parentAbsPos = parentGroup ? getAbsolutePosition(parentGroup, nds) : { x: 0, y: 0 };
+
+                        // Calculate Target Position Relative to Parent Group
+                        // We want the new node to be to the right of the upstream node
+                        const targetAbsX = upstreamAbsPos.x + upstreamWidth + 80;
+                        const targetAbsY = upstreamCenterY - (defaultHeight / 2);
+
+                        let relativeX = targetAbsX - parentAbsPos.x;
+                        let relativeY = targetAbsY - parentAbsPos.y;
+
+                        // Ensure the node is at least somewhat inside the group (or will cause expansion)
+                        // If relativeX is negative, it means upstream is to the left of the group.
+                        // We should probably place it at the left edge (padding) so the group expands left?
+                        // Or just let it be negative and let the user/layout handle it?
+                        // Current resize logic only handles expansion to right/bottom.
+                        // So we should clamp to minimum padding if we want to avoid "jumping" or weirdness.
+                        // BUT, if we clamp, it might be far from upstream.
+                        // Let's try to place it at least at x=50 if it would be negative, to keep it inside.
+                        // This effectively "pulls" the node into the group.
+
+                        if (relativeX < 50) relativeX = 50;
+                        if (relativeY < 50) relativeY = 50;
 
                         targetPos = {
-                            x: upstreamNode.position.x + upstreamWidth + 80, // Increased spacing slightly
-                            y: newNodeY
+                            x: relativeX,
+                            y: relativeY
                         };
                     }
                 }
@@ -681,7 +706,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         }
     };
 
-    const handleCommand = useCallback((command: any) => {
+    const handleCommand = useCallback(async (command: any) => {
         console.log('Executing command:', command);
         switch (command.type) {
             case 'ADD_NODE':
@@ -690,7 +715,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                 // Map legacy/agent types to action-badge
                 if (type === 'image-gen') {
                     type = 'action-badge';
-                    data = { actionType: 'image-gen', modelName: 'Gemini 1.5 Flash', ...data };
+                    data = { actionType: 'image-gen', modelName: 'Nano Banana', ...data };
                     if (!rest.width) rest.width = 200;
                     if (!rest.height) rest.height = 60;
                 } else if (type === 'video-gen') {
@@ -706,19 +731,35 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                     delete rest.parentId;
                 }
 
+                // Generate semantic ID
+                const nodeId = await generateSemanticId(project.id);
+
                 const newNode: Node = {
-                    id: `${nodes.length + 1}-${Date.now()}`,
+                    id: nodeId,
                     type,
                     data,
                     ...rest,
                 };
-                setNodes((nds) => nds.concat(newNode));
+
+                // Add the new node
+                const updatedNodes = nodes.concat(newNode);
+
+                // User requested FULL AUTO-LAYOUT on every insertion ("don't worry about user layout")
+                // So we use getLayoutedElements instead of getSmartLayoutedElements
+                const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
+                    updatedNodes,
+                    edges,
+                    { direction: 'RIGHT' } // Ensure consistent direction
+                );
+
+                setNodes(layoutedNodes);
+                setEdges(layoutedEdges);
                 break;
             // Add other cases as needed
             default:
                 console.warn('Unknown command type:', command.type);
         }
-    }, [nodes.length, setNodes]);
+    }, [nodes, edges, setNodes, setEdges]);
 
     const onLayout = useCallback(async () => {
         const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(

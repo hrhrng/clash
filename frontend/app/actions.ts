@@ -96,6 +96,7 @@ export interface Command {
 
 import { graph, AgentState } from './agent/graph';
 import { HumanMessage } from '@langchain/core/messages';
+import { generateSemanticId } from './utils/semanticId';
 
 // const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
 
@@ -156,9 +157,12 @@ export async function createAsset(data: {
     try {
         const db = await getDb();
 
+        // Generate semantic ID for asset
+        const assetId = await generateSemanticId(data.projectId);
+
         // Ensure taskId exists
         const taskId = data.taskId || crypto.randomUUID();
-        const assetData = { ...data, taskId };
+        const assetData = { ...data, id: assetId, taskId };
 
         // Insert asset first
         const [asset] = await db.insert(schema.assets).values({

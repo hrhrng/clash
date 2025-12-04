@@ -1,0 +1,123 @@
+Unexpected argument 'generation_config' provided to ChatGoogleGenerativeAI.
+/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/events.py:88: UserWarning: WARNING! generation_config is not default parameter.
+                generation_config was transferred to model_kwargs.
+                Please confirm that generation_config is what you intended.
+  self._context.run(self._callback, *self._args)
+Testing LLM with base_url: https://gateway.ai.cloudflare.com/v1/44af79e51582ca20c9003eb926540242/clash/google-ai-studio
+
+--- Test 1: Sync Invoke (REST) ---
+Response: [{'type': 'text', 'text': 'Hi!', 'extras': {'signature': 'EuIGCt8GAXLI2nxY69nqmPRxfSBPW3vY3S4SfNIrtx5BHMtRUGa6AlBaXYny9P8OHDoPw4iQOad7tgFt44emhe4haq5o9NEO4Q0nzzp09+JjpAm+xM5cWSsUpl/ZAW5ZE7CCDpM5/Qw4ewrDUf/YXdEcHZX/vPRexGOMZyPVIUCmZyqczcAAz2bw410VSKRa4wCpgvWyhdBL3HzUWAcS2Kk7XvOzvCjnKrKvFlhIzYFIZeNZ8cPiU6D9rTcP6UXC331bYvg6csJ8mql4plG9EADBqKtuc2ExNhGdvgd7FvpgU01SBhJepcLiPX9WAiAUHwPLzd+SsweqR7vvP8hqX4oa7l7OpVI68unD3TBbzaEieHXAGpYD7FR62TMUxgKU+xhiV/uwE/qc55cduShwGW56YfwkL5Kvymvx6Cil4awPtA1vJ8u16t3Hoz5uhmlwJBddTOc5oE0iXNhuTe4yXw+P06Bc+K0qYnEM3jjhKsY/xyptEuykV8cFwg0WU/6+EcbcshR48s+MF5u7JFF42o5ZH/33XYrpYcQ6r9pF6AprO4nLperfIblvozxkaTwMfwQePOKKjFkmJp8cnqEwMrfAxCtMGZ3XSTgejx2U9nSG0RfYrGl4bBzLHD7qfPqyaJ7unpL36nnvtgVBXmhC4PzFfiHEdLpQoNqqFtWaVKnfxfO8RZjIE/9mihrXNsB/P2xatEA1QnU1nHMbWvbhPIYt4JjC//m9qsCGu2Re8aE5yT77DNzPpY8zD4ErCJQKvhaRsgA7nQmay/cmurBTTF+m7JXCebnY6deeXnYHxwV1SC3Oh5F110MXO8X6uhYL2jamAU8v8EvqGWKTtN1ZsMJSk51BB7o4V2XwJO6l/O9uVpOGzosm263fAEYuBcApfKr3ta/+VWYJq8XTuCl/hGxu3anM0jD3LYnORjpkFhybrFugs0R0q+2VCkYF1jt4mDOmisq7Z8qVe8d8NNHRADmAX6sreFgLsl07/cYOTaGdAu0fmx6cM71el7GM+tEswswDYZ0DeO88Um8Jfhhms/Iy1A2qDlOcBzqNEmEZbWv+Bk+FJS3FY9n3GoZDt/3Dqht4KD3qNAg2U/7pexjDy/P/x5TqAengwhQ/vAwM8ENnlrNwzzhuwXH3HhQy9jPiqhn8HVU='}}]
+Full Response: content=[{'type': 'text', 'text': 'Hi!', 'extras': {'signature': 'EuIGCt8GAXLI2nxY69nqmPRxfSBPW3vY3S4SfNIrtx5BHMtRUGa6AlBaXYny9P8OHDoPw4iQOad7tgFt44emhe4haq5o9NEO4Q0nzzp09+JjpAm+xM5cWSsUpl/ZAW5ZE7CCDpM5/Qw4ewrDUf/YXdEcHZX/vPRexGOMZyPVIUCmZyqczcAAz2bw410VSKRa4wCpgvWyhdBL3HzUWAcS2Kk7XvOzvCjnKrKvFlhIzYFIZeNZ8cPiU6D9rTcP6UXC331bYvg6csJ8mql4plG9EADBqKtuc2ExNhGdvgd7FvpgU01SBhJepcLiPX9WAiAUHwPLzd+SsweqR7vvP8hqX4oa7l7OpVI68unD3TBbzaEieHXAGpYD7FR62TMUxgKU+xhiV/uwE/qc55cduShwGW56YfwkL5Kvymvx6Cil4awPtA1vJ8u16t3Hoz5uhmlwJBddTOc5oE0iXNhuTe4yXw+P06Bc+K0qYnEM3jjhKsY/xyptEuykV8cFwg0WU/6+EcbcshR48s+MF5u7JFF42o5ZH/33XYrpYcQ6r9pF6AprO4nLperfIblvozxkaTwMfwQePOKKjFkmJp8cnqEwMrfAxCtMGZ3XSTgejx2U9nSG0RfYrGl4bBzLHD7qfPqyaJ7unpL36nnvtgVBXmhC4PzFfiHEdLpQoNqqFtWaVKnfxfO8RZjIE/9mihrXNsB/P2xatEA1QnU1nHMbWvbhPIYt4JjC//m9qsCGu2Re8aE5yT77DNzPpY8zD4ErCJQKvhaRsgA7nQmay/cmurBTTF+m7JXCebnY6deeXnYHxwV1SC3Oh5F110MXO8X6uhYL2jamAU8v8EvqGWKTtN1ZsMJSk51BB7o4V2XwJO6l/O9uVpOGzosm263fAEYuBcApfKr3ta/+VWYJq8XTuCl/hGxu3anM0jD3LYnORjpkFhybrFugs0R0q+2VCkYF1jt4mDOmisq7Z8qVe8d8NNHRADmAX6sreFgLsl07/cYOTaGdAu0fmx6cM71el7GM+tEswswDYZ0DeO88Um8Jfhhms/Iy1A2qDlOcBzqNEmEZbWv+Bk+FJS3FY9n3GoZDt/3Dqht4KD3qNAg2U/7pexjDy/P/x5TqAengwhQ/vAwM8ENnlrNwzzhuwXH3HhQy9jPiqhn8HVU='}}] additional_kwargs={} response_metadata={'prompt_feedback': {'block_reason': 0, 'safety_ratings': []}, 'finish_reason': 'STOP', 'model_name': 'gemini-3-pro-preview', 'safety_ratings': [], 'model_provider': 'google_genai'} id='lc_run--1cb1f6c8-3b37-432d-9581-9ad71b54ec23-0' usage_metadata={'input_tokens': 6, 'output_tokens': 228, 'total_tokens': 234, 'input_token_details': {'cache_read': 0}, 'output_token_details': {'reasoning': 226}}
+
+--- Test 2: Async Invoke (REST) ---
+Error: object GenerateContentResponse can't be used in 'await' expression
+
+--- Test 3: Async Stream (REST) ---
+Error: object ResponseIterator can't be used in 'await' expression
+
+--- Test 4: Async Invoke (gRPC) ---
+Traceback (most recent call last):
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/api_core/grpc_helpers_async.py", line 86, in __await__
+    response = yield from self._call.__await__()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/grpc/aio/_interceptor.py", line 474, in __await__
+    response = yield from call.__await__()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/grpc/aio/_call.py", line 328, in __await__
+    raise _create_rpc_error(
+grpc.aio._call.AioRpcError: <AioRpcError of RPC that terminated with:
+	status = StatusCode.UNAVAILABLE
+	details = "DNS resolution failed for https://gateway.ai.cloudflare.com/v1/44af79e51582ca20c9003eb926540242/clash/google-ai-studio: C-ares status is not ARES_SUCCESS qtype=A name=https is_balancer=0: Domain name not found"
+	debug_error_string = "UNKNOWN:Error received from peer  {grpc_status:14, grpc_message:"DNS resolution failed for https://gateway.ai.cloudflare.com/v1/44af79e51582ca20c9003eb926540242/clash/google-ai-studio: C-ares status is not ARES_SUCCESS qtype=A name=https is_balancer=0: Domain name not found"}"
+>
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary_async.py", line 158, in retry_target
+    return await target()
+           ^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/api_core/grpc_helpers_async.py", line 89, in __await__
+    raise exceptions.from_grpc_error(rpc_error) from rpc_error
+google.api_core.exceptions.ServiceUnavailable: 503 DNS resolution failed for https://gateway.ai.cloudflare.com/v1/44af79e51582ca20c9003eb926540242/clash/google-ai-studio: C-ares status is not ARES_SUCCESS qtype=A name=https is_balancer=0: Domain name not found
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/tests/test_llm_connection.py", line 60, in test_llm
+    msg = await llm.ainvoke("Hello, say hi async grpc.")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_core/language_models/chat_models.py", line 421, in ainvoke
+    llm_result = await self.agenerate_prompt(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_core/language_models/chat_models.py", line 1128, in agenerate_prompt
+    return await self.agenerate(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_core/language_models/chat_models.py", line 1048, in agenerate
+    results = await asyncio.gather(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_core/language_models/chat_models.py", line 1339, in _agenerate_with_cache
+    result = await self._agenerate(
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_google_genai/chat_models.py", line 2347, in _agenerate
+    response: GenerateContentResponse = await _achat_with_retry(
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_google_genai/chat_models.py", line 314, in _achat_with_retry
+    return await _achat_with_retry(**params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/asyncio/__init__.py", line 189, in async_wrapped
+    return await copy(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/asyncio/__init__.py", line 111, in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/asyncio/__init__.py", line 153, in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/_utils.py", line 99, in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/__init__.py", line 400, in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 449, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/tenacity/asyncio/__init__.py", line 114, in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/langchain_google_genai/chat_models.py", line 296, in _achat_with_retry
+    return await generation_method(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/async_client.py", line 445, in generate_content
+    response = await rpc(
+               ^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary_async.py", line 231, in retry_wrapped_func
+    return await retry_target(
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/Proj/master-clash/backend/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary_async.py", line 174, in retry_target
+    await asyncio.sleep(next_sleep)
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/xiaoyang/Proj/master-clash/backend/tests/test_llm_connection.py", line 66, in <module>
+    asyncio.run(test_llm())
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/xiaoyang/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt

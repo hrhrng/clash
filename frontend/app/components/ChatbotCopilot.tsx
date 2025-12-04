@@ -335,36 +335,6 @@ export default function ChatbotCopilot({
             }]);
         }
 
-        // 2. Sync Context to Backend
-        console.log('[ChatbotCopilot] Syncing context to backend...');
-        try {
-            // Use relative URL to go through proxy
-            const contextUrl = `/api/v1/project/${projectId}/context`;
-            await fetch(contextUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    nodes: nodes.map(n => ({
-                        id: n.id,
-                        type: n.type,
-                        data: n.data,
-                        position: n.position,
-                        parentId: n.parentId
-                    })),
-                    edges: edges.map(e => ({
-                        id: e.id,
-                        source: e.source,
-                        target: e.target,
-                        type: e.type
-                    }))
-                }),
-            });
-            console.log('[ChatbotCopilot] Context synced successfully.');
-        } catch (error) {
-            console.error('[ChatbotCopilot] Failed to sync context:', error);
-        }
 
         // 3. Connect to SSE Stream
         console.log('[ChatbotCopilot] Connecting to SSE stream...');

@@ -17,9 +17,11 @@ import uuid
 
 from master_clash.config import get_settings
 from master_clash.tools.nano_banana import nano_banana_gen
-from master_clash.tools.nano_banana import nano_banana_gen
 from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.description import generate_description
+from master_clash.context import ProjectContext, NodeModel, EdgeModel, _PROJECT_CONTEXTS, set_project_context, get_project_context
+from master_clash.workflow.multi_agent import graph
+from langchain_core.messages import HumanMessage
 import requests
 
 
@@ -98,6 +100,18 @@ class GenerateDescriptionRequest(BaseModel):
     url: str = Field(..., description="Asset URL or Data URI")
     task_id: str = Field(..., description="Task ID for callback")
     callback_url: str | None = Field(default=None, description="Callback URL for status updates")
+
+
+class GenerateSemanticIDRequest(BaseModel):
+    """Request to generate semantic IDs."""
+    project_id: str = Field(..., description="Project ID for scoping")
+    count: int = Field(default=1, ge=1, le=100, description="Number of IDs to generate")
+
+
+class GenerateSemanticIDResponse(BaseModel):
+    """Response with generated semantic IDs."""
+    ids: list[str] = Field(..., description="List of generated semantic IDs")
+    project_id: str = Field(..., description="Project ID")
 
 
 class GenerateDescriptionResponse(BaseModel):
@@ -325,27 +339,7 @@ async def cancel_workflow(project_id: str):
 
 
 # --- Project Context Models ---
-from typing import List, Dict, Optional
-
-class NodeModel(BaseModel):
-    id: str
-    type: str
-    data: Dict[str, Any]
-    position: Dict[str, float]
-    parentId: Optional[str] = None
-
-class EdgeModel(BaseModel):
-    id: str
-    source: str
-    target: str
-    type: Optional[str] = None
-
-class ProjectContext(BaseModel):
-    nodes: List[NodeModel]
-    edges: List[EdgeModel]
-
-# In-memory store for project context
-_PROJECT_CONTEXTS: Dict[str, ProjectContext] = {}
+# Imported from master_clash.context
 
 
 @app.post("/api/v1/project/{project_id}/context")
@@ -356,8 +350,7 @@ async def update_project_context(project_id: str, context: ProjectContext):
     """
     logger.info(f"Received context update for project {project_id}")
     logger.info(f"Nodes: {len(context.nodes)}, Edges: {len(context.edges)}")
-    # logger.debug(f"Context details: {context}") # Uncomment for full dump
-    _PROJECT_CONTEXTS[project_id] = context
+    set_project_context(project_id, context)
     return {"status": "success", "message": "Context updated"}
         
 
@@ -420,466 +413,36 @@ class StreamEmitter:
 
 @app.get("/api/v1/stream/{project_id}")
 async def stream_workflow(project_id: str, thread_id: str, resume: bool = False, user_input: str = None):
+    pass
+
+@app.post("/api/generate-ids", response_model=GenerateSemanticIDResponse)
+async def generate_semantic_ids(request: GenerateSemanticIDRequest):
+    """Generate semantic IDs for a project.
+
+    Returns human-readable, memorable IDs like "alpha-ocean-square"
+    that are unique within the project scope.
     """
-    Stream LangGraph events via SSE.
-    Events: thinking, text, tool_start, tool_end, human_interrupt, plan
-    """
-    import asyncio
-    import json
-    import uuid
-    
-    async def event_generator():
-        nonlocal resume
-        try:
-            # Retrieve context
-            context = _PROJECT_CONTEXTS.get(project_id)
-            context_info = f"Context: {len(context.nodes)} nodes, {len(context.edges)} edges" if context else "Context: None"
-            
-            logger.info(f"Starting SSE stream for project: {project_id}, thread: {thread_id}, resume: {resume}, input: {user_input}. {context_info}")
-            
-            emitter = StreamEmitter()
+    try:
+        from master_clash.semantic_id import create_d1_checker, generate_unique_ids_for_project
 
-            # --- Helper Functions ---
-            def find_node_by_id(node_id: str, project_context: ProjectContext) -> NodeModel | None:
-                if not project_context: return None
-                for node in project_context.nodes:
-                    if node.id == node_id:
-                        return node
-                return None
+        # Create D1 checker
+        checker = create_d1_checker()
 
-            def get_asset_id(node_id: str, project_context: ProjectContext) -> str | None:
-                node = find_node_by_id(node_id, project_context)
-                if node and node.data:
-                    return node.data.get("assetId")
-                return None
+        # Generate unique IDs
+        ids = generate_unique_ids_for_project(
+            request.project_id,
+            request.count,
+            checker
+        )
 
-            # --- Deterministic IDs ---
-            NODE_ID_SCRIPT = "node-script-text"
-            NODE_ID_CONCEPT_GROUP = "node-concept-group"
-            NODE_ID_CHAR_PROMPT = "node-char-prompt"
-            NODE_ID_CHAR_GEN = "node-char-gen"
-            NODE_ID_SCENE_PROMPT = "node-scene-prompt"
-            NODE_ID_SCENE_GEN = "node-scene-gen"
-            NODE_ID_SB_GROUP = "node-sb-group"
-            NODE_ID_SB_PROMPT = "node-sb-prompt"
-            NODE_ID_SB_GEN1 = "node-sb-gen1"
-            NODE_ID_SB_GEN2 = "node-sb-gen2"
-            NODE_ID_SB_VIDEO = "node-sb-video"
-    
-            if not resume:
-                # --- Initial Flow: Propose Root Group ---
-                logger.info("Starting initial flow: Proposing Script")
-                
-                yield emitter.thinking("User wants a full demo scenario. I will start with the script, then concept art, then storyboard generation.")
-                await asyncio.sleep(1)
-    
-                # ScriptWriter Sub-Agent
-                sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                yield emitter.sub_agent_start("ScriptWriter", "Draft Script", sub_id)
-                
-                tool_id_script = "call_" + str(uuid.uuid4())[:8]
-                yield emitter.format_event("tool_start", {"agent": "ScriptWriter", "tool_name": "write_script", "args": {"topic": "Cyberpunk Hacker Neo"}, "id": tool_id_script})
-                await asyncio.sleep(2.0)
-    
-                script_content = "# Neo - The One\n\nA skilled hacker living a double life. By day, a software engineer; by night, a rebel searching for the truth."
-                yield emitter.format_event("tool_end", {"agent": "ScriptWriter", "result": script_content, "id": tool_id_script})
-                
-                yield emitter.sub_agent_end("ScriptWriter", "Script Drafted", sub_id)
-                await asyncio.sleep(0.5)
-    
-                # Director Proposes Script Node
-                proposal_data_script = {
-                    "id": "proposal-script-text",
-                    "type": "simple",
-                    "nodeType": "text",
-                    "nodeData": {
-                        "id": NODE_ID_SCRIPT,
-                        "label": "Neo Script",
-                        "content": script_content
-                    },
-                    "message": "Here is the drafted script. Shall I add it to the board?"
-                }
-                yield emitter.format_event("node_proposal", proposal_data_script)
-                
-                yield emitter.thinking("Waiting for you to accept the script...", agent="Director")
-                
-                # Wait for script node to appear
-                for _ in range(120):
-                    await asyncio.sleep(1)
-                    current_context = _PROJECT_CONTEXTS.get(project_id)
-                    if find_node_by_id(NODE_ID_SCRIPT, current_context):
-                        yield emitter.thinking("Script accepted! Proceeding...", agent="Director")
-                        resume = True
-                        break
-                
-                if not resume:
-                     yield emitter.thinking("Timed out waiting for script. Please accept it to continue.", agent="Director")
-                     return
+        return GenerateSemanticIDResponse(
+            ids=ids,
+            project_id=request.project_id
+        )
 
-            if resume:
-                # --- Resume Flow (Polling & Progression) ---
-                # Refresh context
-                context = _PROJECT_CONTEXTS.get(project_id)
-                logger.info(f"Resuming flow. Checking state...")
-    
-                # 1. Check Script -> Concept Group
-                logger.info("Step 1: Checking Script -> Concept Group")
-                if find_node_by_id(NODE_ID_SCRIPT, context) and not find_node_by_id(NODE_ID_CONCEPT_GROUP, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("ConceptArtist", "Create Concept Group", sub_id)
-                    
-                    yield emitter.thinking("Script added. Now creating concept art group.", agent="ConceptArtist", id=sub_id)
-                    await asyncio.sleep(1)
-                    
-                    proposal_data = {
-                        "id": "proposal-concept-group",
-                        "type": "group",
-                        "nodeType": "group",
-                        "nodeData": {"id": NODE_ID_CONCEPT_GROUP, "label": "Concept Art: Neo"},
-                        "message": "I'll create a group for the concept art."
-                    }
-                    async for event in emitter.tool_create_node('ConceptArtist', 'create_group', {'label': 'Concept Art: Neo'}, proposal_data, 'Group: Concept Art: Neo'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("ConceptArtist", "Group Created", sub_id)
-                    return
-
-                # 2. Check Concept Group -> Character Prompt
-                logger.info("Step 2: Checking Concept Group -> Character Prompt")
-                if find_node_by_id(NODE_ID_CONCEPT_GROUP, context) and not find_node_by_id(NODE_ID_CHAR_PROMPT, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("ConceptArtist", "Create Character Prompt", sub_id)
-                    
-                    yield emitter.thinking("Group ready. Extracting character prompt.", agent="ConceptArtist", id=sub_id)
-                    await asyncio.sleep(1)
-                    
-                    char_prompt = "Cyberpunk hacker Neo, male, black trench coat, sunglasses, neon rain, high contrast, digital art, detailed face"
-                    proposal_data = {
-                        "id": "proposal-char-prompt",
-                        "type": "simple",
-                        "nodeType": "prompt",
-                        "nodeData": {
-                            "id": NODE_ID_CHAR_PROMPT,
-                            "label": "Character Prompt",
-                            "content": char_prompt
-                        },
-                        "groupId": NODE_ID_CONCEPT_GROUP,
-                        "upstreamNodeId": NODE_ID_SCRIPT,
-                        "message": "Here is the prompt for the character design."
-                    }
-                    async for event in emitter.tool_create_node('ConceptArtist', 'create_prompt', {'label': 'Character Prompt'}, proposal_data, char_prompt):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("ConceptArtist", "Prompt Created", sub_id)
-                    return
-
-                # 3. Check Character Prompt -> Character Gen
-                logger.info("Step 3: Checking Character Prompt -> Character Gen")
-                if find_node_by_id(NODE_ID_CHAR_PROMPT, context) and not find_node_by_id(NODE_ID_CHAR_GEN, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("ConceptArtist", "Create Character Gen Node", sub_id)
-                    
-                    proposal_data = {
-                        "id": "proposal-char-gen",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {"id": NODE_ID_CHAR_GEN, "label": "Gen: Character"},
-                        "groupId": NODE_ID_CONCEPT_GROUP,
-                        "upstreamNodeId": NODE_ID_CHAR_PROMPT,
-                        "autoRun": True,
-                        "message": "I'll add the generation node for the character."
-                    }
-                    async for event in emitter.tool_create_node('ConceptArtist', 'create_image_gen', {'label': 'Gen: Character'}, proposal_data, 'Generation Node: Character'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("ConceptArtist", "Gen Node Created", sub_id)
-                    return
-
-                # 4. Check Character Gen -> Scene Prompt (WAIT FOR GEN)
-                logger.info("Step 4: Checking Character Gen -> Scene Prompt")
-                if find_node_by_id(NODE_ID_CHAR_GEN, context) and not find_node_by_id(NODE_ID_SCENE_PROMPT, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("ConceptArtist", "Poll Character Gen & Create Scene Prompt", sub_id)
-                    
-                    char_img_id = None
-                    async for event in emitter.tool_poll_asset('ConceptArtist', NODE_ID_CHAR_GEN, context, get_asset_id):
-                        if event is None:
-                            continue
-                        if event.startswith("event:"):
-                            yield event
-                        else:
-                            char_img_id = event
-                    
-                    if not char_img_id:
-                        # Don't end sub-agent if polling continues (retry)
-                        # But wait, retry yields 'retry' event which frontend handles.
-                        # We should probably not emit sub_agent_end here if we return early.
-                        return
-
-                    yield emitter.thinking("Character image found. Moving to scene creation.", agent="ConceptArtist", id=sub_id)
-                    await asyncio.sleep(1)
-
-                    scene_prompt = "Futuristic cyberpunk city street, night, neon lights, rain, wet pavement, towering skyscrapers, dystopian atmosphere"
-                    proposal_data = {
-                        "id": "proposal-scene-prompt",
-                        "type": "simple",
-                        "nodeType": "prompt",
-                        "nodeData": {
-                            "id": NODE_ID_SCENE_PROMPT,
-                            "label": "Scene Prompt",
-                            "content": scene_prompt
-                        },
-                        "groupId": NODE_ID_CONCEPT_GROUP,
-                        "upstreamNodeId": NODE_ID_SCRIPT,
-                        "message": "Great character! Now here is the prompt for the scene."
-                    }
-                    async for event in emitter.tool_create_node('ConceptArtist', 'create_prompt', {'label': 'Scene Prompt'}, proposal_data, scene_prompt):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("ConceptArtist", "Scene Prompt Created", sub_id)
-                    return
-
-                # 5. Check Scene Prompt -> Scene Gen
-                logger.info("Step 5: Checking Scene Prompt -> Scene Gen")
-                if find_node_by_id(NODE_ID_SCENE_PROMPT, context) and not find_node_by_id(NODE_ID_SCENE_GEN, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("ConceptArtist", "Create Scene Gen Node", sub_id)
-                    
-                    proposal_data = {
-                        "id": "proposal-scene-gen",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {"id": NODE_ID_SCENE_GEN, "label": "Gen: Scene"},
-                        "groupId": NODE_ID_CONCEPT_GROUP,
-                        "upstreamNodeId": NODE_ID_SCENE_PROMPT,
-                        "autoRun": True,
-                        "message": "I'll add the generation node for the scene."
-                    }
-                    async for event in emitter.tool_create_node('ConceptArtist', 'create_image_gen', {'label': 'Gen: Scene'}, proposal_data, 'Generation Node: Scene'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("ConceptArtist", "Gen Node Created", sub_id)
-                    return
-
-                # 6. Check Scene Gen -> Storyboard Group (WAIT FOR GEN)
-                logger.info("Step 6: Checking Scene Gen -> Storyboard Group")
-                if find_node_by_id(NODE_ID_SCENE_GEN, context) and not find_node_by_id(NODE_ID_SB_GROUP, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Poll Scene Gen & Create Storyboard Group", sub_id)
-                    
-                    scene_img_id = None
-                    async for event in emitter.tool_poll_asset('ConceptArtist', NODE_ID_SCENE_GEN, context, get_asset_id):
-                        if event is None:
-                            continue
-                        if event.startswith("event:"):
-                            yield event
-                        else:
-                            scene_img_id = event
-                    
-                    if not scene_img_id: return
-
-                    yield emitter.thinking("Scene ready. Setting up the storyboard.", agent="StoryboardArtist", id=sub_id)
-                    await asyncio.sleep(1)
-
-                    proposal_data = {
-                        "id": "proposal-storyboard-group",
-                        "type": "group",
-                        "nodeType": "group",
-                        "nodeData": {"id": NODE_ID_SB_GROUP, "label": "Storyboard: Act 1"},
-                        "message": "I'll create a group for the storyboard."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_group', {'label': 'Storyboard: Act 1'}, proposal_data, 'Group: Storyboard: Act 1'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Group Created", sub_id)
-                    return
-
-                # 7. Check Storyboard Group -> SB Prompt
-                logger.info("Step 7: Checking Storyboard Group -> SB Prompt")
-                if find_node_by_id(NODE_ID_SB_GROUP, context) and not find_node_by_id(NODE_ID_SB_PROMPT, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Create Scene 1 Prompt", sub_id)
-                    
-                    sb_prompt1 = "Neo standing on a rooftop in the rain, looking at the neon city skyline."
-                    proposal_data = {
-                        "id": "proposal-sb-prompt",
-                        "type": "simple",
-                        "nodeType": "prompt",
-                        "nodeData": {
-                            "id": NODE_ID_SB_PROMPT,
-                            "label": "Scene 1 Prompt",
-                            "content": sb_prompt1
-                        },
-                        "groupId": NODE_ID_SB_GROUP,
-                        "upstreamNodeId": NODE_ID_SCRIPT,
-                        "message": "I've extracted the prompt for Scene 1."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_prompt', {'label': 'Scene 1 Prompt'}, proposal_data, sb_prompt1):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Prompt Created", sub_id)
-                    return
-
-                # 8. Check SB Prompt -> SB Gen 1
-                logger.info("Step 8: Checking SB Prompt -> SB Gen 1")
-                if find_node_by_id(NODE_ID_SB_PROMPT, context) and not find_node_by_id(NODE_ID_SB_GEN1, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Create Static Shot 1 Gen Node", sub_id)
-                    
-                    char_img_id = get_asset_id(NODE_ID_CHAR_GEN, context)
-                    scene_img_id = get_asset_id(NODE_ID_SCENE_GEN, context)
-                    upstream_ids = [NODE_ID_SB_PROMPT]
-                    if char_img_id: upstream_ids.append(char_img_id)
-                    if scene_img_id: upstream_ids.append(scene_img_id)
-
-                    proposal_data = {
-                        "id": "proposal-sb-gen1",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {"id": NODE_ID_SB_GEN1, "label": "Gen: Static Shot 1"},
-                        "groupId": NODE_ID_SB_GROUP,
-                        "upstreamNodeIds": upstream_ids,
-                        "autoRun": True,
-                        "message": "I'll set up the generation node, using the prompt and your concept art."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_image_gen', {'label': 'Gen: Static Shot 1'}, proposal_data, 'Generation Node: Static Shot 1'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Gen Node Created", sub_id)
-                    return
-
-                # 9. Check SB Gen 1 -> SB Prompt 2 (WAIT FOR GEN 1)
-                NODE_ID_SB_PROMPT2 = "sb-prompt-2"
-                logger.info("Step 9: Checking SB Gen 1 -> SB Prompt 2")
-                if find_node_by_id(NODE_ID_SB_GEN1, context) and not find_node_by_id(NODE_ID_SB_PROMPT2, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Poll Shot 1 & Create Close-up Prompt", sub_id)
-                    
-                    shot1_img_id = None
-                    async for event in emitter.tool_poll_asset('StoryboardArtist', NODE_ID_SB_GEN1, context, get_asset_id):
-                        if event is None:
-                            continue
-                        if event.startswith("event:"):
-                            yield event
-                        else:
-                            shot1_img_id = event
-                    
-                    if not shot1_img_id: return
-
-                    yield emitter.thinking("Shot 1 captured. Now drafting the prompt for the close-up.", agent="StoryboardArtist", id=sub_id)
-                    await asyncio.sleep(1)
-
-                    sb_prompt2 = "Extreme close-up of Neo's sunglasses reflecting the neon city lights, rain dripping down the lens."
-                    proposal_data = {
-                        "id": "proposal-sb-prompt2",
-                        "type": "simple",
-                        "nodeType": "prompt",
-                        "nodeData": {
-                            "id": NODE_ID_SB_PROMPT2,
-                            "label": "Scene 1 Close-up",
-                            "content": sb_prompt2
-                        },
-                        "groupId": NODE_ID_SB_GROUP,
-                        "upstreamNodeId": shot1_img_id,
-                        "message": "Here is the prompt for the derivative shot (close-up)."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_prompt', {'label': 'Scene 1 Close-up'}, proposal_data, sb_prompt2):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Prompt Created", sub_id)
-                    return
-
-                # 10. Check SB Prompt 2 -> SB Gen 2
-                logger.info("Step 10: Checking SB Prompt 2 -> SB Gen 2")
-                if find_node_by_id(NODE_ID_SB_PROMPT2, context) and not find_node_by_id(NODE_ID_SB_GEN2, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Create Derivative Shot Gen Node", sub_id)
-                    
-                    shot1_img_id = get_asset_id(NODE_ID_SB_GEN1, context)
-                    upstream_ids = [NODE_ID_SB_PROMPT2]
-                    if shot1_img_id: upstream_ids.append(shot1_img_id)
-
-                    proposal_data = {
-                        "id": "proposal-sb-gen2",
-                        "type": "generative",
-                        "nodeType": "action-badge-image",
-                        "nodeData": {"id": NODE_ID_SB_GEN2, "label": "Gen: Derivative Shot"},
-                        "groupId": NODE_ID_SB_GROUP,
-                        "upstreamNodeIds": upstream_ids,
-                        "autoRun": True,
-                        "message": "I'll generate the derivative shot using the prompt and the previous image."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_image_gen', {'label': 'Gen: Derivative Shot'}, proposal_data, 'Generation node added.'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Gen Node Created", sub_id)
-                    return
-
-                # 11. Check SB Gen 2 -> Video (WAIT FOR GEN)
-                logger.info("Step 11: Checking SB Gen 2 -> Video")
-                if find_node_by_id(NODE_ID_SB_GEN2, context) and not find_node_by_id(NODE_ID_SB_VIDEO, context):
-                    sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-                    yield emitter.sub_agent_start("StoryboardArtist", "Poll Shot 2 & Create Video Gen Node", sub_id)
-                    
-                    shot2_img_id = None
-                    async for event in emitter.tool_poll_asset('StoryboardArtist', NODE_ID_SB_GEN2, context, get_asset_id):
-                        if event is None:
-                            continue
-                        if event.startswith("event:"):
-                            yield event
-                        else:
-                            shot2_img_id = event
-                    
-                    if not shot2_img_id: return
-
-                    yield emitter.thinking("Both shots ready. Let's animate them.", agent="StoryboardArtist", id=sub_id)
-                    await asyncio.sleep(1)
-
-                    shot1_img_id = get_asset_id(NODE_ID_SB_GEN1, context)
-                    upstream_ids = [shot1_img_id, shot2_img_id]
-
-                    proposal_data = {
-                        "id": "proposal-sb-video",
-                        "type": "generative",
-                        "nodeType": "action-badge-video",
-                        "nodeData": {"id": NODE_ID_SB_VIDEO, "label": "Gen: Dynamic Storyboard"},
-                        "groupId": NODE_ID_SB_GROUP,
-                        "upstreamNodeIds": upstream_ids,
-                        "message": "Finally, I'll set up the video generation node using your shots."
-                    }
-                    async for event in emitter.tool_create_node('StoryboardArtist', 'create_video_gen', {'label': 'Gen: Dynamic Storyboard'}, proposal_data, 'Generation node added.'):
-                        yield event
-                    
-                    yield emitter.sub_agent_end("StoryboardArtist", "Gen Node Created", sub_id)
-                    return
-                
-                # 12. Final State
-                if find_node_by_id(NODE_ID_SB_VIDEO, context):
-                    yield emitter.text("Full demo scenario complete! Run the video generator to see the final result.", agent="Director")
-                    yield f"event: end\ndata: {{}}\n\n"
-                    return
-    
-                # Fallback
-                yield emitter.thinking("Workflow synced.", agent="Director")
-                yield f"event: retry\ndata: {{}}\n\n"
-    
-        except Exception as e:
-            import traceback
-            logger.error(f"SSE Stream Error: {e}")
-            logger.error(traceback.format_exc())
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-
-        logger.info(f"SSE stream finished for project: {project_id}")
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
+    except Exception as e:
+        logger.error(f"Error generating semantic IDs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.exception_handler(Exception)

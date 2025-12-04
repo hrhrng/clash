@@ -220,6 +220,23 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                     return;
                 }
 
+                // CRITICAL FIX: Update THIS ActionBadge node with the assetId so the backend can poll it
+                // We use setNodes to ensure the state change propagates to ProjectEditor -> ChatbotCopilot -> Backend
+                const { setNodes } = useReactFlow();
+                setNodes((nds) => nds.map((n) => {
+                    if (n.id === id) {
+                        return {
+                            ...n,
+                            data: {
+                                ...n.data,
+                                assetId: asset.id, // Store the generated asset ID
+                                status: 'success'
+                            }
+                        };
+                    }
+                    return n;
+                }));
+
                 // 4. Connect the action node to the new image node
                 addEdges({
                     id: `${id}-${asset.id}`,

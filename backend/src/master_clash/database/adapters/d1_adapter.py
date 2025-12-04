@@ -72,7 +72,7 @@ class D1Database(Database):
         return f"{self.BASE}/accounts/{self._account_id}/d1/database/{self._db_id}/query"
 
     def _post(self, sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
-        # Cloudflare expects either a single statement {sql, params} or an array of statements
+        # Cloudflare D1 API expects a single statement object
         payload = {"sql": sql, "params": list(params or [])}
         r = requests.post(self._endpoint(), json=payload, headers=self._headers())
         r.raise_for_status()
