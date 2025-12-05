@@ -21,6 +21,7 @@ from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.description import generate_description
 from master_clash.context import ProjectContext, NodeModel, EdgeModel, _PROJECT_CONTEXTS, set_project_context, get_project_context
 from master_clash.workflow.multi_agent import graph
+from master_clash.video_analysis import VideoAnalysisOrchestrator, VideoAnalysisConfig, VideoAnalysisResult
 from langchain_core.messages import HumanMessage
 import requests
 
@@ -118,6 +119,38 @@ class GenerateDescriptionResponse(BaseModel):
     """Response with generated description."""
     task_id: str = Field(..., description="Task ID")
     status: str = Field(default="processing", description="Task status")
+
+
+class AnalyzeVideoRequest(BaseModel):
+    """Request to analyze a video comprehensively."""
+    video_path: str = Field(..., description="Path to video file")
+    output_dir: str | None = Field(default=None, description="Output directory for analysis results")
+
+    # Analysis options
+    enable_asr: bool = Field(default=True, description="Enable audio transcription")
+    enable_subtitle_extraction: bool = Field(default=True, description="Extract embedded subtitles")
+    enable_keyframe_detection: bool = Field(default=True, description="Detect key frames")
+    enable_gemini_analysis: bool = Field(default=True, description="Enable Gemini video understanding")
+
+    # ASR config
+    asr_language: str = Field(default="auto", description="Language for ASR (auto-detect or ISO code)")
+
+    # Keyframe config
+    keyframe_threshold: float = Field(default=0.3, description="Scene change threshold (0-1)")
+    max_keyframes: int = Field(default=50, description="Maximum number of keyframes")
+
+    # Gemini config
+    gemini_model: str = Field(default="gemini-2.5-pro", description="Gemini model to use")
+    gemini_prompt: str | None = Field(default=None, description="Custom analysis prompt")
+
+    callback_url: str | None = Field(default=None, description="Callback URL for completion")
+
+
+class AnalyzeVideoResponse(BaseModel):
+    """Response for video analysis task."""
+    task_id: str = Field(..., description="Task ID for polling")
+    status: str = Field(default="processing", description="Initial status")
+    message: str = Field(default="Video analysis started", description="Status message")
 
 
 def process_image_generation(internal_task_id: str, params: dict, callback_url: str = None):
@@ -413,7 +446,245 @@ class StreamEmitter:
 
 @app.get("/api/v1/stream/{project_id}")
 async def stream_workflow(project_id: str, thread_id: str, resume: bool = False, user_input: str = None):
-    pass
+    """Stream LangGraph workflow events as SSE using LangGraph streaming modes."""
+    emitter = StreamEmitter()
+
+    if not resume and not user_input:
+        raise HTTPException(status_code=400, detail="user_input is required when starting a new run")
+
+    def _extract_text(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, list):
+            return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return str(content)
+
+    async def event_stream():
+        inputs = None
+        if not resume:
+            message = f"Project ID: {project_id}. {user_input}"
+            inputs = {
+                "messages": [HumanMessage(content=message)],
+                "project_id": project_id,
+                "next": "Supervisor"
+            }
+
+        config = {"configurable": {"thread_id": thread_id}}
+        stream_modes = ["messages", "updates", "custom"]
+
+        try:
+            async for streamed in graph.astream(
+                inputs,
+                config=config,
+                stream_mode=stream_modes,
+                subgraphs=True,  # surface subgraph/custom events from nested calls
+            ):
+                mode = None
+                payload = streamed
+
+                # When multiple stream modes are used, the payload is (mode, data)
+                if isinstance(streamed, tuple) and len(streamed) == 2 and streamed[0] in stream_modes:
+                    mode, payload = streamed
+
+                if mode == "messages":
+                    if not isinstance(payload, tuple) or len(payload) != 2:
+                        continue
+                    msg_chunk, metadata = payload
+                    agent_name = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
+                    content = getattr(msg_chunk, "content", None)
+                    logger.debug(
+                        "stream messages chunk agent=%s content_preview=%s metadata_keys=%s",
+                        agent_name or "Agent",
+                        repr(content)[:200],
+                        list(metadata.keys()) if isinstance(metadata, dict) else type(metadata),
+                    )
+
+                    # Handle list-style content parts (e.g., [{"type": "text", "text": "..."}])
+                    if isinstance(content, list):
+                        for part in content:
+                            if not isinstance(part, dict):
+                                continue
+                            part_type = part.get("type")
+                            part_text = part.get("text", "")
+                            logger.debug(
+                                "stream messages part type=%s text_preview=%s",
+                                part_type,
+                                part_text[:200],
+                            )
+                            if not part_text:
+                                continue
+                            if part_type in {"thinking", "reasoning", "thought"}:
+                                yield emitter.thinking(part_text, agent=agent_name or "Agent")
+                            else:
+                                yield emitter.text(part_text, agent=agent_name or "Agent")
+                        continue
+
+                    text_content = _extract_text(content)
+                    if text_content:
+                        yield emitter.text(text_content, agent=agent_name or "Agent")
+
+                elif mode == "updates":
+                    update = payload
+                    namespace = ()
+                    if isinstance(update, tuple) and len(update) == 2 and isinstance(update[0], tuple):
+                        namespace, update = update
+
+                    if not isinstance(update, dict):
+                        continue
+
+                    for _, value in update.items():
+                        if isinstance(value, dict) and "messages" in value:
+                            messages = value["messages"]
+                            if isinstance(messages, list) and messages:
+                                last_msg = messages[-1]
+                                text_content = _extract_text(getattr(last_msg, "content", None))
+                                if text_content:
+                                    yield emitter.text(text_content, agent="Agent")
+
+                elif mode == "custom":
+                    data = payload
+                    if isinstance(data, dict):
+                        action = data.get("action")
+                        if action == "create_node_proposal" and data.get("proposal"):
+                            yield emitter.format_event("node_proposal", data["proposal"])
+                            continue
+                        if action == "timeline_edit":
+                            yield emitter.format_event("timeline_edit", data)
+                            continue
+                        yield emitter.format_event("custom", data)
+
+        except Exception as exc:  # pragma: no cover - surfaced to client
+            logger.error("Stream workflow failed: %s", exc, exc_info=True)
+            yield emitter.format_event("error", {"message": str(exc)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+def process_video_analysis(task_id: str, request_data: dict, callback_url: str = None):
+    """Background task to run comprehensive video analysis."""
+    try:
+        logger.info(f"Starting video analysis for task {task_id}")
+
+        # Create config from request
+        config = VideoAnalysisConfig(
+            enable_asr=request_data.get("enable_asr", True),
+            enable_subtitle_extraction=request_data.get("enable_subtitle_extraction", True),
+            enable_keyframe_detection=request_data.get("enable_keyframe_detection", True),
+            enable_gemini_analysis=request_data.get("enable_gemini_analysis", True),
+            asr_language=request_data.get("asr_language", "auto"),
+            keyframe_threshold=request_data.get("keyframe_threshold", 0.3),
+            max_keyframes=request_data.get("max_keyframes", 50),
+            gemini_model=request_data.get("gemini_model", "gemini-2.5-pro"),
+            gemini_prompt=request_data.get("gemini_prompt"),
+        )
+
+        # Create orchestrator
+        orchestrator = VideoAnalysisOrchestrator(config)
+
+        # Run analysis (sync wrapper for async)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                orchestrator.analyze_video(
+                    request_data["video_path"],
+                    request_data.get("output_dir")
+                )
+            )
+        finally:
+            loop.close()
+
+        # Convert result to dict
+        result_dict = result.model_dump()
+
+        logger.info(f"Video analysis completed for task {task_id}")
+
+        # Send result via callback
+        if callback_url:
+            try:
+                response = requests.post(
+                    callback_url,
+                    json={
+                        "taskId": task_id,
+                        "status": "completed",
+                        "result": result_dict
+                    }
+                )
+                if response.ok:
+                    logger.info(f"Callback successful for task {task_id}")
+                else:
+                    logger.error(f"Callback failed: {response.status_code} - {response.text}")
+            except Exception as e:
+                logger.error(f"Failed to send callback: {e}")
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Video analysis failed for task {task_id}: {e}")
+        logger.debug(traceback.format_exc())
+
+        # Send error via callback
+        if callback_url:
+            try:
+                requests.post(
+                    callback_url,
+                    json={
+                        "taskId": task_id,
+                        "status": "failed",
+                        "error": str(e)
+                    }
+                )
+            except Exception as callback_error:
+                logger.error(f"Failed to send error callback: {callback_error}")
+
+
+@app.post("/api/analyze-video", response_model=AnalyzeVideoResponse)
+async def analyze_video(request: AnalyzeVideoRequest, background_tasks: BackgroundTasks):
+    """
+    Comprehensive video analysis including:
+    - ASR (audio transcription)
+    - Subtitle extraction
+    - Keyframe detection
+    - Gemini video understanding
+
+    Returns task_id immediately - use callback_url for completion notification.
+    """
+    task_id = str(uuid.uuid4())
+
+    logger.info(f"Received video analysis request for: {request.video_path}")
+
+    # Validate video file exists
+    from pathlib import Path
+    if not Path(request.video_path).exists():
+        raise HTTPException(status_code=404, detail=f"Video file not found: {request.video_path}")
+
+    # Prepare request data
+    request_data = {
+        "video_path": request.video_path,
+        "output_dir": request.output_dir,
+        "enable_asr": request.enable_asr,
+        "enable_subtitle_extraction": request.enable_subtitle_extraction,
+        "enable_keyframe_detection": request.enable_keyframe_detection,
+        "enable_gemini_analysis": request.enable_gemini_analysis,
+        "asr_language": request.asr_language,
+        "keyframe_threshold": request.keyframe_threshold,
+        "max_keyframes": request.max_keyframes,
+        "gemini_model": request.gemini_model,
+        "gemini_prompt": request.gemini_prompt,
+    }
+
+    # Start background task
+    background_tasks.add_task(
+        process_video_analysis,
+        task_id,
+        request_data,
+        request.callback_url
+    )
+
+    return AnalyzeVideoResponse(
+        task_id=task_id,
+        status="processing",
+        message="Video analysis started in background"
+    )
+
 
 @app.post("/api/generate-ids", response_model=GenerateSemanticIDResponse)
 async def generate_semantic_ids(request: GenerateSemanticIDRequest):

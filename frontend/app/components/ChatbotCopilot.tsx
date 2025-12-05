@@ -343,9 +343,11 @@ export default function ChatbotCopilot({
         if (resume) {
             url.searchParams.append('resume', 'true');
         }
-        if (inputData) {
-            url.searchParams.append('user_input', JSON.stringify(inputData));
-        }
+        // Always pass user_input; when resuming, encode the inputData payload, otherwise send the user prompt.
+        const encodedUserInput = resume
+            ? JSON.stringify(inputData ?? '')
+            : (userInput ?? '');
+        url.searchParams.append('user_input', encodedUserInput);
 
         const eventSource = new EventSource(url.toString());
 
@@ -438,14 +440,49 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received text:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                if (data.agent === 'Director') {
+                const agent = data.agent || 'Assistant';
+
+                // Director text → main chat stream
+                if (agent === 'Director') {
                     setDisplayItems(prev => [...prev, {
                         type: 'message',
                         role: 'assistant',
                         content: data.content,
                         id: Date.now().toString()
                     }]);
+                    return;
                 }
+
+                // Non-Director: try to attach to agent card; fallback to chat bubble tagged with agent.
+                setDisplayItems(prev => {
+                    const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === agent);
+                    if (existingIndex !== -1) {
+                        return prev.map((item, index) => {
+                            if (index === existingIndex) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        logs: [...(item.props.logs || []), {
+                                            id: data.id || Date.now().toString(),
+                                            type: 'text',
+                                            content: <div className="text-slate-800">{data.content}</div>
+                                        }]
+                                    }
+                                };
+                            }
+                            return item;
+                        });
+                    }
+
+                    // Fallback: render as assistant message with agent label.
+                    return [...prev, {
+                        type: 'message',
+                        role: 'assistant',
+                        content: `[${agent}] ${data.content}`,
+                        id: Date.now().toString()
+                    }];
+                });
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing text event:', err);
             }
