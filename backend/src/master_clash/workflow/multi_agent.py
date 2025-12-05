@@ -6,15 +6,15 @@ storyboard, and editing) under a supervisor that routes turns between them.
 
 import asyncio
 from dataclasses import dataclass
-from functools import partial
 from typing import Annotated, Any, AsyncIterator, Optional, Sequence, TypedDict
 
 from langchain.agents import create_agent
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph, add_messages
 from pydantic import BaseModel
 from typing_extensions import Literal
@@ -33,7 +33,6 @@ class AgentState(TypedDict):
     """Shared state passed between nodes in the workflow."""
 
     messages: Annotated[list[BaseMessage], add_messages]
-    next: str
     project_id: str
 
 
@@ -91,7 +90,6 @@ def create_default_llm() -> AsyncChatGoogleGenerativeAI:
         transport="rest",
         include_thoughts=True,
         thinking_budget=1000,
-        thinking_level="low",
     )
 
 
@@ -152,47 +150,19 @@ ROLES: tuple[RoleDefinition, ...] = (
 )
 
 
-class Route(BaseModel):
-    next: Literal["ScriptWriter", "ConceptArtist", "StoryboardDesigner", "Editor", "FINISH"]
+SUPERVISOR_PROMPT = """You are the Supervisor. Use the `task_tool` to assign work to a sub-agent.
+Call the tool with:
+- agent: one of {members}
+- instruction: clear task description for that agent
+- attached_nodes: optional list of node ids relevant to the task
 
-
-def build_supervisor_chain(llm: AsyncChatGoogleGenerativeAI, members: Sequence[str]):
-    """Supervisor picks the next role or finishes the workflow."""
-    system_prompt = (
-        "You are a supervisor tasked with managing a conversation between the"
-        " following workers: {members}. Given the following user request,"
-        " respond with the worker to act next. Each worker will perform a"
-        " task and respond with their results and status. When finished,"
-        " respond with FINISH."
-    )
-    options = ["FINISH"] + list(members)
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            MessagesPlaceholder(variable_name="messages"),
-            (
-                "system",
-                "Given the conversation above, who should act next? "
-                "Or should we FINISH? Select one of: {options}",
-            ),
-        ]
-    ).partial(options=str(options), members=", ".join(members))
-
-    return prompt | llm.with_structured_output(Route)
+After the tool finishes, end the turn."""
 
 
 async def supervisor_node(state: AgentState, chain):
     result = await chain.ainvoke(state)
-    return {"next": result.next}
-
-
-def build_agent_node(agent):
-    async def node(state: AgentState):
-        result = await agent.ainvoke(state)
-        return {"messages": [result["messages"][-1]]}
-
-    return node
+    # Supervisor dispatches via task_tool; nothing else to route.
+    return {}
 
 
 def create_multi_agent_workflow(llm: AsyncChatGoogleGenerativeAI | None = None):
@@ -200,22 +170,57 @@ def create_multi_agent_workflow(llm: AsyncChatGoogleGenerativeAI | None = None):
     llm = llm or create_default_llm()
 
     role_agents = {role.name: create_agent(llm, role.tools, system_prompt=role.prompt) for role in ROLES}
-    supervisor_chain = build_supervisor_chain(llm, members=role_agents.keys())
 
-    workflow = StateGraph(AgentState)
-    workflow.add_node("Supervisor", partial(supervisor_node, chain=supervisor_chain))
+    @tool
+    async def task_tool(agent: Literal["ScriptWriter", "ConceptArtist", "StoryboardDesigner", "Editor"], instruction: str, attached_nodes: list[str] | None = None, project_id: str | None = None) -> str:
+        """Assign a task to a specific agent and run it immediately."""
+        target = role_agents.get(agent)
+        if not target:
+            return f"Unknown agent: {agent}"
 
-    for name, agent in role_agents.items():
-        workflow.add_node(name, build_agent_node(agent))
-        workflow.add_edge(name, "Supervisor")
+        # Build a minimal state for the sub-agent
+        msg_content = instruction
+        if attached_nodes:
+            msg_content = f"{instruction}\nAttached nodes: {attached_nodes}"
 
-    workflow.add_conditional_edges(
-        "Supervisor",
-        lambda x: x["next"],
-        {name: name for name in role_agents} | {"FINISH": END},
+        sub_state: AgentState = {
+            "messages": [HumanMessage(content=msg_content)],
+            "project_id": project_id or "",
+        }
+
+        writer = get_stream_writer()
+        if writer:
+            writer({"event": "subtask_start", "agent": agent, "instruction": instruction, "attached_nodes": attached_nodes or []})
+
+        try:
+            # Invoke sub-agent (non-streaming LangChain agent)
+            result = await target.ainvoke(sub_state)
+            messages = result.get("messages", [])
+            if messages:
+                last_msg = messages[-1]
+                text = getattr(last_msg, "content", "")
+                if writer:
+                    writer({"event": "subtask_end", "agent": agent, "result": text})
+                return f"{agent} completed: {text}"
+            if writer:
+                writer({"event": "subtask_end", "agent": agent, "result": "completed"})
+            return f"{agent} completed"
+        except Exception as exc:  # pragma: no cover
+            if writer:
+                writer({"event": "subtask_error", "agent": agent, "error": str(exc)})
+            return f"{agent} error: {exc}"
+
+    supervisor_chain = create_agent(
+        llm,
+        [task_tool],
+        system_prompt=SUPERVISOR_PROMPT.format(members=", ".join(role_agents.keys())),
     )
 
+    # Expose the supervisor agent as the graph (single-node graph).
+    workflow = StateGraph(AgentState)
+    workflow.add_node("Supervisor", supervisor_chain)
     workflow.set_entry_point("Supervisor")
+    workflow.add_edge("Supervisor", END)
 
     return workflow.compile()
 
