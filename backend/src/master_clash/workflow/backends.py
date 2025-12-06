@@ -270,7 +270,7 @@ class StateCanvasBackend:
                 NodeInfo(
                     id=node.id,
                     type=node.type,
-                    position={"x": node.position.x, "y": node.position.y},
+                    position={"x": node.position.get("x", 0), "y": node.position.get("y", 0)},
                     data=node.data,
                     parent_id=node.parentId,
                 )
@@ -297,7 +297,7 @@ class StateCanvasBackend:
         return NodeInfo(
             id=node.id,
             type=node.type,
-            position={"x": node.position.x, "y": node.position.y},
+            position={"x": node.position.get("x", 0), "y": node.position.get("y", 0)},
             data=node.data,
             parent_id=node.parentId,
         )
@@ -318,7 +318,6 @@ class StateCanvasBackend:
         import uuid
 
         from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
-
         # Generate semantic ID
         checker = create_d1_checker()
         node_id = generate_unique_id_for_project(project_id, checker)
@@ -474,7 +473,7 @@ class StateCanvasBackend:
                     NodeInfo(
                         id=node.id,
                         type=node.type,
-                        position={"x": node.position.x, "y": node.position.y},
+                        position={"x": node.position.get("x", 0), "y": node.position.get("y", 0)},
                         data=node.data,
                         parent_id=node.parentId,
                     )

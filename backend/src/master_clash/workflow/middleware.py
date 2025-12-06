@@ -11,11 +11,14 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Annotated, Any, Callable, Sequence, TypedDict, TypeVar
+from typing import Annotated, Any, Callable, Literal, Sequence, TypedDict, TypeVar
 
+from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool, InjectedToolCallId
 from langgraph.graph import add_messages
+from langgraph.prebuilt import InjectedState
 
 from master_clash.workflow.backends import (
     CanvasBackendProtocol,
@@ -162,6 +165,80 @@ def _canvas_reducer(
     return result
 
 
+class TimelineMiddleware(AgentMiddleware):
+    """Middleware that provides timeline editing tools."""
+
+    state_schema = AgentState
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Add timeline tools to the model request."""
+        timeline_tools = self._generate_timeline_tools()
+
+        request.tools = [*request.tools, *timeline_tools]
+
+        timeline_prompt = """
+You can control the video timeline via the timeline_editor tool.
+- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+"""
+        if request.system_prompt:
+            request.system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
+        else:
+            request.system_prompt = timeline_prompt
+
+        return handler(request)
+
+    def _generate_timeline_tools(self) -> list[BaseTool]:
+        """Generate timeline tools."""
+        return [self._timeline_editor_tool()]
+
+    def _timeline_editor_tool(self) -> BaseTool:
+        """Create timeline_editor tool."""
+        from langchain_core.tools import tool
+        from langgraph.config import get_stream_writer
+
+        class TimelineEditorInput(BaseModel):
+            action: str = Field(description="Timeline action, e.g. add_clip, set_duration, render")
+            params: dict[str, Any] = Field(description="Action parameters")
+
+        @tool(args_schema=TimelineEditorInput)
+        def timeline_editor(
+            action: str,
+            params: dict[str, Any],
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
+        ) -> str:
+            """Automated video editor tool."""
+            if state is None:
+                return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
+
+            project_id = runtime.state.get("project_id", "")
+
+            try:
+                # Emit SSE event for timeline editing
+                writer = get_stream_writer()
+                if writer:
+                    writer({
+                        "action": "timeline_edit",
+                        "edit_action": action,
+                        "params": params,
+                        "project_id": project_id,
+                    })
+
+                return f"Timeline action '{action}' executed successfully"
+
+            except Exception as e:
+                return f"Error in timeline editor: {e}"
+
+        return timeline_editor
+
+
 class CanvasMiddleware(AgentMiddleware):
     """Middleware that provides canvas tools.
 
@@ -198,15 +275,14 @@ class CanvasMiddleware(AgentMiddleware):
 You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
-- create_canvas_node: Create new nodes (text, image_gen, video_gen, group)
-- update_canvas_node: Update existing node data
-- create_canvas_edge: Connect nodes with edges
+- create_canvas_node: Create text/prompt/group nodes
+- create_generation_node: Create image/video generation nodes
 - wait_for_generation: Wait for image/video generation to complete
 - search_canvas: Search nodes by content
 
-IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
-1. Create the node
-2. Use wait_for_generation to check status
+IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
+1. Use create_generation_node
+2. Call wait_for_generation to check status
 3. Only proceed when status is 'completed'
 """
         if request.system_prompt:
@@ -223,11 +299,11 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
             self._list_nodes_tool(),
             self._read_node_tool(),
             self._create_node_tool(),
-            self._update_node_tool(),
-            self._create_edge_tool(),
+            self._create_generation_node_tool(),
+            # self._update_node_tool(),
+            # self._create_edge_tool(),
             self._wait_for_task_tool(),
             self._search_nodes_tool(),
-            self._timeline_editor_tool(),
         ]
 
     def _list_nodes_tool(self) -> BaseTool:
@@ -235,25 +311,23 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
         from langchain_core.tools import tool
 
         backend = self.backend
+        class ListCanvasNodesInput(BaseModel):
+            node_type: str | None = Field(default=None, description="Optional filter by node type")
+            parent_id: str | None = Field(default=None, description="Optional filter by parent group")
 
-        @tool
+        @tool(args_schema=ListCanvasNodesInput)
         def list_canvas_nodes(
             node_type: str | None = None,
             parent_id: str | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """List nodes on the canvas.
-
-            Args:
-                node_type: Filter by type (text, image_gen, video_gen, group)
-                parent_id: Filter by parent group
-                runtime: Tool runtime context
-
-            Returns:
-                Formatted list of nodes
-            """
-            if runtime is None:
+            """List nodes on the canvas."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -283,23 +357,21 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
         from langchain_core.tools import tool
 
         backend = self.backend
+        class ReadCanvasNodeInput(BaseModel):
+            node_id: str = Field(description="Target node ID")
 
-        @tool
+        @tool(args_schema=ReadCanvasNodeInput)
         def read_canvas_node(
             node_id: str,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Read a specific node's detailed data.
-
-            Args:
-                node_id: Node identifier
-                runtime: Tool runtime context
-
-            Returns:
-                Node data or error message
-            """
-            if runtime is None:
+            """Read a specific node's detailed data."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -327,28 +399,48 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
 
         backend = self.backend
 
-        @tool
+        class CanvasNodeData(BaseModel):
+            label: str = Field(description="Display label for the node")
+            content: str | None = Field(
+                default=None,
+                description="Markdown/text content (text/prompt nodes)",
+            )
+            description: str | None = Field(
+                default=None,
+                description="Optional description (useful for group nodes)",
+            )
+
+            class Config:
+                extra = "allow"  # Preserve any additional metadata
+
+        class CreateCanvasNodeInput(BaseModel):
+            node_type: Literal["text", "prompt", "group"] = Field(
+                description="Node type to create (non-generative)"
+            )
+            data: CanvasNodeData = Field(description="Structured payload for text/prompt/group nodes")
+            position: dict[str, float] | None = Field(
+                default=None, description="Optional canvas coordinates {x, y}"
+            )
+            parent_id: str | None = Field(
+                default=None,
+                description="Optional parent group; defaults to current workspace when omitted",
+            )
+
+        @tool(args_schema=CreateCanvasNodeInput)
         def create_canvas_node(
             node_type: str,
-            data: dict[str, Any],
+            data: CanvasNodeData,
             position: dict[str, float] | None = None,
             parent_id: str | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Create a new node on the canvas.
-
-            Args:
-                node_type: Type (text, image_gen, video_gen, group, prompt)
-                data: Node data (e.g., {\"content\": \"...\", \"prompt\": \"...\"})
-                position: Optional position {\"x\": 0, \"y\": 0}
-                parent_id: Optional parent group ID (auto-set from workspace if not provided)
-                runtime: Tool runtime context
-
-            Returns:
-                Success message with node_id or error
-            """
-            if runtime is None:
+            """Create a new node on the canvas."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
 
@@ -364,7 +456,7 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
                 result = resolved_backend.create_node(
                     project_id=project_id,
                     node_type=node_type,
-                    data=data,
+                    data=data.model_dump(exclude_none=True),
                     position=position,
                     parent_id=parent_id,
                 )
@@ -388,32 +480,125 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
 
         return create_canvas_node
 
+    def _create_generation_node_tool(self) -> BaseTool:
+        """Create create_generation_node tool (image/video)."""
+        from langchain_core.tools import tool
+        from langgraph.config import get_stream_writer
+
+        backend = self.backend
+
+        class GenerationNodeData(BaseModel):
+            label: str = Field(description="Display label for the node")
+            prompt: str = Field(description="Generation prompt for image/video models")
+            modelName: str | None = Field(default=None, description="Optional model name override")
+            actionType: Literal["image-gen", "video-gen"] | None = Field(
+                default=None,
+                description="Optional override; inferred from node_type when omitted",
+            )
+            upstreamNodeId: str | None = Field(
+                default=None, description="Optional single upstream node linkage"
+            )
+            upstreamNodeIds: list[str] | None = Field(
+                default=None, description="Optional multiple upstream linkages"
+            )
+
+            class Config:
+                extra = "allow"  # Preserve any additional metadata
+
+        class CreateGenerationNodeInput(BaseModel):
+            node_type: Literal["image_gen", "video_gen"] = Field(
+                description="Generation node type to create"
+            )
+            data: GenerationNodeData = Field(description="Structured payload for generation node")
+            position: dict[str, float] | None = Field(
+                default=None, description="Optional canvas coordinates {x, y}"
+            )
+            parent_id: str | None = Field(
+                default=None,
+                description="Optional parent group; defaults to current workspace when omitted",
+            )
+
+        @tool(args_schema=CreateGenerationNodeInput)
+        def create_generation_node(
+            node_type: str,
+            data: GenerationNodeData,
+            position: dict[str, float] | None = None,
+            parent_id: str | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
+        ) -> str:
+            """Create a new generation node (image/video) on the canvas."""
+            if state is None:
+                return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
+
+            project_id = runtime.state.get("project_id", "")
+
+            # Auto-set parent_id from workspace if not explicitly provided
+            if parent_id is None:
+                workspace_group_id = runtime.state.get("workspace_group_id")
+                if workspace_group_id:
+                    parent_id = workspace_group_id
+
+            resolved_backend = backend(runtime) if callable(backend) else backend
+
+            try:
+                result = resolved_backend.create_node(
+                    project_id=project_id,
+                    node_type=node_type,
+                    data=data.dict(exclude_none=True),
+                    position=position,
+                    parent_id=parent_id,
+                )
+
+                if result.error:
+                    return f"Error: {result.error}"
+
+                # Emit SSE proposal if available
+                if result.proposal:
+                    writer = get_stream_writer()
+                    if writer:
+                        writer({
+                            "action": "create_node_proposal",
+                            "proposal": result.proposal,
+                        })
+
+                return f"Created generation node {result.node_id}"
+
+            except Exception as e:
+                return f"Error creating generation node: {e}"
+
+        return create_generation_node
+
     def _update_node_tool(self) -> BaseTool:
         """Create update_canvas_node tool."""
         from langchain_core.tools import tool
 
         backend = self.backend
 
-        @tool
+        class UpdateCanvasNodeInput(BaseModel):
+            node_id: str = Field(description="Target node ID")
+            data: dict[str, Any] | None = Field(default=None, description="Partial data update")
+            position: dict[str, float] | None = Field(
+                default=None, description="Optional position update {x, y}"
+            )
+
+        @tool(args_schema=UpdateCanvasNodeInput)
         def update_canvas_node(
             node_id: str,
             data: dict[str, Any] | None = None,
             position: dict[str, float] | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Update an existing node.
-
-            Args:
-                node_id: Node to update
-                data: Data updates
-                position: Position updates
-                runtime: Tool runtime context
-
-            Returns:
-                Success message or error
-            """
-            if runtime is None:
+            """Update an existing node."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -441,29 +626,27 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
         from langchain_core.tools import tool
 
         backend = self.backend
+        class CreateCanvasEdgeInput(BaseModel):
+            source: str = Field(description="Source node ID")
+            target: str = Field(description="Target node ID")
+            source_handle: str | None = Field(default=None, description="Optional source handle")
+            target_handle: str | None = Field(default=None, description="Optional target handle")
 
-        @tool
+        @tool(args_schema=CreateCanvasEdgeInput)
         def create_canvas_edge(
             source: str,
             target: str,
             source_handle: str | None = None,
             target_handle: str | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Create an edge connecting two nodes.
-
-            Args:
-                source: Source node ID
-                target: Target node ID
-                source_handle: Optional source handle
-                target_handle: Optional target handle
-                runtime: Tool runtime context
-
-            Returns:
-                Success message or error
-            """
-            if runtime is None:
+            """Create an edge connecting two nodes."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -492,25 +675,23 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
         from langchain_core.tools import tool
 
         backend = self.backend
+        class WaitForGenerationInput(BaseModel):
+            node_id: str = Field(description="Node with generation task")
+            timeout_seconds: float = Field(default=30.0, description="Max wait time in seconds")
 
-        @tool
+        @tool(args_schema=WaitForGenerationInput)
         def wait_for_generation(
             node_id: str,
             timeout_seconds: float = 30.0,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Wait for a generation task (image/video) to complete.
-
-            Args:
-                node_id: Node with generation task
-                timeout_seconds: Max wait time (default 30s)
-                runtime: Tool runtime context
-
-            Returns:
-                Task status (completed, generating, failed)
-            """
-            if runtime is None:
+            """Wait for a generation task (image/video) to complete."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -544,25 +725,23 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
         from langchain_core.tools import tool
 
         backend = self.backend
+        class SearchCanvasInput(BaseModel):
+            query: str = Field(description="Search query")
+            node_types: list[str] | None = Field(default=None, description="Optional filter by node types")
 
-        @tool
+        @tool(args_schema=SearchCanvasInput)
         def search_canvas(
             query: str,
             node_types: list[str] | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Search nodes by content or metadata.
-
-            Args:
-                query: Search query
-                node_types: Filter by types
-                runtime: Tool runtime context
-
-            Returns:
-                Matching nodes
-            """
-            if runtime is None:
+            """Search nodes by content or metadata."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -586,53 +765,6 @@ IMPORTANT: When creating generation nodes (image_gen, video_gen), you MUST:
                 return f"Error searching: {e}"
 
         return search_canvas
-
-    def _timeline_editor_tool(self) -> BaseTool:
-        """Create timeline_editor tool."""
-        from langchain_core.tools import tool
-        from langgraph.config import get_stream_writer
-
-        backend = self.backend
-
-        @tool
-        def timeline_editor(
-            action: str,
-            params: dict[str, Any],
-            runtime: ToolRuntime | None = None,
-        ) -> str:
-            """Automated video editor tool.
-
-            Args:
-                action: Timeline action (add_clip, set_duration, add_audio, render)
-                params: Action parameters
-                runtime: Tool runtime context
-
-            Returns:
-                Success message or error
-            """
-            if runtime is None:
-                return "Error: Runtime context required"
-
-            project_id = runtime.state.get("project_id", "")
-
-            try:
-                # Emit SSE event for timeline editing
-                writer = get_stream_writer()
-                if writer:
-                    writer({
-                        "action": "timeline_edit",
-                        "edit_action": action,
-                        "params": params,
-                        "project_id": project_id,
-                    })
-
-                return f"Timeline action '{action}' executed successfully"
-
-            except Exception as e:
-                return f"Error in timeline editor: {e}"
-
-        return timeline_editor
-
 
 class TodoListMiddleware(AgentMiddleware):
     """Middleware for task planning and tracking.
@@ -674,23 +806,25 @@ Use these to break down complex tasks into manageable steps.
     def _generate_todo_tools(self) -> list[BaseTool]:
         """Generate todo tools."""
         from langchain_core.tools import tool
+        class TodoItem(BaseModel):
+            content: str = Field(description="Task content")
+            status: str = Field(default="pending", description="Task status label")
 
-        @tool
+        class WriteTodosInput(BaseModel):
+            todos: list[TodoItem] = Field(description="List of tasks")
+
+        @tool(args_schema=WriteTodosInput)
         def write_todos(
-            todos: list[dict[str, str]],
-            runtime: ToolRuntime | None = None,
+            todos: list[TodoItem],
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Create or update task list.
-
-            Args:
-                todos: List of tasks with 'content' and 'status' keys
-                runtime: Tool runtime context
-
-            Returns:
-                Success message
-            """
-            if runtime is None:
+            """Create or update task list."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             # Store in state
             runtime.state["todos"] = todos
@@ -698,18 +832,15 @@ Use these to break down complex tasks into manageable steps.
 
         @tool
         def read_todos(
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Read current task list.
-
-            Args:
-                runtime: Tool runtime context
-
-            Returns:
-                Formatted task list
-            """
-            if runtime is None:
+            """Read current task list."""
+            if state is None:
                 return "Error: Runtime context required"
+            
+            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             todos = runtime.state.get("todos", [])
             if not todos:

@@ -92,7 +92,7 @@ class SubAgent:
 
 #### Implementations
 - **StateCanvasBackend** - Integrated with existing context system
-- **CanvasMiddleware** - 8 canvas tools generated dynamically
+- **CanvasMiddleware** - 7 canvas tools generated dynamically (timeline_editor moved to TimelineMiddleware)
 - **TodoListMiddleware** - Task planning tools
 - **SubAgentMiddleware** - Task delegation
 

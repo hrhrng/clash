@@ -995,8 +995,9 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                     <Background
                                         variant={BackgroundVariant.Dots}
                                         gap={12}
-                                        size={1}
-                                        color="#e2e8f0"
+                                        size={1.5}
+                                        color="#cbd5e1"
+                                        style={{ backgroundColor: '#f1f5f9' }}
                                     />
 
 

@@ -9,14 +9,16 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
+from langchain_core.messages import SystemMessage
 from langgraph.graph import END, StateGraph
-from langchain.agents import create_agent
+from langgraph.prebuilt import ToolNode
 
 from master_clash.workflow.backends import CanvasBackendProtocol, StateCanvasBackend
 from master_clash.workflow.middleware import (
     AgentMiddleware,
     AgentState,
     CanvasMiddleware,
+    TimelineMiddleware,
     TodoListMiddleware,
 )
 from master_clash.workflow.subagents import SubAgent, SubAgentMiddleware
@@ -59,22 +61,50 @@ def create_agent_with_middleware(
     for mw in middleware:
         if isinstance(mw, CanvasMiddleware):
             all_tools.extend(mw._generate_canvas_tools())
+        elif isinstance(mw, TimelineMiddleware):
+            all_tools.extend(mw._generate_timeline_tools())
         elif isinstance(mw, TodoListMiddleware):
             all_tools.extend(mw._generate_todo_tools())
         elif isinstance(mw, SubAgentMiddleware):
             all_tools.append(mw._create_task_tool())
 
-    # Create agent using LangGraph's create_react_agent
-    # Note: This is a simplified version. A full implementation would
-    # integrate middleware wrapping into the execution pipeline.
-    agent = create_agent(
-        model=model,
-        tools=all_tools,
-        state_schema=AgentState,
-        system_prompt=system_prompt,
-        checkpointer=checkpointer,
+    # Create agent using manual StateGraph to support custom state schema
+    workflow = StateGraph(AgentState)
+
+    # Bind tools to model
+    model_with_tools = model.bind_tools(all_tools)
+
+    def call_model(state: AgentState):
+        messages = state["messages"]
+        if system_prompt:
+            # Add system prompt if not present
+            if not messages or not isinstance(messages[0], SystemMessage):
+                messages = [SystemMessage(content=system_prompt)] + messages
+        
+        response = model_with_tools.invoke(messages)
+        return {"messages": [response]}
+
+    def should_continue(state: AgentState):
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            return "tools"
+        return END
+
+    workflow.add_node("agent", call_model)
+    workflow.add_node("tools", ToolNode(all_tools))
+
+    workflow.set_entry_point("agent")
+
+    workflow.add_conditional_edges(
+        "agent",
+        should_continue,
+        ["tools", END]
     )
-    return agent
+
+    workflow.add_edge("tools", "agent")
+
+    return workflow.compile(checkpointer=checkpointer)
 
 
 def _create_default_middleware(
@@ -128,87 +158,6 @@ def create_supervisor_agent(
     # Create supervisor-specific tools
     backend = backend or StateCanvasBackend()
 
-    @tool
-    def create_workspace_group(
-        name: str,
-        description: str | None = None,
-    ) -> str:
-        """Create a workspace group for organizing related nodes.
-
-        This is useful when delegating work to sub-agents - you can create
-        a group first, then pass the group ID to the sub-agent so all their
-        work is organized together.
-
-        Args:
-            name: Group name (e.g., "Character Design Workspace")
-            description: Optional description
-
-        Returns:
-            Group ID that can be passed to sub-agents
-        """
-        from master_clash.context import get_project_context
-        from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
-
-        # Get project_id from context (we'll need to pass this via runtime)
-        # For now, return a placeholder
-        import uuid
-        checker = create_d1_checker()
-        # TODO: Get actual project_id from runtime
-        project_id = "temp"  # This should come from runtime
-        group_id = generate_unique_id_for_project(project_id, checker)
-
-        # Emit SSE proposal
-        writer = get_stream_writer()
-        if writer:
-            proposal_id = f"proposal-{uuid.uuid4().hex[:8]}"
-            writer({
-                "action": "create_node_proposal",
-                "proposal": {
-                    "id": proposal_id,
-                    "type": "group",
-                    "nodeType": "group",
-                    "nodeData": {
-                        "id": group_id,
-                        "label": name,
-                        "description": description or "",
-                    },
-                    "message": f"Created workspace group: {name}",
-                },
-            })
-
-        return f"Created workspace group '{name}' with ID: {group_id}. Pass this ID to sub-agents via workspace_group_id parameter."
-
-    @tool
-    def list_workspace_groups() -> str:
-        """List all existing workspace groups (groups on the canvas).
-
-        Returns:
-            List of groups with their IDs
-        """
-        from master_clash.context import get_project_context
-
-        # TODO: Get project_id from runtime
-        project_id = "temp"
-        context = get_project_context(project_id, force_refresh=True)
-
-        if not context:
-            return "No context found."
-
-        groups = [node for node in context.nodes if node.type == "group"]
-
-        if not groups:
-            return "No workspace groups found."
-
-        lines = ["Workspace groups:"]
-        for group in groups:
-            label = group.data.get("label", "Untitled")
-            desc = group.data.get("description", "")
-            lines.append(f"- {group.id}: {label}" + (f" ({desc})" if desc else ""))
-
-        return "\n".join(lines)
-
-    # Supervisor tools: workspace management + delegation (added by middleware)
-    supervisor_tools = [create_workspace_group, list_workspace_groups]
 
     if system_prompt is None:
         agent_names = [sa.name for sa in subagents]
@@ -250,7 +199,7 @@ All the agent's work (prompts, images) will be organized inside that group!
     # Create supervisor with SubAgentMiddleware + CanvasMiddleware
     return create_agent_with_middleware(
         model=model,
-        tools=supervisor_tools,
+        tools=[],
         system_prompt=system_prompt,
         backend=backend,
         subagents=subagents,

@@ -13,7 +13,7 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
 
     // React Flow hooks
     const { projectId } = useProject();
-    const { getNodes, getNode, getEdges, addEdges } = useReactFlow();
+    const { getNodes, getNode, getEdges, addEdges, setNodes } = useReactFlow();
     const { addNodeWithAutoLayout } = useAutoLayout();
     const edges = useEdges();
 
@@ -222,7 +222,6 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
 
                 // CRITICAL FIX: Update THIS ActionBadge node with the assetId so the backend can poll it
                 // We use setNodes to ensure the state change propagates to ProjectEditor -> ChatbotCopilot -> Backend
-                const { setNodes } = useReactFlow();
                 setNodes((nds) => nds.map((n) => {
                     if (n.id === id) {
                         return {

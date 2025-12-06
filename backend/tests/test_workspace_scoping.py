@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.messages import HumanMessage
 
-from master_clash.context import NodeModel, Position, ProjectContext, set_project_context
+from master_clash.context import NodeModel, ProjectContext, set_project_context
 from master_clash.workflow.backends import StateCanvasBackend
 from master_clash.workflow.graph import create_supervisor_agent
-from master_clash.workflow.middleware import CanvasMiddleware, TodoListMiddleware
+from master_clash.workflow.middleware import CanvasMiddleware, TimelineMiddleware, TodoListMiddleware
 from master_clash.workflow.multi_agent import create_default_llm
 from master_clash.workflow.subagents import create_specialist_agents
 
@@ -22,14 +22,14 @@ def mock_context():
             NodeModel(
                 id="existing-text-1",
                 type="text",
-                position=Position(x=100, y=100),
+                position={"x": 100, "y": 100},
                 data={"label": "Existing Note", "content": "Some existing content"},
                 parentId=None,
             ),
             NodeModel(
                 id="existing-group-1",
                 type="group",
-                position=Position(x=200, y=200),
+                position={"x": 200, "y": 200},
                 data={"label": "Existing Group", "description": "An existing workspace"},
                 parentId=None,
             ),
@@ -182,12 +182,14 @@ async def test_supervisor_tools_integration(setup_mock_context, mock_llm):
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend=backend)
     todo_middleware = TodoListMiddleware()
+    timeline_middleware = TimelineMiddleware()
 
     # Create specialist sub-agents
     subagents = create_specialist_agents(
         model=mock_llm,
         canvas_middleware=canvas_middleware,
         todo_middleware=todo_middleware,
+        timeline_middleware=timeline_middleware,
     )
 
     # Verify sub-agents are workspace-aware
@@ -249,8 +251,8 @@ def test_canvas_middleware_generates_tools():
 
     tools = middleware._generate_canvas_tools()
 
-    # Verify we have 8 tools
-    assert len(tools) == 8
+    # Verify we have 7 tools (timeline editor moved to its own middleware)
+    assert len(tools) == 7
 
     tool_names = [tool.name for tool in tools]
     expected_tools = [
@@ -261,11 +263,22 @@ def test_canvas_middleware_generates_tools():
         "create_canvas_edge",
         "wait_for_generation",
         "search_canvas",
-        "timeline_editor",
     ]
 
     for expected in expected_tools:
         assert expected in tool_names
+
+    assert "timeline_editor" not in tool_names
+
+
+def test_timeline_middleware_generates_tools():
+    """Test that TimelineMiddleware generates timeline tools."""
+    middleware = TimelineMiddleware()
+
+    tools = middleware._generate_timeline_tools()
+
+    assert len(tools) == 1
+    assert tools[0].name == "timeline_editor"
 
 
 def test_todolist_middleware_generates_tools():

@@ -38,7 +38,8 @@ class AgentMiddleware:
 
 **Implementations:**
 
-**CanvasMiddleware** - Generates 8 canvas tools:
+**CanvasMiddleware** - Generates 7 canvas tools:
+**TimelineMiddleware** - Handles timeline_editor SSE tool
 - `list_canvas_nodes` - List nodes from context
 - `read_canvas_node` - Read specific node
 - `create_canvas_node` - **Emits SSE proposal via `get_stream_writer()`**
@@ -95,11 +96,13 @@ def create_multi_agent_workflow(llm=None):
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend)
     todo_middleware = TodoListMiddleware()
+    timeline_middleware = TimelineMiddleware()
 
     subagents = create_specialist_agents(
         model=llm,
         canvas_middleware=canvas_middleware,
         todo_middleware=todo_middleware,
+        timeline_middleware=timeline_middleware,
     )
 
     return create_supervisor_agent(
@@ -131,6 +134,8 @@ def create_multi_agent_workflow(llm=None):
 │  │  Agent Workflow (Supervisor + 4 SubAgents)             │ │
 │  │    ↓                                                    │ │
 │  │  CanvasMiddleware (generates tools)                    │ │
+│  │    ↓                                                    │ │
+│  │  TimelineMiddleware (timeline_editor SSE)              │ │
 │  │    ↓                                                    │ │
 │  │  StateCanvasBackend                                    │ │
 │  │    • Reads: get_project_context()                      │ │
@@ -226,7 +231,7 @@ return CreateNodeResult(node_id=node_id, proposal=proposal)
 
 1. **Middleware as Plugins**
    - Every capability is a middleware
-   - Stack them: `[TodoListMiddleware, CanvasMiddleware, SubAgentMiddleware]`
+   - Stack them: `[TodoListMiddleware, CanvasMiddleware, TimelineMiddleware, SubAgentMiddleware]`
    - Easy to enable/disable features
 
 2. **Backend Abstraction**

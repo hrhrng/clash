@@ -6,7 +6,7 @@ Run this to test the new architecture with mock data.
 import asyncio
 from master_clash.context import NodeModel, Position, ProjectContext, set_project_context
 from master_clash.workflow.backends import StateCanvasBackend
-from master_clash.workflow.middleware import CanvasMiddleware, TodoListMiddleware
+from master_clash.workflow.middleware import CanvasMiddleware, TimelineMiddleware, TodoListMiddleware
 
 
 def setup_mock_context():
@@ -164,11 +164,13 @@ def test_subagent_configuration():
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend=backend)
     todo_middleware = TodoListMiddleware()
+    timeline_middleware = TimelineMiddleware()
 
     subagents = create_specialist_agents(
         model=llm,
         canvas_middleware=canvas_middleware,
         todo_middleware=todo_middleware,
+        timeline_middleware=timeline_middleware,
     )
 
     print(f"\n✅ Created {len(subagents)} specialist agents:")

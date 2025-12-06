@@ -16,7 +16,11 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from master_clash.config import get_settings
 from master_clash.workflow.backends import StateCanvasBackend
 from master_clash.workflow.graph import create_supervisor_agent
-from master_clash.workflow.middleware import CanvasMiddleware, TodoListMiddleware
+from master_clash.workflow.middleware import (
+    CanvasMiddleware,
+    TimelineMiddleware,
+    TodoListMiddleware,
+)
 from master_clash.workflow.subagents import create_specialist_agents
 
 
@@ -113,13 +117,13 @@ def create_multi_agent_workflow(llm: AsyncChatGoogleGenerativeAI | None = None):
     # Create backend and middleware
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend=backend)
-    todo_middleware = TodoListMiddleware()
+    timeline_middleware = TimelineMiddleware()
 
     # Create specialist sub-agents
     subagents = create_specialist_agents(
         model=llm,
         canvas_middleware=canvas_middleware,
-        todo_middleware=todo_middleware,
+        timeline_middleware=timeline_middleware,
     )
 
     # Create supervisor agent with delegation capability

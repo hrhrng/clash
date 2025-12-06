@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Command } from '../actions';
 import { useChat } from '@ai-sdk/react';
 import { UserMessage } from './copilot/UserMessage';
-import { AgentCard } from './copilot/AgentCard';
+import { AgentCard, AgentLog } from './copilot/AgentCard';
 import { ToolCall } from './copilot/ToolCall';
 import { ApprovalCard } from './copilot/ApprovalCard';
 import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
@@ -72,7 +72,11 @@ export default function ChatbotCopilot({
         isAutoPilotRef.current = isAutoPilot;
     }, [isAutoPilot]);
 
-    const [threadId, setThreadId] = useState<string>(() => Date.now().toString());
+    const generateId = () => {
+        return Date.now().toString() + Math.random().toString(36).substring(2, 9);
+    };
+
+    const [threadId, setThreadId] = useState<string>(() => generateId());
     const [sessionHistory, setSessionHistory] = useState<string[]>([]);
     const [showHistory, setShowHistory] = useState(false);
     const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
@@ -83,7 +87,7 @@ export default function ChatbotCopilot({
     const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     const handleNewSession = () => {
-        const newThreadId = Date.now().toString();
+        const newThreadId = generateId();
         if (messages.length > 0 || displayItems.length > 0) {
             setSessionHistory(prev => [...prev, threadId]);
         }
@@ -107,7 +111,27 @@ export default function ChatbotCopilot({
         }
     }, [initialMessages]);
 
-    // Typewriter effect processor
+    // Flush remaining text immediately
+    const flushTypewriter = useCallback(() => {
+        if (textQueueRef.current.length > 0) {
+            const remainingText = textQueueRef.current;
+            textQueueRef.current = '';
+
+            setDisplayItems(items => {
+                const lastItem = items[items.length - 1];
+                if (lastItem && lastItem.type === 'message' && lastItem.role === 'assistant') {
+                    return items.map((item, index) =>
+                        index === items.length - 1
+                            ? { ...item, content: item.content + remainingText }
+                            : item
+                    );
+                }
+                return items;
+            });
+            setIsTyping(false);
+        }
+    }, []);
+
     const processTypewriterQueue = useCallback(() => {
         if (typewriterIntervalRef.current) return; // Already running
 
@@ -189,7 +213,7 @@ export default function ChatbotCopilot({
 
     const runDemoScenario = async (userInput: string) => {
         // 1. Add User Message
-        const userMsgId = Date.now().toString();
+        const userMsgId = generateId();
         setDisplayItems(prev => [...prev, {
             type: 'message',
             role: 'user',
@@ -198,7 +222,7 @@ export default function ChatbotCopilot({
         }]);
 
         // 2. Director Agent (Orchestrator) - Thinking & Planning
-        const thinkingId = Date.now().toString() + '-thinking';
+        const thinkingId = generateId() + '-thinking';
         setDisplayItems(prev => [...prev, {
             type: 'thinking',
             id: thinkingId,
@@ -207,7 +231,7 @@ export default function ChatbotCopilot({
 
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        const directorMsgId = Date.now().toString() + '-director';
+        const directorMsgId = generateId() + '-director';
         setDisplayItems(prev => [...prev, {
             type: 'message',
             role: 'assistant',
@@ -225,7 +249,7 @@ export default function ChatbotCopilot({
         ));
 
         // 4. ScriptWriter Agent - Working
-        const scriptWriterId = Date.now().toString() + '-scriptwriter';
+        const scriptWriterId = generateId() + '-scriptwriter';
         setDisplayItems(prev => [...prev, {
             type: 'agent_card',
             id: scriptWriterId,
@@ -244,7 +268,7 @@ export default function ChatbotCopilot({
         await new Promise(resolve => setTimeout(resolve, 2000));
 
         // 5. ScriptWriter Generates Script (Tool Call)
-        const toolCallId = Date.now().toString() + '-tool';
+        const toolCallId = generateId() + '-tool';
         setDisplayItems(prev => prev.map(item =>
             item.id === scriptWriterId
                 ? {
@@ -293,7 +317,7 @@ export default function ChatbotCopilot({
                         ...item.props,
                         status: 'done',
                         logs: [...(item.props.logs || []), {
-                            id: Date.now().toString() + '-done',
+                            id: generateId() + '-done',
                             type: 'text',
                             content: <div className="text-xs text-slate-500">Script completed. Sending back to Director.</div>
                         }]
@@ -303,7 +327,7 @@ export default function ChatbotCopilot({
         ));
 
         // 7. Director Asks for Approval
-        const approvalId = Date.now().toString() + '-approval';
+        const approvalId = generateId() + '-approval';
         setDisplayItems(prev => [...prev, {
             type: 'approval_card',
             id: approvalId,
@@ -313,7 +337,7 @@ export default function ChatbotCopilot({
                     setDisplayItems(p => p.filter(i => i.id !== approvalId));
 
                     // Director delegates to VideoProducer
-                    const videoProducerId = Date.now().toString() + '-videoproducer';
+                    const videoProducerId = generateId() + '-videoproducer';
                     setDisplayItems(p => [...p, {
                         type: 'agent_card',
                         id: videoProducerId,
@@ -331,7 +355,7 @@ export default function ChatbotCopilot({
                         type: 'message',
                         role: 'assistant',
                         content: "Understood. What changes would you like to make to the script?",
-                        id: Date.now().toString()
+                        id: generateId()
                     }]);
                 }
             }
@@ -389,7 +413,7 @@ export default function ChatbotCopilot({
     const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
         // 1. Add User Message (only if not resuming)
         if (!resume) {
-            const userMsgId = Date.now().toString();
+            const userMsgId = generateId();
             setDisplayItems(prev => [...prev, {
                 type: 'message',
                 role: 'user',
@@ -470,11 +494,27 @@ export default function ChatbotCopilot({
                                         ...item,
                                         props: {
                                             ...item.props,
-                                            logs: [...(item.props.logs || []), {
-                                                id: data.id ? `${data.id}-thinking` : `thinking-${Date.now()}`,
-                                                type: 'text',
-                                                content: <div className="text-slate-600 italic">{data.content}</div>
-                                            }]
+                                            logs: (() => {
+                                                const existingLogs = item.props.logs || [];
+                                                // Check if the last log is a thinking block
+                                                const lastLog = existingLogs[existingLogs.length - 1];
+                                                if (lastLog && lastLog.type === 'thinking') {
+                                                    // Merge with existing thinking block
+                                                    return existingLogs.map((log, i) =>
+                                                        i === existingLogs.length - 1
+                                                            ? { ...log, content: log.content + '\n\n' + data.content }
+                                                            : log
+                                                    );
+                                                } else {
+                                                    // Create new thinking block
+                                                    const newId = data.id ? `${data.id}-thinking` : `thinking-${generateId()}`;
+                                                    return [...existingLogs, {
+                                                        id: newId,
+                                                        type: 'thinking',
+                                                        content: data.content
+                                                    }];
+                                                }
+                                            })()
                                         }
                                     };
                                 }
@@ -483,15 +523,15 @@ export default function ChatbotCopilot({
                         } else {
                             return [...prev, {
                                 type: 'agent_card',
-                                id: `agent-${agentName}-${Date.now()}`,
+                                id: `agent-${agentName}-${generateId()}`,
                                 props: {
                                     agentName: agentName,
                                     status: 'working',
                                     persona: agentName.toLowerCase(),
                                     logs: [{
-                                        id: data.id || Date.now().toString(),
-                                        type: 'text',
-                                        content: <div className="text-slate-600 italic">{data.content}</div>
+                                        id: data.id || generateId(),
+                                        type: 'thinking',
+                                        content: data.content
                                     }]
                                 }
                             }];
@@ -513,7 +553,7 @@ export default function ChatbotCopilot({
                             // Create new thinking block
                             return [...prev, {
                                 type: 'thinking',
-                                id: Date.now().toString() + '-thinking',
+                                id: generateId() + '-thinking',
                                 agent: agentName, // Track which agent this thinking belongs to
                                 content: data.content
                             }];
@@ -526,27 +566,78 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('text', (e: any) => {
+            console.log('[ChatbotCopilot] Received thinking:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                // Only process assistant messages
-                if (data.agent && data.agent !== 'User') {
-                    // Ensure we have an assistant message bubble
-                    setDisplayItems(prev => {
-                        const lastItem = prev[prev.length - 1];
-                        if (!lastItem || lastItem.type !== 'message' || lastItem.role !== 'assistant') {
-                            return [...prev, {
-                                type: 'message',
-                                role: 'assistant',
-                                content: '', // Start empty, filled by typewriter
-                                id: Date.now().toString()
-                            }];
-                        }
-                        return prev;
-                    });
+                const agentName = data.agent;
 
-                    // Add to queue and start processing
-                    textQueueRef.current += data.content;
-                    processTypewriterQueue();
+                // Only process assistant messages
+                if (agentName && agentName !== 'User') {
+                    // Check if this is a sub-agent's text
+                    if (['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
+                        // Add to the corresponding AgentCard
+                        setDisplayItems(prev => {
+                            const existingIndex = prev.findIndex(
+                                item => item.type === 'agent_card' && item.props.agentName === agentName
+                            );
+
+                            if (existingIndex !== -1) {
+                                return prev.map((item, index) => {
+                                    if (index === existingIndex) {
+                                        return {
+                                            ...item,
+                                            props: {
+                                                ...item.props,
+                                                logs: (() => {
+                                                    const existingLogs = item.props.logs || [];
+                                                    // Check if the last log is a text block
+                                                    const lastLog = existingLogs[existingLogs.length - 1];
+                                                    if (lastLog && lastLog.type === 'text') {
+                                                        // Merge with existing text block
+                                                        return existingLogs.map((log, i) =>
+                                                            i === existingLogs.length - 1
+                                                                ? { ...log, content: log.content + data.content }
+                                                                : log
+                                                        );
+                                                    } else {
+                                                        // Create new text block
+                                                        const newId = data.id ? `${data.id}-text` : `text-${generateId()}`;
+                                                        return [...existingLogs, {
+                                                            id: newId,
+                                                            type: 'text',
+                                                            content: data.content
+                                                        }];
+                                                    }
+                                                })()
+                                            }
+                                        };
+                                    }
+                                    return item;
+                                });
+                            }
+                            // If AgentCard doesn't exist yet, we'll ignore this text (it will be added later)
+                            return prev;
+                        });
+                    } else {
+                        // This is Director's text - add to main message bubble
+                        // Ensure we have an assistant message bubble
+                        setDisplayItems(prev => {
+                            const lastItem = prev[prev.length - 1];
+                            if (!lastItem || lastItem.type !== 'message' || lastItem.role !== 'assistant') {
+                                return [...prev, {
+                                    type: 'message',
+                                    role: 'assistant',
+                                    content: '', // Start empty, filled by typewriter
+                                    id: generateId()
+                                }];
+                            }
+                            return prev;
+                        });
+
+                        // Add to queue and start processing
+                        textQueueRef.current += data.content;
+                        processTypewriterQueue();
+                    }
                 }
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing text event:', err);
@@ -555,9 +646,81 @@ export default function ChatbotCopilot({
 
         eventSource.addEventListener('tool_start', (e: any) => {
             console.log('[ChatbotCopilot] Received tool_start:', e.data);
+            // Flush any pending typewriter text before showing tool
+            flushTypewriter();
+
             try {
                 const data = JSON.parse(e.data);
-                const agentId = Date.now().toString() + '-' + data.agent.toLowerCase();
+
+                // If agent is Director (or generic Agent), show standalone tool call
+                // Check for 'Director', 'Agent', or 'agent'
+                if (data.agent === 'Director' || data.agent === 'Agent' || data.agent === 'agent') {
+                    // Special handling for task_delegation
+                    if (data.tool === 'task_delegation') {
+                        const targetAgent = data.input.agent;
+                        const instruction = data.input.instruction;
+                        const agentId = generateId() + '-' + targetAgent.toLowerCase();
+
+                        setDisplayItems(prev => {
+                            const newItems = [...prev];
+
+                            // 1. Add the tool call (Director's action)
+                            newItems.push({
+                                type: 'tool_call',
+                                id: data.id || generateId(),
+                                props: {
+                                    toolName: data.tool,
+                                    args: data.input,
+                                    status: 'pending',
+                                    indent: false
+                                }
+                            });
+
+                            // 2. Activate the target AgentCard
+                            const existingIndex = newItems.findIndex(item => item.type === 'agent_card' && item.props.agentName === targetAgent);
+
+                            if (existingIndex !== -1) {
+                                // Update existing
+                                newItems[existingIndex] = {
+                                    ...newItems[existingIndex],
+                                    props: {
+                                        ...newItems[existingIndex].props,
+                                        status: 'working'
+                                    }
+                                };
+                            } else {
+                                // Create new
+                                newItems.push({
+                                    type: 'agent_card',
+                                    id: agentId,
+                                    props: {
+                                        agentName: targetAgent,
+                                        status: 'working',
+                                        persona: targetAgent.toLowerCase(),
+                                        logs: []
+                                    }
+                                });
+                            }
+
+                            return newItems;
+                        });
+                        return;
+                    }
+
+                    setDisplayItems(prev => [...prev, {
+                        type: 'tool_call',
+                        id: data.id || generateId(),
+                        props: {
+                            toolName: data.tool,
+                            args: data.input,
+                            status: 'pending',
+                            indent: false
+                        }
+                    }]);
+                    return;
+                }
+
+                const agentId = generateId() + '-' + data.agent.toLowerCase();
 
                 // For now, we assume tool calls come from sub-agents like ScriptWriter
                 // So we create/update the agent card
@@ -573,16 +736,21 @@ export default function ChatbotCopilot({
                                     ...item,
                                     props: {
                                         ...item.props,
-                                        logs: [...(item.props.logs || []), {
-                                            id: data.id,
-                                            type: 'tool_call',
-                                            toolProps: {
-                                                toolName: data.tool_name,
-                                                args: data.args,
-                                                status: 'pending',
-                                                indent: false
-                                            }
-                                        }]
+                                        logs: (() => {
+                                            const existingLogs = item.props.logs || [];
+                                            const newId = data.id || generateId();
+                                            if (existingLogs.some((l: AgentLog) => l.id === newId)) return existingLogs;
+                                            return [...existingLogs, {
+                                                id: newId,
+                                                type: 'tool_call',
+                                                toolProps: {
+                                                    toolName: data.tool,
+                                                    args: data.input,
+                                                    status: 'pending',
+                                                    indent: false
+                                                }
+                                            }];
+                                        })()
                                     }
                                 };
                             }
@@ -598,11 +766,11 @@ export default function ChatbotCopilot({
                                 status: 'working',
                                 persona: data.agent.toLowerCase(),
                                 logs: [{
-                                    id: data.id,
+                                    id: data.id || generateId(),
                                     type: 'tool_call',
                                     toolProps: {
-                                        toolName: data.tool_name,
-                                        args: data.args,
+                                        toolName: data.tool,
+                                        args: data.input,
                                         status: 'pending',
                                         indent: false
                                     }
@@ -620,22 +788,83 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received tool_end:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                setDisplayItems(prev => prev.map(item => {
-                    if (item.type === 'agent_card' && item.props.agentName === data.agent) {
-                        return {
-                            ...item,
-                            props: {
-                                ...item.props,
-                                logs: item.props.logs?.map((log: any) =>
-                                    log.id === data.id
-                                        ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
-                                        : log
-                                )
+                console.log('[ChatbotCopilot] tool_end parsed:', { id: data.id, tool: data.tool, agent: data.agent });
+                setDisplayItems(prev => {
+                    console.log('[ChatbotCopilot] Current displayItems before tool_end update:', prev.map(item => ({
+                        type: item.type,
+                        id: item.id,
+                        agentName: item.type === 'agent_card' ? item.props.agentName : undefined,
+                        logs: item.type === 'agent_card' ? item.props.logs?.map((l: any) => ({ id: l.id, type: l.type, toolName: l.toolProps?.toolName })) : undefined
+                    })));
+                    return prev.map(item => {
+                        // Handle standalone tool call (Director or Agent)
+                        if (item.type === 'tool_call' && (item.id === data.id || (item.props.toolName === data.tool && (data.agent === 'Director' || data.agent === 'Agent' || data.agent === 'agent')))) {
+                            return {
+                                ...item,
+                                props: {
+                                    ...item.props,
+                                    status: 'success',
+                                    result: data.result
+                                }
+                            };
+                        }
+
+                        // Handle task_delegation completion
+                        if (data.tool === 'task_delegation') {
+                            // 1. Update the standalone tool call (if it exists)
+                            if (item.type === 'tool_call' && (item.id === data.id || item.props.toolName === 'task_delegation')) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        status: 'success',
+                                        result: data.result
+                                    }
+                                };
                             }
-                        };
-                    }
-                    return item;
-                }));
+
+                            // 2. Update the target agent card
+                            // We try to find the agent card that matches the delegation
+                            // Since we don't have the target agent name in tool_end data easily, 
+                            // we might need to rely on the result string or just update ALL working agent cards?
+                            // Or better: we know task_delegation usually returns "AgentName completed: ..."
+
+                            const match = data.result && typeof data.result === 'string' ? data.result.match(/^(\w+) completed/) : null;
+                            if (match) {
+                                const agentName = match[1];
+                                if (item.type === 'agent_card' && item.props.agentName === agentName) {
+                                    return {
+                                        ...item,
+                                        props: {
+                                            ...item.props,
+                                            status: 'done',
+                                            logs: item.props.logs?.map((log: any) =>
+                                                log.id === data.id
+                                                    ? { ...log, content: <div className="text-green-600 font-medium text-xs mb-2">Task Completed</div> }
+                                                    : log
+                                            )
+                                        }
+                                    };
+                                }
+                            }
+                        }
+
+                        if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                            return {
+                                ...item,
+                                props: {
+                                    ...item.props,
+                                    logs: item.props.logs?.map((log: any) =>
+                                        log.id === data.id
+                                            ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
+                                            : log
+                                    )
+                                }
+                            };
+                        }
+                        return item;
+                    });
+                });
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing tool_end event:', err);
             }
@@ -664,12 +893,18 @@ export default function ChatbotCopilot({
                                     props: {
                                         ...item.props,
                                         status: 'working',
-                                        logs: [...logs, {
-                                            id: data.id,
-                                            type: 'text',
-                                            taskName: data.task,
-                                            content: <div className="text-blue-600 font-medium text-xs mt-2">Starting: {data.task}</div>
-                                        }]
+                                        logs: (() => {
+                                            const existingLogs = logs;
+                                            // Deduplicate by ID if present
+                                            if (data.id && existingLogs.some((l: AgentLog) => l.id === data.id)) return existingLogs;
+
+                                            return [...existingLogs, {
+                                                id: data.id || generateId(),
+                                                type: 'text',
+                                                taskName: data.task,
+                                                content: <div className="text-blue-600 font-medium text-xs mt-2">Starting: {data.task}</div>
+                                            }];
+                                        })()
                                     }
                                 };
                             }
@@ -678,13 +913,13 @@ export default function ChatbotCopilot({
                     } else {
                         return [...prev, {
                             type: 'agent_card',
-                            id: `agent-${data.agent}-${Date.now()}`,
+                            id: `agent-${data.agent}-${generateId()}`,
                             props: {
                                 agentName: data.agent,
                                 status: 'working',
                                 persona: data.agent.toLowerCase(),
                                 logs: [{
-                                    id: data.id,
+                                    id: data.id || generateId(),
                                     type: 'text',
                                     taskName: data.task,
                                     content: <div className="text-blue-600 font-medium text-xs">Starting: {data.task}</div>
@@ -726,7 +961,7 @@ export default function ChatbotCopilot({
         eventSource.addEventListener('human_interrupt', (e: any) => {
             try {
                 const data = JSON.parse(e.data);
-                const approvalId = Date.now().toString() + '-approval';
+                const approvalId = generateId() + '-approval';
                 setDisplayItems(prev => [...prev, {
                     type: 'approval_card',
                     id: approvalId,
@@ -768,7 +1003,7 @@ export default function ChatbotCopilot({
                     type: 'message',
                     role: 'assistant',
                     content: `Error: ${data.message}`,
-                    id: Date.now().toString()
+                    id: generateId()
                 }]);
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing workflow_error event:', err);
@@ -804,7 +1039,7 @@ export default function ChatbotCopilot({
             try {
                 const data = JSON.parse(e.data);
                 console.log('[ChatbotCopilot] Received node_proposal:', data);
-                const proposalId = Date.now().toString() + '-proposal';
+                const proposalId = generateId() + '-proposal';
 
                 // Resolve Names to IDs using local helper
                 let resolvedGroupId = data.groupId;
@@ -883,13 +1118,13 @@ export default function ChatbotCopilot({
                             }, 100);
                         }
 
-                        // Resume stream
-                        setPendingResume({
-                            userInput: '',
-                            resume: true,
-                            inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                            expectedNodeId: createdNodeId
-                        });
+                        // Resume stream - DISABLED per user request
+                        // setPendingResume({
+                        //     userInput: '',
+                        //     resume: true,
+                        //     inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                        //     expectedNodeId: createdNodeId
+                        // });
 
                     } else {
                         // Handle Accept (Simple)
@@ -922,13 +1157,13 @@ export default function ChatbotCopilot({
                             }, 100);
                         }
 
-                        // Resume stream
-                        setPendingResume({
-                            userInput: '',
-                            resume: true,
-                            inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                            expectedNodeId: createdNodeId
-                        });
+                        // Resume stream - DISABLED per user request
+                        // setPendingResume({
+                        //     userInput: '',
+                        //     resume: true,
+                        //     inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
+                        //     expectedNodeId: createdNodeId
+                        // });
                     }
                 };
 
@@ -1081,26 +1316,7 @@ export default function ChatbotCopilot({
                                     <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white" />
                                 )}
                             </motion.button>
-                            {/* Auto-Pilot Toggle */}
-                            <motion.button
-                                onClick={() => setIsAutoPilot(!isAutoPilot)}
-                                className={`p-2 rounded-lg transition-colors relative ${isAutoPilot ? 'bg-green-100 text-green-600' : 'hover:bg-gray-100/50 text-slate-400'}`}
-                                whileHover={{ scale: 1.1 }}
-                                whileTap={{ scale: 0.9 }}
-                                title={isAutoPilot ? "Pause Auto-Pilot" : "Resume Auto-Pilot"}
-                            >
-                                {isAutoPilot ? (
-                                    <div className="flex items-center gap-1">
-                                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                                        <span className="text-xs font-bold">AUTO</span>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-1">
-                                        <div className="w-2 h-2 rounded-full bg-slate-300" />
-                                        <span className="text-xs font-bold">PAUSED</span>
-                                    </div>
-                                )}
-                            </motion.button>
+
                         </div>
 
                         {/* History Dropdown */}
@@ -1166,7 +1382,7 @@ export default function ChatbotCopilot({
                                                 item.role === 'user' ? (
                                                     <UserMessage content={item.content} />
                                                 ) : (
-                                                    <div className="text-base text-slate-800 leading-relaxed px-1 font-display font-medium">
+                                                    <div className="text-base text-slate-800 leading-relaxed px-1 font-medium">
                                                         {item.content}
                                                     </div>
                                                 )
@@ -1215,7 +1431,7 @@ export default function ChatbotCopilot({
                                         initial={{ opacity: 0, y: 10, scale: 0.9 }}
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                                        className="absolute bottom-[88px] right-6 z-20 pointer-events-auto"
+                                        className="absolute bottom-[80px] right-6 z-20 pointer-events-auto"
                                     >
                                         <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
                                             <div className="flex -space-x-2">
@@ -1246,31 +1462,29 @@ export default function ChatbotCopilot({
                             <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-gray-50 via-gray-50/60 to-transparent pointer-events-none" />
 
                             <div className="absolute bottom-0 left-0 right-0 px-4 py-4">
-                                <div className="bg-white/30 backdrop-blur-2xl rounded-matrix shadow-2xl p-3">
-                                    <form onSubmit={handleSubmit} className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            value={input}
-                                            onChange={(e) => setInput(e.target.value)}
-                                            placeholder={selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message..."}
-                                            className="flex-1 px-4 py-3 bg-white/40 backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-gray-400/20 focus:bg-white/60 text-sm text-gray-900 placeholder:text-gray-400 border-0 transition-all shadow-sm"
-                                            disabled={isLoading && !isDemoMode}
-                                        />
-                                        <motion.button
-                                            type="submit"
-                                            disabled={!input.trim() || (isLoading && !isDemoMode)}
-                                            className={`px-4 py-3 rounded-matrix transition-all flex items-center justify-center ${input.trim()
-                                                ? 'bg-gray-900/90 text-white shadow-lg'
-                                                : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
-                                                }`}
-                                            whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
-                                            whileTap={input.trim() ? { scale: 0.95 } : {}}
-                                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                                        >
-                                            <PaperPlaneRight className="w-4 h-4" weight="fill" />
-                                        </motion.button>
-                                    </form>
-                                </div>
+                                <form onSubmit={handleSubmit} className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={input}
+                                        onChange={(e) => setInput(e.target.value)}
+                                        placeholder={selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message..."}
+                                        className="flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md"
+                                        disabled={isLoading && !isDemoMode}
+                                    />
+                                    <motion.button
+                                        type="submit"
+                                        disabled={!input.trim() || (isLoading && !isDemoMode)}
+                                        className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim()
+                                            ? 'bg-gray-900/90 text-white shadow-lg'
+                                            : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
+                                            }`}
+                                        whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
+                                        whileTap={input.trim() ? { scale: 0.95 } : {}}
+                                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                    >
+                                        <PaperPlaneRight className="w-4 h-4" weight="fill" />
+                                    </motion.button>
+                                </form>
                             </div>
                         </motion.div>
                     )}
