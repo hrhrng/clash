@@ -191,9 +191,12 @@ def _generate_canvas_tools(self) -> list[BaseTool]:
         self._create_edge_tool(),      # → create_canvas_edge
         self._wait_for_task_tool(),    # → wait_for_generation
         self._search_nodes_tool(),     # → search_canvas
-        self._timeline_editor_tool(),  # → timeline_editor
     ]
 ```
+
+### TimelineMiddleware
+
+Located in [middleware.py](middleware.py), this middleware adds the `timeline_editor` tool (emits SSE `timeline_edit`).
 
 **SSE Emission:**
 ```python

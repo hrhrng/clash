@@ -29,7 +29,18 @@ async def main():
             stream_mode=stream_modes,
             subgraphs=True,
         ):
-            print(streamed)
+            # print(streamed)
+            namespace, mode, payload = streamed
+            if mode == "messages":
+                msg_chunk_dict, metadata = payload
+                if isinstance(msg_chunk_dict, dict):
+                    tool_calls = msg_chunk_dict.get("kwargs", {}).get("tool_calls", [])
+                    if tool_calls:
+                        print(f"Tool calls found: {tool_calls}")
+                else:
+                    tool_calls = getattr(msg_chunk_dict, "tool_calls", [])
+                    if tool_calls:
+                        print(f"Tool calls found: {tool_calls}")
     except Exception as e:
         print(f"Caught exception: {e}")
         import traceback

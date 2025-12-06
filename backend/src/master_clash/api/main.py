@@ -475,6 +475,11 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
 
         config = {"configurable": {"thread_id": thread_id}}
         stream_modes = ["messages", "custom"]  # Only messages and custom modes
+        emitted_tool_ids = set()
+        tool_id_to_name = {}  # Cache tool_call_id -> tool_name mapping
+        tool_call_to_agent = {}  # Cache task_delegation tool_call_id -> target_agent_name mapping
+        namespace_to_agent = {}  # Cache namespace (first element) -> agent_name mapping
+        current_delegation_agent = None  # Track the currently active delegated agent
 
         try:
             async for streamed in graph.astream(
@@ -500,11 +505,144 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         continue
 
                     msg_chunk_dict, metadata = payload
+
+                    # Debug: Log metadata structure (only when there's a namespace or specific conditions)
+                    if namespace:
+                        logger.info(f"[STREAM DEBUG] mode=messages, namespace={namespace}")
+                        if isinstance(metadata, dict):
+                            logger.info(f"[STREAM DEBUG] langgraph_node={metadata.get('langgraph_node')}")
+                            logger.info(f"[STREAM DEBUG] langgraph_triggers={metadata.get('langgraph_triggers')}")
+                            logger.info(f"[STREAM DEBUG] langgraph_path={metadata.get('langgraph_path')}")
+
                     agent_name = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
+
+                    # If this is the root graph (empty namespace) and node is 'agent', it's the Director
+                    if not namespace and agent_name == "agent":
+                        logger.info(f"[AGENT_NAME] Root graph agent -> Director")
+                        agent_name = "Director"
+                    # Handle sub-graph: resolve agent name from task_delegation mapping
+                    elif namespace:
+                        # The namespace format is like: ('tools:UUID',) or ('tools:UUID', '1')
+                        # We use a simple strategy: assume the most recent task_delegation is the current sub-agent
+                        ns_first = namespace[0] if namespace and isinstance(namespace[0], str) else None
+
+                        # Check if we've already cached this namespace
+                        if ns_first and ns_first in namespace_to_agent:
+                            agent_name = namespace_to_agent[ns_first]
+                            logger.info(f"[AGENT_NAME] Resolved from cache: {ns_first} -> {agent_name}")
+                        elif ns_first and current_delegation_agent:
+                            # Cache this namespace to the current delegated agent
+                            namespace_to_agent[ns_first] = current_delegation_agent
+                            agent_name = current_delegation_agent
+                            logger.info(f"[AGENT_NAME] New namespace {ns_first} -> {current_delegation_agent}")
+                        else:
+                            logger.debug(f"[NAMESPACE] No mapping for namespace: {namespace}, current_delegation={current_delegation_agent}")
+
+                    # Handle tool calls
+                    tool_calls = []
+                    if isinstance(msg_chunk_dict, dict):
+                        kwargs = msg_chunk_dict.get("kwargs", {})
+                        if isinstance(kwargs, dict):
+                            tool_calls = kwargs.get("tool_calls", [])
+                    else:
+                        tool_calls = getattr(msg_chunk_dict, "tool_calls", [])
+
+                    if tool_calls:
+                        for tool_call in tool_calls:
+                            # Handle both dict and object tool calls
+                            if isinstance(tool_call, dict):
+                                tool_name = tool_call.get("name")
+                                tool_args = tool_call.get("args", {})
+                                tool_id = tool_call.get("id")
+                            else:
+                                tool_name = getattr(tool_call, "name", None)
+                                tool_args = getattr(tool_call, "args", {})
+                                tool_id = getattr(tool_call, "id", None)
+
+                            if tool_name and tool_id and tool_id not in emitted_tool_ids:
+                                # Debug: Log tool_start
+                                logger.info(f"[TOOL_START DEBUG] tool={tool_name}, id={tool_id}, agent={agent_name}")
+                                logger.info(f"[TOOL_START DEBUG] namespace={namespace}")
+
+                                emitted_tool_ids.add(tool_id)
+                                tool_id_to_name[tool_id] = tool_name  # Cache tool name mapping
+
+                                # If this is task_delegation, cache the target agent mapping
+                                if tool_name == "task_delegation" and isinstance(tool_args, dict):
+                                    target_agent = tool_args.get("agent")
+                                    if target_agent:
+                                        tool_call_to_agent[tool_id] = target_agent
+                                        current_delegation_agent = target_agent  # Track active delegation
+                                        logger.info(f"[MAPPING] Cached: {tool_id} -> {target_agent}")
+                                        logger.info(f"[MAPPING] Set current_delegation_agent = {target_agent}")
+                                        logger.info(f"[TOOL_START DEBUG] task_delegation args: {tool_args}")
+                                        logger.info(f"[TOOL_START DEBUG] target_agent: {target_agent}")
+
+                                yield emitter.format_event("tool_start", {
+                                    "tool": tool_name,
+                                    "input": tool_args,
+                                    "agent": agent_name or "Agent"
+                                })
+
+                    # Handle tool outputs (ToolMessage)
+                    if isinstance(msg_chunk_dict, dict):
+                        msg_type = msg_chunk_dict.get("type")
+                        tool_call_id = msg_chunk_dict.get("tool_call_id")
+                        content = msg_chunk_dict.get("content", "")
+                        # Debug: Log ToolMessage checking
+                        logger.info(f"[TOOL_END DEBUG] Checking dict - type={msg_type}, tool_call_id={tool_call_id}")
+                    else:
+                        msg_type = getattr(msg_chunk_dict, "type", None)
+                        tool_call_id = getattr(msg_chunk_dict, "tool_call_id", None)
+                        content = getattr(msg_chunk_dict, "content", "")
+                        # Debug: Log ToolMessage checking
+                        logger.info(f"[TOOL_END DEBUG] Checking obj - type={msg_type}, tool_call_id={tool_call_id}")
+                        logger.info(f"[TOOL_END DEBUG] Object type: {type(msg_chunk_dict).__name__}")
+
+                    if msg_type == "tool" and tool_call_id:
+                        # Get tool name from cache instead of from ToolMessage
+                        tool_name = tool_id_to_name.get(tool_call_id, "unknown")
+
+                        # For tool_end, we need to determine the correct agent
+                        # If this is a task_delegation tool_end, the agent should be Director (the one who called it)
+                        # Otherwise, use the resolved agent_name from namespace
+                        tool_end_agent = agent_name
+                        if tool_name == "task_delegation":
+                            # task_delegation is always called by Director
+                            tool_end_agent = "Director"
+                        elif not namespace:
+                            # Root graph, should be Director
+                            tool_end_agent = "Director"
+                        # else: use the resolved agent_name from namespace (sub-agent)
+
+                        logger.info(f"[TOOL_END] Emitting tool_end: id={tool_call_id}, tool={tool_name}, agent={tool_end_agent}")
+
+                        # Reset current_delegation_agent when task_delegation completes
+                        if tool_name == "task_delegation":
+                            logger.info(f"[MAPPING] Clearing current_delegation_agent (was {current_delegation_agent})")
+                            current_delegation_agent = None
+
+                        yield emitter.format_event("tool_end", {
+                            "id": tool_call_id,
+                            "tool": tool_name,  # Use cached tool name
+                            "result": content,
+                            "agent": tool_end_agent or "Agent"
+                        })
+                        continue
+                    else:
+                        # Debug: Log cases where tool_end is not emitted
+                        if msg_type == "tool":
+                            logger.warning(f"[TOOL_END] ToolMessage without tool_call_id: {msg_chunk_dict}")
+                        if tool_call_id and msg_type != "tool":
+                            logger.warning(f"[TOOL_END] Has tool_call_id but type is not 'tool': type={msg_type}, id={tool_call_id}")
 
                     # Extract content from the message chunk dict
                     if isinstance(msg_chunk_dict, dict):
-                        content = msg_chunk_dict.get("kwargs", {}).get("content", [])
+                        kwargs = msg_chunk_dict.get("kwargs", {})
+                        if isinstance(kwargs, dict):
+                            content = kwargs.get("content", [])
+                        else:
+                            content = []
                     else:
                         content = getattr(msg_chunk_dict, "content", None)
 
@@ -525,6 +663,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             if part_type == "thinking":
                                 thinking_text = part.get("thinking", "")
                                 if thinking_text:
+                                    logger.info(f"[THINKING] Sending thinking with agent={agent_name}, namespace={namespace}")
                                     yield emitter.thinking(thinking_text, agent=agent_name or "Agent")
                             # Handle text blocks
                             elif part_type == "text":

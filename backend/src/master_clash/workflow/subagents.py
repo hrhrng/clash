@@ -5,12 +5,13 @@ tasks to specialized sub-agents with isolated context.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Annotated, Any, Callable, Sequence
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
-from langchain_core.runnables import Runnable
-from langchain_core.tools import BaseTool
+from langchain_core.runnables import Runnable, RunnableConfig
+from langchain_core.tools import BaseTool, InjectedToolCallId
+from langgraph.prebuilt import InjectedState
 
 from master_clash.workflow.middleware import (
     AgentMiddleware,
@@ -114,7 +115,9 @@ Sub-agents have isolated context and their own tools.
             instruction: str,
             workspace_group_id: str | None = None,
             context: dict[str, Any] | None = None,
-            runtime: ToolRuntime | None = None,
+            state: Annotated[dict, InjectedState] = None,
+            config: RunnableConfig = None,
+            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Delegate a task to a specialized sub-agent.
 
@@ -123,58 +126,83 @@ Sub-agents have isolated context and their own tools.
                 instruction: Clear task description
                 workspace_group_id: Optional group ID to scope the agent's work
                 context: Optional context data (e.g., node IDs)
-                runtime: Tool runtime context
+                state: Injected agent state
+                config: Injected config
+                tool_call_id: Injected tool call ID
 
             Returns:
                 Result from the sub-agent
             """
-            if runtime is None:
-                return "Error: Runtime context required"
-
-            # Find the target sub-agent
-            target = None
-            for sa in subagents:
-                if sa.name == agent:
-                    target = sa
-                    break
-
-            if target is None:
-                available = ", ".join(sa.name for sa in subagents)
-                return f"Unknown agent: {agent}. Available: {available}"
-
-            # Build sub-agent state
-            msg_content = instruction
-            if workspace_group_id:
-                msg_content = f"[Workspace: {workspace_group_id}]\n{instruction}"
-            if context:
-                msg_content = f"{msg_content}\nContext: {context}"
-
-            sub_state: AgentState = {
-                "messages": [HumanMessage(content=msg_content)],
-                "project_id": runtime.state.get("project_id", ""),
-            }
-
-            # Add workspace scope to state if agent is workspace-aware
-            if workspace_group_id and target.workspace_aware:
-                sub_state["workspace_group_id"] = workspace_group_id
-
             try:
+                logger.info(f"Task delegation started for agent: {agent}")
+                logger.debug(f"Instruction: {instruction}")
+                logger.debug(f"Workspace: {workspace_group_id}")
+                logger.debug(f"Context: {context}")
+                
+                if state is None:
+                    logger.error("Runtime context is missing")
+                    return "Error: Runtime context required"
+
+                runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
+
+                # Handle potential runtime type mismatch (e.g. if passed as dict by LLM)
+                project_id = ""
+                if hasattr(runtime, "state"):
+                    project_id = runtime.state.get("project_id", "")
+                elif isinstance(runtime, dict):
+                    logger.warning("Runtime passed as dict, attempting to extract state")
+                    project_id = runtime.get("state", {}).get("project_id", "")
+                
+                logger.debug(f"Project ID: {project_id}")
+
+                # Find the target sub-agent
+                target = None
+                for sa in subagents:
+                    if sa.name == agent:
+                        target = sa
+                        break
+
+                if target is None:
+                    available = ", ".join(sa.name for sa in subagents)
+                    logger.warning(f"Unknown agent: {agent}. Available: {available}")
+                    return f"Unknown agent: {agent}. Available: {available}"
+
+                # Build sub-agent state
+                msg_content = instruction
+                if workspace_group_id:
+                    msg_content = f"[Workspace: {workspace_group_id}]\n{instruction}"
+                if context:
+                    msg_content = f"{msg_content}\nContext: {context}"
+
+                sub_state: AgentState = {
+                    "messages": [HumanMessage(content=msg_content)],
+                    "project_id": project_id,
+                }
+
+                # Add workspace scope to state if agent is workspace-aware
+                if workspace_group_id and target.workspace_aware:
+                    sub_state["workspace_group_id"] = workspace_group_id
+
                 # Get or compile the sub-agent graph
                 if isinstance(target, CompiledSubAgent):
                     graph = target.graph
                 else:
                     # Compile SubAgent definition on first use
+                    logger.info(f"Compiling sub-agent: {agent}")
                     graph = self._compile_subagent(target)
 
                 # Invoke sub-agent
+                logger.info(f"Invoking sub-agent: {agent}")
                 result = await graph.ainvoke(sub_state)
                 messages = result.get("messages", [])
 
                 if messages:
                     last_msg = messages[-1]
                     content = getattr(last_msg, "content", "")
+                    logger.info(f"Sub-agent {agent} completed successfully")
                     return f"{agent} completed: {content}"
 
+                logger.info(f"Sub-agent {agent} completed with no output")
                 return f"{agent} completed (no output)"
 
             except Exception as exc:
@@ -214,7 +242,7 @@ Sub-agents have isolated context and their own tools.
 def create_specialist_agents(
     model: BaseChatModel,
     canvas_middleware: AgentMiddleware,
-    todo_middleware: AgentMiddleware,
+    timeline_middleware: AgentMiddleware,
 ) -> Sequence[SubAgent]:
     """Create the four specialist agents for video creation.
 
@@ -222,6 +250,7 @@ def create_specialist_agents(
         model: Language model to use
         canvas_middleware: Canvas middleware for tools
         todo_middleware: Todo middleware for planning
+        timeline_middleware: Timeline middleware for editing operations
 
     Returns:
         List of sub-agent definitions
@@ -230,7 +259,6 @@ def create_specialist_agents(
         create_node,
         list_node_info,
         read_node,
-        timeline_editor,
         wait_for_task,
     )
 
@@ -247,9 +275,10 @@ Tasks:
 2. Create text nodes for Character Bios if needed.
 
 Use canvas tools to place content on the canvas.""",
-        tools=[list_node_info, read_node, create_node],
+        # tools=[list_node_info, read_node, create_node],
+        tools=[],
         model=model,
-        middleware=[canvas_middleware, todo_middleware],
+        middleware=[canvas_middleware],
         workspace_aware=True,  # Auto-scope nodes to workspace
     )
 
@@ -270,9 +299,10 @@ Tasks:
    - Use wait_for_generation to check status.
    - If status is 'generating', WAIT and then RETRY.
    - Repeat until status is 'completed'.""",
-        tools=[list_node_info, read_node, create_node, wait_for_task],
+        # tools=[list_node_info, read_node, create_node, wait_for_task],
+        tools=[],
         model=model,
-        middleware=[canvas_middleware, todo_middleware],
+        middleware=[canvas_middleware],
         workspace_aware=True,  # Auto-scope nodes to workspace
     )
 
@@ -290,9 +320,10 @@ Tasks:
 3. You can also create Video Generation nodes (type='video_gen') if needed.
 4. ALWAYS wait for generation nodes to complete using wait_for_generation before creating dependent nodes.
    - If 'generating', retry after a short delay.""",
-        tools=[list_node_info, read_node, create_node, wait_for_task],
+        # tools=[list_node_info, read_node, create_node, wait for_task],
+        tools=[],
         model=model,
-        middleware=[canvas_middleware, todo_middleware],
+        middleware=[canvas_middleware],
         workspace_aware=True,  # Auto-scope nodes to workspace
     )
 
@@ -303,9 +334,9 @@ Tasks:
 Your goal is to assemble the final video.
 
 Use timeline_editor to arrange clips from the canvas.""",
-        tools=[list_node_info, read_node, timeline_editor],
+        tools=[],
         model=model,
-        middleware=[canvas_middleware, todo_middleware],
+        middleware=[timeline_middleware],
         workspace_aware=False,  # Editor works globally
     )
 

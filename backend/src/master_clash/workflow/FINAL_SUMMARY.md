@@ -14,7 +14,7 @@
 
 #### Middleware System ([middleware.py](middleware.py))
 - ✅ `AgentMiddleware` 基类 - 钩子系统
-- ✅ `CanvasMiddleware` - 8 个动态生成的工具：
+- ✅ `CanvasMiddleware` - 7 个动态生成的工具：
   - `list_canvas_nodes` - 列出节点
   - `read_canvas_node` - 读取节点
   - `create_canvas_node` - **发送 SSE proposal**
@@ -22,7 +22,7 @@
   - `create_canvas_edge` - 创建边（TODO）
   - `wait_for_generation` - 等待生成任务
   - `search_canvas` - 搜索节点
-  - `timeline_editor` - **发送 SSE timeline events**
+- ✅ `TimelineMiddleware` - `timeline_editor`（发送 SSE timeline events）
 - ✅ `TodoListMiddleware` - 任务规划工具
 
 #### SubAgent Delegation ([subagents.py](subagents.py))
