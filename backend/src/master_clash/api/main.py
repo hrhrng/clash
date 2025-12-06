@@ -21,7 +21,7 @@ from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.description import generate_description
 from master_clash.context import ProjectContext, NodeModel, EdgeModel, _PROJECT_CONTEXTS, set_project_context, get_project_context
 from master_clash.workflow.multi_agent import graph
-from master_clash.video_analysis import VideoAnalysisOrchestrator, VideoAnalysisConfig, VideoAnalysisResult
+# from master_clash.video_analysis import VideoAnalysisOrchestrator, VideoAnalysisConfig, VideoAnalysisResult
 from langchain_core.messages import HumanMessage
 import requests
 
@@ -415,6 +415,10 @@ class StreamEmitter:
         logger.info(f"Sub-agent END: {agent} - {result} ({id})")
         return self.format_event("sub_agent_end", {"agent": agent, "result": result, "id": id})
 
+    def end(self) -> str:
+        """Output end token."""
+        return self.format_event("end", {})
+
     async def tool_create_node(self, agent: str, tool_name: str, args: dict, proposal_data: dict, result_text: str):
         """Tool execution: Create Node."""
         tool_id = f"call_{uuid.uuid4().hex[:8]}"
@@ -470,7 +474,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             }
 
         config = {"configurable": {"thread_id": thread_id}}
-        stream_modes = ["messages", "updates", "custom"]
+        stream_modes = ["messages", "custom"]  # Only messages and custom modes
 
         try:
             async for streamed in graph.astream(
@@ -479,24 +483,35 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 stream_mode=stream_modes,
                 subgraphs=True,  # surface subgraph/custom events from nested calls
             ):
+                namespace = []
                 mode = None
                 payload = streamed
 
-                # When multiple stream modes are used, the payload is (mode, data)
-                if isinstance(streamed, tuple) and len(streamed) == 2 and streamed[0] in stream_modes:
-                    mode, payload = streamed
+                # Format is [namespace, mode, data] where namespace is a list
+                if isinstance(streamed, (list, tuple)) and len(streamed) == 3:
+                    namespace, mode, payload = streamed
+                    logger.debug(f"Stream: namespace={namespace}, mode={mode}")
+                else:
+                    logger.warning(f"Unexpected stream format: type={type(streamed)}, len={len(streamed) if hasattr(streamed, '__len__') else 'N/A'}")
 
                 if mode == "messages":
-                    if not isinstance(payload, tuple) or len(payload) != 2:
+                    # Payload is a list: [msg_chunk_dict, metadata_dict]
+                    if not isinstance(payload, (list, tuple)) or len(payload) != 2:
                         continue
-                    msg_chunk, metadata = payload
+
+                    msg_chunk_dict, metadata = payload
                     agent_name = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
-                    content = getattr(msg_chunk, "content", None)
+
+                    # Extract content from the message chunk dict
+                    if isinstance(msg_chunk_dict, dict):
+                        content = msg_chunk_dict.get("kwargs", {}).get("content", [])
+                    else:
+                        content = getattr(msg_chunk_dict, "content", None)
+
                     logger.debug(
-                        "stream messages chunk agent=%s content_preview=%s metadata_keys=%s",
+                        "stream messages chunk agent=%s content_preview=%s",
                         agent_name or "Agent",
-                        repr(content)[:200],
-                        list(metadata.keys()) if isinstance(metadata, dict) else type(metadata),
+                        repr(content)[:200] if content else "None",
                     )
 
                     # Handle list-style content parts (e.g., [{"type": "text", "text": "..."}])
@@ -505,41 +520,23 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             if not isinstance(part, dict):
                                 continue
                             part_type = part.get("type")
-                            part_text = part.get("text", "")
-                            logger.debug(
-                                "stream messages part type=%s text_preview=%s",
-                                part_type,
-                                part_text[:200],
-                            )
-                            if not part_text:
-                                continue
-                            if part_type in {"thinking", "reasoning", "thought"}:
-                                yield emitter.thinking(part_text, agent=agent_name or "Agent")
-                            else:
-                                yield emitter.text(part_text, agent=agent_name or "Agent")
+
+                            # Handle thinking blocks
+                            if part_type == "thinking":
+                                thinking_text = part.get("thinking", "")
+                                if thinking_text:
+                                    yield emitter.thinking(thinking_text, agent=agent_name or "Agent")
+                            # Handle text blocks
+                            elif part_type == "text":
+                                part_text = part.get("text", "")
+                                if part_text:
+                                    yield emitter.text(part_text, agent=agent_name or "Agent")
                         continue
 
+                    # Fallback for non-list content
                     text_content = _extract_text(content)
                     if text_content:
                         yield emitter.text(text_content, agent=agent_name or "Agent")
-
-                elif mode == "updates":
-                    update = payload
-                    namespace = ()
-                    if isinstance(update, tuple) and len(update) == 2 and isinstance(update[0], tuple):
-                        namespace, update = update
-
-                    if not isinstance(update, dict):
-                        continue
-
-                    for _, value in update.items():
-                        if isinstance(value, dict) and "messages" in value:
-                            messages = value["messages"]
-                            if isinstance(messages, list) and messages:
-                                last_msg = messages[-1]
-                                text_content = _extract_text(getattr(last_msg, "content", None))
-                                if text_content:
-                                    yield emitter.text(text_content, agent="Agent")
 
                 elif mode == "custom":
                     data = payload
@@ -555,85 +552,89 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
 
         except Exception as exc:  # pragma: no cover - surfaced to client
             logger.error("Stream workflow failed: %s", exc, exc_info=True)
-            yield emitter.format_event("error", {"message": str(exc)})
+            yield emitter.format_event("workflow_error", {"message": str(exc)})
+            yield emitter.end()
+
+        # Always end the stream
+        yield emitter.end()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 def process_video_analysis(task_id: str, request_data: dict, callback_url: str = None):
     """Background task to run comprehensive video analysis."""
-    try:
-        logger.info(f"Starting video analysis for task {task_id}")
+    # try:
+    #     logger.info(f"Starting video analysis for task {task_id}")
 
-        # Create config from request
-        config = VideoAnalysisConfig(
-            enable_asr=request_data.get("enable_asr", True),
-            enable_subtitle_extraction=request_data.get("enable_subtitle_extraction", True),
-            enable_keyframe_detection=request_data.get("enable_keyframe_detection", True),
-            enable_gemini_analysis=request_data.get("enable_gemini_analysis", True),
-            asr_language=request_data.get("asr_language", "auto"),
-            keyframe_threshold=request_data.get("keyframe_threshold", 0.3),
-            max_keyframes=request_data.get("max_keyframes", 50),
-            gemini_model=request_data.get("gemini_model", "gemini-2.5-pro"),
-            gemini_prompt=request_data.get("gemini_prompt"),
-        )
+    #     # Create config from request
+    #     # config = VideoAnalysisConfig(
+    #     #     enable_asr=request_data.get("enable_asr", True),
+    #     #     enable_subtitle_extraction=request_data.get("enable_subtitle_extraction", True),
+    #     #     enable_keyframe_detection=request_data.get("enable_keyframe_detection", True),
+    #     #     enable_gemini_analysis=request_data.get("enable_gemini_analysis", True),
+    #     #     asr_language=request_data.get("asr_language", "auto"),
+    #     #     keyframe_threshold=request_data.get("keyframe_threshold", 0.3),
+    #     #     max_keyframes=request_data.get("max_keyframes", 50),
+    #     #     gemini_model=request_data.get("gemini_model", "gemini-2.5-pro"),
+    #     #     gemini_prompt=request_data.get("gemini_prompt"),
+    #     # )
 
-        # Create orchestrator
-        orchestrator = VideoAnalysisOrchestrator(config)
+    #     # Create orchestrator
+    #     # orchestrator = VideoAnalysisOrchestrator(config)
 
-        # Run analysis (sync wrapper for async)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(
-                orchestrator.analyze_video(
-                    request_data["video_path"],
-                    request_data.get("output_dir")
-                )
-            )
-        finally:
-            loop.close()
+    #     # Run analysis (sync wrapper for async)
+    #     loop = asyncio.new_event_loop()
+    #     asyncio.set_event_loop(loop)
+    #     try:
+    #         result = loop.run_until_complete(
+    #             orchestrator.analyze_video(
+    #                 request_data["video_path"],
+    #                 request_data.get("output_dir")
+    #             )
+    #         )
+    #     finally:
+    #         loop.close()
 
-        # Convert result to dict
-        result_dict = result.model_dump()
+    #     # Convert result to dict
+    #     result_dict = result.model_dump()
 
-        logger.info(f"Video analysis completed for task {task_id}")
+    #     logger.info(f"Video analysis completed for task {task_id}")
 
-        # Send result via callback
-        if callback_url:
-            try:
-                response = requests.post(
-                    callback_url,
-                    json={
-                        "taskId": task_id,
-                        "status": "completed",
-                        "result": result_dict
-                    }
-                )
-                if response.ok:
-                    logger.info(f"Callback successful for task {task_id}")
-                else:
-                    logger.error(f"Callback failed: {response.status_code} - {response.text}")
-            except Exception as e:
-                logger.error(f"Failed to send callback: {e}")
+    #     # Send result via callback
+    #     if callback_url:
+    #         try:
+    #             response = requests.post(
+    #                 callback_url,
+    #                 json={
+    #                     "taskId": task_id,
+    #                     "status": "completed",
+    #                     "result": result_dict
+    #                 }
+    #             )
+    #             if response.ok:
+    #                 logger.info(f"Callback successful for task {task_id}")
+    #             else:
+    #                 logger.error(f"Callback failed: {response.status_code} - {response.text}")
+    #         except Exception as e:
+    #             logger.error(f"Failed to send callback: {e}")
 
-    except Exception as e:
-        import traceback
-        logger.error(f"Video analysis failed for task {task_id}: {e}")
-        logger.debug(traceback.format_exc())
+    # except Exception as e:
+    #     import traceback
+    #     logger.error(f"Video analysis failed for task {task_id}: {e}")
+    #     logger.debug(traceback.format_exc())
 
-        # Send error via callback
-        if callback_url:
-            try:
-                requests.post(
-                    callback_url,
-                    json={
-                        "taskId": task_id,
-                        "status": "failed",
-                        "error": str(e)
-                    }
-                )
-            except Exception as callback_error:
-                logger.error(f"Failed to send error callback: {callback_error}")
+    #     # Send error via callback
+    #     if callback_url:
+    #         try:
+    #             requests.post(
+    #                 callback_url,
+    #                 json={
+    #                     "taskId": task_id,
+    #                     "status": "failed",
+    #                     "error": str(e)
+    #                 }
+    #             )
+    #         except Exception as callback_error:
+    #             logger.error(f"Failed to send error callback: {callback_error}")
 
 
 @app.post("/api/analyze-video", response_model=AnalyzeVideoResponse)
