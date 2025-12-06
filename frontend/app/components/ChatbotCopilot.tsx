@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PaperPlaneRight, CaretLeft, CaretRight, Sparkle, Plus, ClockCounterClockwise } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
@@ -77,6 +77,11 @@ export default function ChatbotCopilot({
     const [showHistory, setShowHistory] = useState(false);
     const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
 
+    // Typewriter effect state
+    const [isTyping, setIsTyping] = useState(false);
+    const textQueueRef = useRef<string>('');
+    const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
     const handleNewSession = () => {
         const newThreadId = Date.now().toString();
         if (messages.length > 0 || displayItems.length > 0) {
@@ -101,6 +106,64 @@ export default function ChatbotCopilot({
             })));
         }
     }, [initialMessages]);
+
+    // Typewriter effect processor
+    const processTypewriterQueue = useCallback(() => {
+        if (typewriterIntervalRef.current) return; // Already running
+
+        setIsTyping(true);
+        // Faster tick for smoother updates
+        const TICK_DELAY = 10;
+
+        typewriterIntervalRef.current = setInterval(() => {
+            if (textQueueRef.current.length === 0) {
+                if (typewriterIntervalRef.current) {
+                    clearInterval(typewriterIntervalRef.current);
+                    typewriterIntervalRef.current = null;
+                }
+                setIsTyping(false);
+                return;
+            }
+
+            // Adaptive speed: if queue is long, render more chars per tick to catch up
+            // Base speed: 1 char per 10ms (100 chars/sec)
+            // If queue > 50 chars, speed up significantly
+            const queueLength = textQueueRef.current.length;
+            let charsToRender = 1;
+
+            if (queueLength > 100) {
+                charsToRender = 5; // Very fast catchup
+            } else if (queueLength > 50) {
+                charsToRender = 3; // Fast catchup
+            } else if (queueLength > 20) {
+                charsToRender = 2; // Moderate catchup
+            }
+
+            const chunk = textQueueRef.current.slice(0, charsToRender);
+            textQueueRef.current = textQueueRef.current.slice(charsToRender);
+
+            setDisplayItems(items => {
+                const lastItem = items[items.length - 1];
+                if (lastItem && lastItem.type === 'message' && lastItem.role === 'assistant') {
+                    return items.map((item, index) =>
+                        index === items.length - 1
+                            ? { ...item, content: item.content + chunk }
+                            : item
+                    );
+                }
+                return items;
+            });
+        }, TICK_DELAY);
+    }, []);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (typewriterIntervalRef.current) {
+                clearInterval(typewriterIntervalRef.current);
+            }
+        };
+    }, []);
 
     // Sync useChat messages to display items (if not in demo mode or mixed)
     useEffect(() => {
@@ -351,17 +414,34 @@ export default function ChatbotCopilot({
 
         const eventSource = new EventSource(url.toString());
 
+        // Track if stream ended normally to suppress error on close
+        let normalEnd = false;
+
         eventSource.onopen = () => {
             console.log('[ChatbotCopilot] SSE Stream connected successfully.');
         };
 
         eventSource.onerror = (e) => {
-            console.error('[ChatbotCopilot] SSE Stream error:', e);
-            console.error('[ChatbotCopilot] ReadyState:', eventSource.readyState);
+            // EventSource fires onerror on normal close - check if it's expected
+            if (normalEnd) {
+                console.log('[ChatbotCopilot] SSE Stream closed (expected).');
+                return;
+            }
+
+            // Check readyState to determine if this is a real error
             if (eventSource.readyState === EventSource.CLOSED) {
                 console.log('[ChatbotCopilot] SSE Stream closed.');
+                eventSource.close();
+            } else if (eventSource.readyState === EventSource.CONNECTING) {
+                console.log('[ChatbotCopilot] SSE Stream reconnecting...');
+                // Don't close, let it retry
+            } else {
+                console.warn('[ChatbotCopilot] SSE Stream unexpected state:', {
+                    readyState: eventSource.readyState,
+                    url: url.toString()
+                });
+                eventSource.close();
             }
-            eventSource.close();
         };
 
         eventSource.addEventListener('plan', (e: any) => {
@@ -418,14 +498,23 @@ export default function ChatbotCopilot({
                         }
                     });
                 } else {
+                    // Main agent thinking - merge consecutive thinking blocks into one
                     setDisplayItems(prev => {
                         const lastItem = prev[prev.length - 1];
-                        if (lastItem && lastItem.type === 'thinking') {
-                            return prev.map(item => item.id === lastItem.id ? { ...item, content: item.content + '\n' + data.content } : item);
+                        // Check if last item is a thinking block AND from the same agent
+                        if (lastItem && lastItem.type === 'thinking' && lastItem.agent === agentName) {
+                            // Append to existing thinking block
+                            return prev.map((item, index) =>
+                                index === prev.length - 1
+                                    ? { ...item, content: item.content + '\n' + data.content }
+                                    : item
+                            );
                         } else {
+                            // Create new thinking block
                             return [...prev, {
                                 type: 'thinking',
                                 id: Date.now().toString() + '-thinking',
+                                agent: agentName, // Track which agent this thinking belongs to
                                 content: data.content
                             }];
                         }
@@ -437,52 +526,28 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('text', (e: any) => {
-            console.log('[ChatbotCopilot] Received text:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                const agent = data.agent || 'Assistant';
+                // Only process assistant messages
+                if (data.agent && data.agent !== 'User') {
+                    // Ensure we have an assistant message bubble
+                    setDisplayItems(prev => {
+                        const lastItem = prev[prev.length - 1];
+                        if (!lastItem || lastItem.type !== 'message' || lastItem.role !== 'assistant') {
+                            return [...prev, {
+                                type: 'message',
+                                role: 'assistant',
+                                content: '', // Start empty, filled by typewriter
+                                id: Date.now().toString()
+                            }];
+                        }
+                        return prev;
+                    });
 
-                // Director text → main chat stream
-                if (agent === 'Director') {
-                    setDisplayItems(prev => [...prev, {
-                        type: 'message',
-                        role: 'assistant',
-                        content: data.content,
-                        id: Date.now().toString()
-                    }]);
-                    return;
+                    // Add to queue and start processing
+                    textQueueRef.current += data.content;
+                    processTypewriterQueue();
                 }
-
-                // Non-Director: try to attach to agent card; fallback to chat bubble tagged with agent.
-                setDisplayItems(prev => {
-                    const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === agent);
-                    if (existingIndex !== -1) {
-                        return prev.map((item, index) => {
-                            if (index === existingIndex) {
-                                return {
-                                    ...item,
-                                    props: {
-                                        ...item.props,
-                                        logs: [...(item.props.logs || []), {
-                                            id: data.id || Date.now().toString(),
-                                            type: 'text',
-                                            content: <div className="text-slate-800">{data.content}</div>
-                                        }]
-                                    }
-                                };
-                            }
-                            return item;
-                        });
-                    }
-
-                    // Fallback: render as assistant message with agent label.
-                    return [...prev, {
-                        type: 'message',
-                        role: 'assistant',
-                        content: `[${agent}] ${data.content}`,
-                        id: Date.now().toString()
-                    }];
-                });
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing text event:', err);
             }
@@ -687,6 +752,7 @@ export default function ChatbotCopilot({
 
         eventSource.addEventListener('retry', () => {
             console.log('[ChatbotCopilot] Received retry event. Retrying in 2s...');
+            normalEnd = true; // Suppress error on close
             eventSource.close();
             setTimeout(() => {
                 // Resume stream (syncs new context)
@@ -694,8 +760,43 @@ export default function ChatbotCopilot({
             }, 2000);
         });
 
+        eventSource.addEventListener('workflow_error', (e: any) => {
+            console.error('[ChatbotCopilot] Received workflow_error event:', e.data);
+            try {
+                const data = JSON.parse(e.data);
+                setDisplayItems(prev => [...prev, {
+                    type: 'message',
+                    role: 'assistant',
+                    content: `Error: ${data.message}`,
+                    id: Date.now().toString()
+                }]);
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing workflow_error event:', err);
+            }
+            normalEnd = true;
+            eventSource.close();
+        });
+
+        eventSource.addEventListener('error', (e: Event) => {
+            // This captures native EventSource connection errors
+            if (normalEnd) {
+                console.log('[ChatbotCopilot] SSE Stream closed (expected).');
+                return;
+            }
+
+            console.warn('[ChatbotCopilot] SSE Stream connection error:', e);
+            // Don't parse e.data here as it's a native event
+
+            if (eventSource.readyState === EventSource.CLOSED) {
+                console.log('[ChatbotCopilot] SSE Stream closed.');
+            } else if (eventSource.readyState === EventSource.CONNECTING) {
+                console.log('[ChatbotCopilot] SSE Stream reconnecting...');
+            }
+        });
+
         eventSource.addEventListener('end', () => {
             console.log('[ChatbotCopilot] Received end event. Closing stream.');
+            normalEnd = true;
             eventSource.close();
         });
 

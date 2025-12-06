@@ -13,7 +13,7 @@ from .asr import AudioTranscriber
 from .gemini_video import GeminiVideoAnalyzer
 from .keyframes import KeyframeDetector
 from .models import VideoAnalysisConfig, VideoAnalysisResult
-from .orchestrator import VideoAnalysisOrchestrator
+# from .orchestrator import VideoAnalysisOrchestrator
 from .subtitles import SubtitleExtractor
 
 # 高级关键帧检测器（可选）
@@ -44,7 +44,7 @@ __all__ = [
     "PySceneDetectKeyframeDetector",
     "CLIPKeyframeDetector",
     "GeminiVideoAnalyzer",
-    "VideoAnalysisOrchestrator",
+    # "VideoAnalysisOrchestrator",
     "VideoAnalysisConfig",
     "VideoAnalysisResult",
 ]
