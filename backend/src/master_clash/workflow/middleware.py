@@ -300,7 +300,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         def read_canvas_node(
             node_id: str,
             runtime: ToolRuntime,
-        ) -> Any:
+        ) -> list[str | dict]:
             """Read a specific node's detailed data."""
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -317,7 +317,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 data = node.data or {}
                 name = data.get("label") or data.get("name") or node.id
                 description = data.get("description") or data.get("content") or ""
-                text_part = {"type": "text", "text": f"{name}: {description}" if description else name}
+                text_part = {"type": "text", "text": f"{name}: {description} type: {node.type}" if description else name}
 
                 # If the node is an image/video, return straightforward media + text parts
                 if node.type in {"image", "video"}:
@@ -355,7 +355,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                                 base64_data, mime_type = to_base64_and_mime(source, "image/jpeg")
                                 media_part = {
                                     "type": "image_url",
-                                    "image_url": f"data:{mime_type};base64,{base64_data}",
+                                    "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
                                 }
                             return [media_part, text_part]
                         except Exception:
@@ -365,13 +365,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
 
                     return [text_part]
 
-                return {
-                    "id": node.id,
-                    "type": node.type,
-                    "position": node.position,
-                    "data": data,
-                    "text": text_part,
-                }
+                return [text_part]
 
             except Exception as e:
                 return f"Error reading node: {e}"
