@@ -338,6 +338,9 @@ class StateCanvasBackend:
         elif node_type == "group":
             proposal_type = "group"
 
+        # Extract linkage hints so the frontend can auto-wire edges
+        upstream_node_ids = data.get("upstreamNodeIds") or data.get("upstreamIds")
+
         # Build proposal
         proposal = {
             "id": proposal_id,
@@ -347,6 +350,16 @@ class StateCanvasBackend:
             "groupId": parent_id,
             "message": f"Proposed {node_type} node: {data.get('label', 'Untitled')}",
         }
+        if upstream_node_ids:
+            # Deduplicate while preserving order
+            seen = set()
+            deduped = []
+            for uid in upstream_node_ids:
+                if uid and uid not in seen:
+                    seen.add(uid)
+                    deduped.append(uid)
+            if deduped:
+                proposal["upstreamNodeIds"] = deduped
 
         # Return proposal for middleware to emit via SSE
         return CreateNodeResult(

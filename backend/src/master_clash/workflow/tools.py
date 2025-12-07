@@ -44,7 +44,7 @@ def read_node(project_id: str, node_id: str) -> str:
     return json.dumps(node.data, indent=2)
 
 @tool
-def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Optional[str] = None, upstream_node_id: Optional[str] = None) -> str:
+def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Optional[str] = None, upstream_node_ids: Optional[List[str]] = None) -> str:
     """
     Creates a multimodal node on the canvas.
     
@@ -53,7 +53,7 @@ def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Opti
         type: The type of node (e.g., 'text', 'image', 'video', 'group', 'prompt', 'action-badge-image').
         data: The data for the node (e.g., content, label).
         group_id: Optional parent group ID.
-        upstream_node_id: Optional upstream node ID for connections.
+        upstream_node_ids: Optional upstream node IDs for connections.
         
     Returns:
         A JSON string representing the proposal that was sent to the UI.
@@ -90,7 +90,7 @@ def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Opti
             **data
         },
         "groupId": group_id,
-        "upstreamNodeId": upstream_node_id,
+        "upstreamNodeIds": upstream_node_ids,
         "message": f"Proposed {type} node: {data.get('label', 'Untitled')}"
     }
     

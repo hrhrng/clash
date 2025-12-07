@@ -39,33 +39,23 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
 
     // Auto-run effect
     useEffect(() => {
+        const requiredUpstreams: string[] = Array.isArray(data.upstreamNodeIds) ? data.upstreamNodeIds : [];
         console.log('[ActionBadge] useEffect triggered', {
             autoRun: data.autoRun,
-            upstreamNodeId: data.upstreamNodeId,
-            upstreamNodeIds: data.upstreamNodeIds,
+            upstreamNodeIds: requiredUpstreams,
             nodeId: id,
             edgesCount: edges.length,
             isExecuting
         });
 
         if (data.autoRun && !isExecuting) {
-            // Check for single upstream connection
-            if (data.upstreamNodeId) {
-                const hasConnection = edges.some(e => e.target === id && e.source === data.upstreamNodeId);
-                if (!hasConnection) {
-                    console.log('[ActionBadge] Waiting for upstream connection (single)...');
-                    return;
-                }
-            }
-
-            // Check for multiple upstream connections
-            if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
+            if (requiredUpstreams.length > 0) {
                 const connectedSources = edges.filter(e => e.target === id).map(e => e.source);
-                const allConnected = data.upstreamNodeIds.every((uid: string) => connectedSources.includes(uid));
+                const allConnected = requiredUpstreams.every((uid: string) => connectedSources.includes(uid));
 
                 if (!allConnected) {
-                    console.log('[ActionBadge] Waiting for upstream connections (multiple)...', {
-                        required: data.upstreamNodeIds,
+                    console.log('[ActionBadge] Waiting for upstream connections...', {
+                        required: requiredUpstreams,
                         connected: connectedSources
                     });
                     return;
@@ -81,7 +71,7 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 handleExecute();
             }, 500);
         }
-    }, [data.autoRun, edges, data.upstreamNodeId, data.upstreamNodeIds, id, isExecuting]);
+    }, [data.autoRun, edges, data.upstreamNodeIds, id, isExecuting]);
 
     // Execute action: generate image or video
     const handleExecute = async () => {

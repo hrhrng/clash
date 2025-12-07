@@ -7,7 +7,7 @@ export interface NodeProposal {
     type: 'simple' | 'generative';
     nodeType: string;
     nodeData: any;
-    upstreamNodeId?: string;
+    upstreamNodeIds?: string[];
     message: string;
 }
 
