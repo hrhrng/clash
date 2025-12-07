@@ -483,15 +483,17 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             }
 
-            console.log('[addNode] Calculating position for', nodeType, 'parentId:', parentId, 'upstream:', extraData.upstreamNodeId, 'layout:', extraData.layoutDirection);
+            const upstreamList = Array.isArray(extraData.upstreamNodeIds) ? extraData.upstreamNodeIds : [];
+            console.log('[addNode] Calculating position for', nodeType, 'parentId:', parentId, 'upstream:', upstreamList, 'layout:', extraData.layoutDirection);
 
             if (parentId) {
                 // Start at top-left of group
                 targetPos = { x: 50, y: 50 };
 
                 // 1. Upstream Node Placement (Highest Priority)
-                if (extraData.upstreamNodeId) {
-                    const upstreamNode = nds.find(n => n.id === extraData.upstreamNodeId);
+                const primaryUpstream = upstreamList[0];
+                if (primaryUpstream) {
+                    const upstreamNode = nds.find(n => n.id === primaryUpstream);
                     if (upstreamNode) {
                         // Calculate Upstream Node's Absolute Position
                         const upstreamAbsPos = getAbsolutePosition(upstreamNode, nds);

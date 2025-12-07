@@ -272,7 +272,15 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
 
                 lines = ["Canvas nodes:"]
                 for node in nodes:
-                    lines.append(f"- {node.id} ({node.type}): {node.data}")
+                    data = node.data or {}
+                    name = data.get("label") or data.get("name") or ""
+                    description = data.get("description") or ""
+
+                    line = f"- {node.id} ({node.type}): {name}" if name else f"- {node.id} ({node.type})"
+                    if description:
+                        line = f"{line} - {description}"
+
+                    lines.append(line)
                 return "\n".join(lines)
 
             except Exception as e:
@@ -292,7 +300,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         def read_canvas_node(
             node_id: str,
             runtime: ToolRuntime,
-        ) -> str:
+        ) -> Any:
             """Read a specific node's detailed data."""
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -306,7 +314,64 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 if node is None:
                     return f"Node {node_id} not found."
 
-                return f"Node {node.id}:\nType: {node.type}\nPosition: {node.position}\nData: {node.data}"
+                data = node.data or {}
+                name = data.get("label") or data.get("name") or node.id
+                description = data.get("description") or data.get("content") or ""
+                text_part = {"type": "text", "text": f"{name}: {description}" if description else name}
+
+                # If the node is an image/video, return straightforward media + text parts
+                if node.type in {"image", "video"}:
+                    from master_clash.utils import get_asset_base64
+
+                    def pick_source() -> str | None:
+                        for key in ("base64", "src", "url", "thumbnail", "poster", "cover"):
+                            value = data.get(key)
+                            if isinstance(value, str) and value:
+                                return value
+                        return None
+
+                    def to_base64_and_mime(source: str, default_mime: str) -> tuple[str, str]:
+                        if source.startswith("data:"):
+                            header, payload = source.split(",", 1)
+                            mime = header.split(":", 1)[1].split(";")[0] or default_mime
+                            return payload, mime
+                        if "base64," in source:
+                            payload = source.split("base64,", 1)[1]
+                            return payload, default_mime
+                        # Fallback: treat as URL and fetch
+                        return get_asset_base64(source)
+
+                    source = pick_source()
+                    if source:
+                        try:
+                            if node.type == "video":
+                                base64_data, mime_type = to_base64_and_mime(source, "video/mp4")
+                                media_part = {
+                                    "type": "media",
+                                    "data": base64_data,
+                                    "mime_type": mime_type,
+                                }
+                            else:
+                                base64_data, mime_type = to_base64_and_mime(source, "image/jpeg")
+                                media_part = {
+                                    "type": "image_url",
+                                    "image_url": f"data:{mime_type};base64,{base64_data}",
+                                }
+                            return [media_part, text_part]
+                        except Exception:
+                            # If conversion fails, fall back to returning raw source + text
+                            raw_part = {"type": "image_url", "image_url": source} if node.type == "image" else {"type": "media", "data": source}
+                            return [raw_part, text_part]
+
+                    return [text_part]
+
+                return {
+                    "id": node.id,
+                    "type": node.type,
+                    "position": node.position,
+                    "data": data,
+                    "text": text_part,
+                }
 
             except Exception as e:
                 return f"Error reading node: {e}"
@@ -404,17 +469,14 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
 
         class GenerationNodeData(BaseModel):
             label: str = Field(description="Display label for the node")
-            prompt: str = Field(description="Generation prompt for image/video models")
+            # prompt: str = Field(description="Generation prompt for image/video models")
             modelName: str | None = Field(default=None, description="Optional model name override")
             actionType: Literal["image-gen", "video-gen"] | None = Field(
                 default=None,
                 description="Optional override; inferred from node_type when omitted",
             )
-            upstreamNodeId: str | None = Field(
-                default=None, description="Optional single upstream node linkage"
-            )
             upstreamNodeIds: list[str] | None = Field(
-                default=None, description="Optional multiple upstream linkages"
+                default=None, description="Optional upstream node linkages, could link image node to reference or edit and prompt node as natural language instruction"
             )
 
             class Config:

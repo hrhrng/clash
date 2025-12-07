@@ -977,16 +977,22 @@ export default function ChatbotCopilot({
                     }
                 }
 
-                let resolvedUpstreamNodeId = data.upstreamNodeId;
+                // Normalize upstream links into a single list
+                const upstreamIds: string[] = Array.isArray(data.upstreamNodeIds) ? [...data.upstreamNodeIds] : [];
+
+                // Resolve any provided name hint to an ID and merge
                 if (data.upstreamNodeName) {
                     const foundId = resolveName(data.upstreamNodeName);
                     if (foundId) {
-                        resolvedUpstreamNodeId = foundId;
+                        upstreamIds.push(foundId);
                         console.log(`[ChatbotCopilot] Resolved upstreamNodeName "${data.upstreamNodeName}" to ID "${foundId}"`);
                     } else {
                         console.warn(`[ChatbotCopilot] Could not resolve upstreamNodeName "${data.upstreamNodeName}"`);
                     }
                 }
+
+                // Deduplicate while preserving order
+                const mergedUpstreamIds = Array.from(new Set(upstreamIds.filter(Boolean)));
 
                 // Define handlers
                 // Auto-Pilot Logic: ALWAYS Auto-Execute
@@ -1013,25 +1019,14 @@ export default function ChatbotCopilot({
                                 id: targetNodeId, // Pass custom ID
                                 parentId: resolvedGroupId,
                                 autoRun: true,
-                                upstreamNodeId: resolvedUpstreamNodeId,
-                                upstreamNodeIds: data.upstreamNodeIds
+                                upstreamNodeIds: mergedUpstreamIds
                             });
                         }
 
                         // Add edges
-                        if (resolvedUpstreamNodeId && onAddEdge && createdNodeId) {
+                        if (mergedUpstreamIds.length > 0 && onAddEdge && createdNodeId) {
                             setTimeout(() => {
-                                onAddEdge({
-                                    id: `e-${resolvedUpstreamNodeId}-${createdNodeId}`,
-                                    source: resolvedUpstreamNodeId,
-                                    target: createdNodeId,
-                                    type: 'default'
-                                } as any);
-                            }, 100);
-                        }
-                        if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds) && onAddEdge && createdNodeId) {
-                            setTimeout(() => {
-                                data.upstreamNodeIds.forEach((uId: string) => {
+                                mergedUpstreamIds.forEach((uId: string) => {
                                     onAddEdge({
                                         id: `e-${uId}-${createdNodeId}`,
                                         source: uId,
@@ -1058,19 +1053,13 @@ export default function ChatbotCopilot({
                                 ...data.nodeData,
                                 id: targetNodeId, // Pass custom ID
                                 parentId: resolvedGroupId,
-                                upstreamNodeIds: data.upstreamNodeIds
+                                upstreamNodeIds: mergedUpstreamIds
                             });
                         }
                         // Add edges
-                        const upstreamIds: string[] = [];
-                        if (resolvedUpstreamNodeId) upstreamIds.push(resolvedUpstreamNodeId);
-                        if (data.upstreamNodeIds && Array.isArray(data.upstreamNodeIds)) {
-                            upstreamIds.push(...data.upstreamNodeIds);
-                        }
-
-                        if (upstreamIds.length > 0 && onAddEdge && createdNodeId) {
+                        if (mergedUpstreamIds.length > 0 && onAddEdge && createdNodeId) {
                             setTimeout(() => {
-                                upstreamIds.forEach(uId => {
+                                mergedUpstreamIds.forEach(uId => {
                                     onAddEdge({
                                         id: `e-${uId}-${createdNodeId}`,
                                         source: uId,
