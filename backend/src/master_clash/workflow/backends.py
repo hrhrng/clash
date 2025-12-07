@@ -37,6 +37,7 @@ class CreateNodeResult:
     node_id: str | None = None
     error: str | None = None
     proposal: dict[str, Any] | None = None  # SSE proposal data
+    asset_id: str | None = None  # Pre-allocated asset ID for generation nodes
 
 
 @dataclass
@@ -328,13 +329,18 @@ class StateCanvasBackend:
         # Map types for frontend
         frontend_type = node_type
         proposal_type = "simple"
+        asset_id = None
 
         if node_type == "image_gen":
             frontend_type = "action-badge-image"
             proposal_type = "generative"
+            # Pre-allocate asset ID for generation nodes
+            asset_id = generate_unique_id_for_project(project_id, checker)
         elif node_type == "video_gen":
             frontend_type = "action-badge-video"
             proposal_type = "generative"
+            # Pre-allocate asset ID for generation nodes
+            asset_id = generate_unique_id_for_project(project_id, checker)
         elif node_type == "group":
             proposal_type = "group"
 
@@ -350,6 +356,12 @@ class StateCanvasBackend:
             "groupId": parent_id,
             "message": f"Proposed {node_type} node: {data.get('label', 'Untitled')}",
         }
+
+        # Add assetId to proposal for generation nodes
+        if asset_id:
+            proposal["assetId"] = asset_id
+            proposal["nodeData"]["assetId"] = asset_id
+
         if upstream_node_ids:
             # Deduplicate while preserving order
             seen = set()
@@ -366,6 +378,7 @@ class StateCanvasBackend:
             node_id=node_id,
             error=None,
             proposal=proposal,
+            asset_id=asset_id,
         )
 
     def update_node(

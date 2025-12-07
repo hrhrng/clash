@@ -673,6 +673,23 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         return newNodeId;
     };
 
+    const updateNode = useCallback((nodeId: string, updates: Partial<Node>) => {
+        setNodes((nds) =>
+            nds.map((node) => {
+                if (node.id !== nodeId) return node;
+                return {
+                    ...node,
+                    ...updates,
+                    // Merge data so callers can update nested props like autoRun/preAllocatedAssetId
+                    data: {
+                        ...(node.data || {}),
+                        ...(updates.data || {}),
+                    },
+                };
+            })
+        );
+    }, [setNodes]);
+
     const handleToolClick = (type: string) => {
         if (['image', 'video', 'audio'].includes(type)) {
             setPendingNodeType(type);
@@ -1089,6 +1106,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                         selectedNodes={selectedNodes}
                                         onAddNode={addNode}
                                         onAddEdge={onConnect}
+                                        onUpdateNode={updateNode}
                                         findNodeIdByName={findNodeIdByName}
                                         nodes={nodes}
                                         edges={edges}

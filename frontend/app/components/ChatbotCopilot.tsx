@@ -36,6 +36,7 @@ interface ChatbotCopilotProps {
     selectedNodes?: Node[];
     onAddNode?: (type: string, extraData?: any) => string;
     onAddEdge?: (params: Edge | Connection) => void;
+    onUpdateNode?: (nodeId: string, updates: Partial<Node>) => void;
     findNodeIdByName?: (name: string) => string | undefined;
     nodes?: Node[];
     edges?: Edge[];
@@ -53,6 +54,7 @@ export default function ChatbotCopilot({
     selectedNodes = [],
     onAddNode,
     onAddEdge,
+    onUpdateNode,
     findNodeIdByName,
     nodes = [],
     edges = [],
@@ -1009,6 +1011,8 @@ export default function ChatbotCopilot({
                 const executeProposal = () => {
                     // Determine Node ID: Use data.nodeData.id if present (preferred), else data.id (proposal id? maybe not), else undefined
                     const targetNodeId = data.nodeData?.id;
+                    // Extract pre-allocated assetId from proposal (if available)
+                    const preAllocatedAssetId = data.assetId || data.nodeData?.assetId;
 
                     if (data.nodeType === 'action-badge-image' || data.nodeType === 'action-badge-video') {
                         // Handle Accept and Run
@@ -1019,7 +1023,9 @@ export default function ChatbotCopilot({
                                 id: targetNodeId, // Pass custom ID
                                 parentId: resolvedGroupId,
                                 autoRun: true,
-                                upstreamNodeIds: mergedUpstreamIds
+                                upstreamNodeIds: mergedUpstreamIds,
+                                // Pass pre-allocated assetId to ActionBadge
+                                preAllocatedAssetId: preAllocatedAssetId
                             });
                         }
 
@@ -1088,6 +1094,65 @@ export default function ChatbotCopilot({
 
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing node_proposal event:', err);
+            }
+        });
+
+        // Handle rerun_generation_node events
+        eventSource.addEventListener('rerun_generation_node', (e: any) => {
+            hasReceivedData = true;
+            try {
+                const data = JSON.parse(e.data);
+                console.log('[ChatbotCopilot] Received rerun_generation_node:', data);
+
+                const { nodeId, assetId, nodeData } = data;
+
+                if (!nodeId || !assetId) {
+                    console.error('[ChatbotCopilot] Missing nodeId or assetId in rerun_generation_node event');
+                    return;
+                }
+
+                // Find the ActionBadge node and trigger re-execution
+                console.log('[ChatbotCopilot] Current nodes:', nodes.map((n: any) => ({ id: n.id, type: n.type, actionType: n.data?.actionType })));
+                console.log('[ChatbotCopilot] Looking for nodeId:', nodeId);
+
+                const targetNode = nodes.find((n: any) => n.id === nodeId);
+
+                if (!targetNode) {
+                    console.error(`[ChatbotCopilot] Node ${nodeId} not found`);
+                    console.error('[ChatbotCopilot] Available node IDs:', nodes.map((n: any) => n.id));
+                    return;
+                }
+
+                // Check if it's an action-badge node with actionType
+                if (targetNode.type !== 'action-badge') {
+                    console.error(`[ChatbotCopilot] Node ${nodeId} is not an action-badge node (type: ${targetNode.type})`);
+                    return;
+                }
+
+                const actionType = targetNode.data?.actionType;
+                if (actionType !== 'image-gen' && actionType !== 'video-gen') {
+                    console.error(`[ChatbotCopilot] Node ${nodeId} is not a generation node (actionType: ${actionType})`);
+                    return;
+                }
+
+                console.log(`[ChatbotCopilot] Triggering regeneration for node ${nodeId} with assetId ${assetId}`);
+
+                // Update the node to trigger regeneration
+                // We set preAllocatedAssetId and autoRun to trigger the ActionBadge's useEffect
+                if (onUpdateNode) {
+                    onUpdateNode(nodeId, {
+                        data: {
+                            ...targetNode.data,
+                            preAllocatedAssetId: assetId,
+                            autoRun: true, // Trigger auto-run
+                        }
+                    });
+                } else {
+                    console.error('[ChatbotCopilot] onUpdateNode callback not provided');
+                }
+
+            } catch (err) {
+                console.error('[ChatbotCopilot] Error parsing rerun_generation_node event:', err);
             }
         });
     };
