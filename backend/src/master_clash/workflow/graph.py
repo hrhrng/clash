@@ -19,9 +19,9 @@ from master_clash.workflow.middleware import (
     AgentState,
     CanvasMiddleware,
     TimelineMiddleware,
-    TodoListMiddleware,
 )
 from master_clash.workflow.subagents import SubAgent, SubAgentMiddleware
+from langchain.agents import create_agent
 
 
 def create_agent_with_middleware(
@@ -54,57 +54,14 @@ def create_agent_with_middleware(
         middleware = _create_default_middleware(backend, subagents)
 
     # Collect all tools from middleware
-    all_tools = list(tools)
 
-    # Apply middleware to collect tools (simplified version)
-    # In a full implementation, middleware would wrap model/tool calls
-    for mw in middleware:
-        if isinstance(mw, CanvasMiddleware):
-            all_tools.extend(mw._generate_canvas_tools())
-        elif isinstance(mw, TimelineMiddleware):
-            all_tools.extend(mw._generate_timeline_tools())
-        elif isinstance(mw, TodoListMiddleware):
-            all_tools.extend(mw._generate_todo_tools())
-        elif isinstance(mw, SubAgentMiddleware):
-            all_tools.append(mw._create_task_tool())
-
-    # Create agent using manual StateGraph to support custom state schema
-    workflow = StateGraph(AgentState)
-
-    # Bind tools to model
-    model_with_tools = model.bind_tools(all_tools)
-
-    def call_model(state: AgentState):
-        messages = state["messages"]
-        if system_prompt:
-            # Add system prompt if not present
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=system_prompt)] + messages
-        
-        response = model_with_tools.invoke(messages)
-        return {"messages": [response]}
-
-    def should_continue(state: AgentState):
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools"
-        return END
-
-    workflow.add_node("agent", call_model)
-    workflow.add_node("tools", ToolNode(all_tools))
-
-    workflow.set_entry_point("agent")
-
-    workflow.add_conditional_edges(
-        "agent",
-        should_continue,
-        ["tools", END]
+    return create_agent(
+        model=model,
+        tools=tools,
+        middleware=middleware,
+        system_prompt=system_prompt,
+        checkpointer=checkpointer
     )
-
-    workflow.add_edge("tools", "agent")
-
-    return workflow.compile(checkpointer=checkpointer)
 
 
 def _create_default_middleware(
@@ -123,7 +80,6 @@ def _create_default_middleware(
     backend = backend or StateCanvasBackend()
 
     middleware: list[AgentMiddleware] = [
-        TodoListMiddleware(),
         CanvasMiddleware(backend=backend),
     ]
 
@@ -168,12 +124,12 @@ Available agents: {', '.join(agent_names)}
 ## Your Workflow:
 
 1. **Organize Work**: Create workspace groups for organizing related tasks
-   - Use `create_workspace_group` to create groups
-   - Use `list_workspace_groups` to see existing groups
+   - Use `create_canvas_node` to create groups
+   - Use `list_canvas_nodes` to see existing groups
 
 2. **Delegate Tasks**: Assign work to specialists
    - Use `task_delegation` to assign work
-   - Pass `workspace_group_id` to scope their work to a specific group
+   - Pass `workspace_group_id` to scope their work to a specific group, create a group if neccesary
    - Provide clear instructions and context
 
 3. **Simple Tasks**: You can also handle simple tasks directly using canvas tools

@@ -41,11 +41,13 @@ export async function createProject(prompt: string) {
     const [project] = await db.insert(projects).values({
         name: prompt.length > 20 ? prompt.substring(0, 20) + '...' : prompt,
         description: prompt,
-        nodes: [], // Start with empty canvas or generate initial state based on prompt
+        nodes: [], // Start with empty canvas
         edges: [],
     }).returning();
 
-    redirect(`/projects/${project.id}`);
+    // Simple approach: Pass prompt via URL parameter
+    // ChatbotCopilot will send it as a normal message
+    redirect(`/projects/${project.id}?prompt=${encodeURIComponent(prompt)}`);
 }
 
 export async function getProjects() {

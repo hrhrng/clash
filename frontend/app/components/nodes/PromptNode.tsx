@@ -122,7 +122,7 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
                     </div>
 
                     {/* Editor Content */}
-                    <div className="flex-1 overflow-hidden bg-white">
+                    <div className="flex-1 overflow-y-auto bg-white">
                         <MilkdownEditor value={content} onChange={setContent} />
                     </div>
                 </motion.div>
@@ -150,9 +150,8 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
                 </div>
 
                 {/* Main Card - Smaller height and different styling */}
-                <div className={`w-full h-full bg-gradient-to-br from-blue-50 to-cyan-50 rounded-matrix flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl ${
-                    selected ? 'ring-4 ring-blue-500 ring-offset-2' : 'ring-1 ring-blue-200'
-                }`}>
+                <div className={`w-full h-full bg-blue-50 rounded-matrix flex flex-col overflow-hidden transition-all duration-300 hover:shadow-xl ${selected ? 'ring-4 ring-blue-500 ring-offset-2' : 'ring-1 ring-blue-200'
+                    }`}>
                     {/* Card Content */}
                     <div className="flex-1 p-6 flex flex-col relative">
                         {/* Content Preview with Fade Out */}

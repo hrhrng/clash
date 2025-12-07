@@ -216,33 +216,41 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 );
 
                 if (!newNode) {
-                    console.error('Failed to create image node with auto-layout');
-                    return;
+                    throw new Error('Failed to create image node.');
                 }
 
-                // CRITICAL FIX: Update THIS ActionBadge node with the assetId so the backend can poll it
-                // We use setNodes to ensure the state change propagates to ProjectEditor -> ChatbotCopilot -> Backend
-                setNodes((nds) => nds.map((n) => {
-                    if (n.id === id) {
-                        return {
-                            ...n,
-                            data: {
-                                ...n.data,
-                                assetId: asset.id, // Store the generated asset ID
-                                status: 'success'
-                            }
-                        };
-                    }
-                    return n;
-                }));
+                // CRITICAL FIX: Update THIS ActionBadge node with the assetId
+                // Use setTimeout to ensure this runs AFTER the ImageNode has been added to avoid race condition
+                setTimeout(() => {
+                    console.log('[ActionBadge] Updating ActionBadge node with assetId:', asset.id);
+                    setNodes((nds) => {
+                        console.log('[ActionBadge] setNodes callback - current nodes count:', nds.length);
+                        const hasImageNode = nds.some(n => n.id === asset.id);
+                        console.log('[ActionBadge] ImageNode exists in state:', hasImageNode);
 
-                // 4. Connect the action node to the new image node
-                addEdges({
-                    id: `${id}-${asset.id}`,
-                    source: id,
-                    target: asset.id,
-                    type: 'default',
-                });
+                        return nds.map((n) => {
+                            if (n.id === id) {
+                                return {
+                                    ...n,
+                                    data: {
+                                        ...n.data,
+                                        assetId: asset.id, // Store the generated asset ID
+                                        status: 'success'
+                                    }
+                                };
+                            }
+                            return n;
+                        });
+                    });
+
+                    // 4. Connect the action node to the new image node
+                    addEdges({
+                        id: `${id}-${asset.id}`,
+                        source: id,
+                        target: asset.id,
+                        type: 'default',
+                    });
+                }, 100);
 
             } else if (actionType === 'video-gen') {
                 // Collect connected images for video generation

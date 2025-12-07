@@ -13,16 +13,16 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+
 from master_clash.config import get_settings
 from master_clash.workflow.backends import StateCanvasBackend
 from master_clash.workflow.graph import create_supervisor_agent
 from master_clash.workflow.middleware import (
     CanvasMiddleware,
     TimelineMiddleware,
-    TodoListMiddleware,
 )
 from master_clash.workflow.subagents import create_specialist_agents
-
+import vertexai
 
 
 class AsyncChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
@@ -83,18 +83,33 @@ class AsyncChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
             # Small delay to allow frontend to render incrementally
             # await asyncio.sleep(0.05)  # 50ms delay between chunks
 
+from langchain_google_vertexai import ChatVertexAI
+from google.genai import Client
+import os
 
 def create_default_llm() -> AsyncChatGoogleGenerativeAI:
     """Create the default Gemini client used across agents."""
     settings = get_settings()
-    return AsyncChatGoogleGenerativeAI(
-        model="gemini-2.5-pro",
-        base_url=settings.google_ai_studio_base_url,
-        transport="rest",
+#     client = Client(
+#       vertexai=True,
+#       api_key=os.environ.get("GOOGLE_CLOUD_API_KEY"),
+#   )
+    from google.auth.credentials import Credentials
+    # vertexai.init()
+    return ChatVertexAI(
+        model_name="gemini-2.5-pro",
         include_thoughts=True,
         thinking_budget=1000,
         streaming=True
     )
+    # return ChatGoogleGenerativeAI(
+    #     model="gemini-2.5-pro",
+    #     # transport="rest",
+    #     include_thoughts=True,
+    #     thinking_budget=1000,
+    #     streaming=True,
+    #     client_options={"vertexai": True, "api_key": os.environ.get("GOOGLE_CLOUD_API_KEY")}
+    # )
 
 
 def create_multi_agent_workflow(llm: AsyncChatGoogleGenerativeAI | None = None):

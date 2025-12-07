@@ -8,7 +8,7 @@ export interface ToolCallProps {
     toolName: string;
     args: any;
     result?: any;
-    status: 'pending' | 'success' | 'error';
+    status: 'pending' | 'success' | 'error' | 'failed';
     isExpanded?: boolean;
     indent?: boolean;
 }
@@ -20,6 +20,7 @@ export function ToolCall({ toolName, args, result, status, isExpanded: initialEx
         pending: { icon: CircleNotch, color: 'text-blue-500', animate: true },
         success: { icon: Check, color: 'text-green-500', animate: false },
         error: { icon: X, color: 'text-red-500', animate: false },
+        failed: { icon: X, color: 'text-red-500', animate: false },
     };
 
     const config = statusConfig[status];

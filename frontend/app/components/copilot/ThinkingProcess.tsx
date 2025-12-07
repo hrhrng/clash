@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CaretDown, CaretRight, Sparkle } from '@phosphor-icons/react';
+import ReactMarkdown from 'react-markdown';
 
 interface ThinkingProcessProps {
     content: string;
@@ -41,8 +42,8 @@ export function ThinkingProcess({ content, isExpanded: initialExpanded = false }
                         className="overflow-hidden"
                     >
                         <div className="pl-2 ml-2.5 border-l-2 border-slate-100 py-2 mt-1">
-                            <div className="text-sm text-slate-500 leading-relaxed whitespace-pre-wrap font-mono bg-slate-50/50 p-3 rounded-lg border border-slate-100">
-                                {content}
+                            <div className="text-sm text-slate-500 leading-relaxed font-mono bg-slate-50/50 p-3 rounded-lg border border-slate-100 prose prose-sm max-w-none">
+                                <ReactMarkdown>{content}</ReactMarkdown>
                             </div>
                         </div>
                     </motion.div>

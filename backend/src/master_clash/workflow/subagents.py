@@ -8,18 +8,14 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Callable, Sequence
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool, InjectedToolCallId
 from langgraph.prebuilt import InjectedState
 
-from master_clash.workflow.middleware import (
-    AgentMiddleware,
-    AgentState,
-    ModelRequest,
-    ModelResponse,
-    ToolRuntime,
-)
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.tools import BaseTool, ToolRuntime
+from langchain_core.callbacks.manager import adispatch_custom_event
 
 import logging
 
@@ -69,6 +65,9 @@ class SubAgentMiddleware(AgentMiddleware):
         self.subagents = subagents
         self.general_purpose_agent = general_purpose_agent
         self._compiled_agents: dict[str, CompiledGraph] = {}
+        # Keep tools as a list so middleware_tools iteration doesn't treat
+        # a single BaseTool as an iterable of key/value tuples (pydantic __iter__).
+        self.tools = [self._create_task_tool()]
 
     def wrap_model_call(
         self,
@@ -77,10 +76,6 @@ class SubAgentMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         """Add task delegation tool to the model request."""
         # Generate task tool
-        task_tool = self._create_task_tool()
-
-        # Merge with existing tools
-        request.tools = [*request.tools, task_tool]
 
         # Add delegation-specific system prompt
         agent_names = [
@@ -97,11 +92,42 @@ Use the task_delegation tool to assign work:
 Sub-agents have isolated context and their own tools.
 """
         if request.system_prompt:
-            request.system_prompt = f"{request.system_prompt}\n\n{delegation_prompt}"
+            system_prompt = f"{request.system_prompt}\n\n{delegation_prompt}"
         else:
-            request.system_prompt = delegation_prompt
+            system_prompt = delegation_prompt
 
-        return handler(request)
+        return handler(request.override(system_prompt=system_prompt))
+    
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        """Add task delegation tool to the model request."""
+        # Generate task tool
+
+        # Add delegation-specific system prompt
+        agent_names = [
+            agent.name for agent in self.subagents
+        ]
+        delegation_prompt = f"""
+You can delegate tasks to specialized sub-agents: {', '.join(agent_names)}
+
+Use the task_delegation tool to assign work:
+- agent: Name of the sub-agent
+- instruction: Clear task description
+- context: Optional context data to pass
+
+Sub-agents have isolated context and their own tools.
+"""
+        if request.system_prompt:
+            system_prompt = f"{request.system_prompt}\n\n{delegation_prompt}"
+        else:
+            system_prompt = delegation_prompt
+
+        return await handler(request.override(system_prompt=system_prompt))
+    
+    
 
     def _create_task_tool(self) -> BaseTool:
         """Create the task delegation tool."""
@@ -113,22 +139,19 @@ Sub-agents have isolated context and their own tools.
         async def task_delegation(
             agent: str,
             instruction: str,
+            runtime: ToolRuntime,
+            config: RunnableConfig,
             workspace_group_id: str | None = None,
             context: dict[str, Any] | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
-            """Delegate a task to a specialized sub-agent.
+            """Delegate a task to a specialized sub-agent and execute util the sub-agent finish.
 
             Args:
                 agent: Name of the sub-agent to use
                 instruction: Clear task description
-                workspace_group_id: Optional group ID to scope the agent's work
-                context: Optional context data (e.g., node IDs)
-                state: Injected agent state
-                config: Injected config
-                tool_call_id: Injected tool call ID
+                workspace_group_id: Optional group node ID to scope the agent's work
+                config: Runnable config for callbacks
+
 
             Returns:
                 Result from the sub-agent
@@ -138,12 +161,6 @@ Sub-agents have isolated context and their own tools.
                 logger.debug(f"Instruction: {instruction}")
                 logger.debug(f"Workspace: {workspace_group_id}")
                 logger.debug(f"Context: {context}")
-                
-                if state is None:
-                    logger.error("Runtime context is missing")
-                    return "Error: Runtime context required"
-
-                runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
                 # Handle potential runtime type mismatch (e.g. if passed as dict by LLM)
                 project_id = ""
@@ -225,10 +242,10 @@ Sub-agents have isolated context and their own tools.
             return self._compiled_agents[subagent.name]
 
         # Import here to avoid circular dependency
-        from master_clash.workflow.graph import create_agent_with_middleware
+        from langchain.agents import create_agent
 
         # Compile the sub-agent with its middleware
-        graph = create_agent_with_middleware(
+        graph = create_agent(
             model=subagent.model,
             tools=subagent.tools,
             system_prompt=subagent.system_prompt,

@@ -32,10 +32,8 @@ import ChatbotCopilot from './ChatbotCopilot';
 import { saveProjectState, updateProjectName } from '../actions';
 import VideoNode from './nodes/VideoNode';
 import ImageNode from './nodes/ImageNode';
-import ImageGenNode from './nodes/ImageGenNode';
 import TextNode from './nodes/TextNode';
 import PromptNode from './nodes/PromptNode';
-import ContextNode from './nodes/ContextNode';
 import AudioNode from './nodes/AudioNode';
 import ActionBadge from './nodes/ActionBadge';
 import GroupNode from './nodes/GroupNode';
@@ -49,15 +47,15 @@ import { generateSemanticId } from '../utils/semanticId';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
+    initialPrompt?: string;
 }
 
 const nodeTypes = {
     video: VideoNode,
     image: ImageNode,
-    'image-gen': ImageGenNode,
     text: TextNode,
     prompt: PromptNode,
-    context: ContextNode,
+    context: TextNode, // Remap context to TextNode
     audio: AudioNode,
     'action-badge': ActionBadge,
     group: GroupNode,
@@ -78,7 +76,7 @@ const sanitizeNodes = (nodes: Node[]): Node[] => {
     });
 };
 
-export default function ProjectEditor({ project }: ProjectEditorProps) {
+export default function ProjectEditor({ project, initialPrompt }: ProjectEditorProps) {
     // Initialize with data from DB, or defaults if empty
     // Sanitize initial nodes to prevent crashes if DB has bad data
     const rawInitialNodes = (project.nodes as unknown as Node[]) || [];
@@ -363,7 +361,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
 
     const assetTools = [
         { id: 'prompt', label: 'Prompt', icon: ChatText },
-        { id: 'context', label: 'Context', icon: Article },
+        // Context merged into TextNode
         { id: 'image', label: 'Image', icon: ImageIcon },
         { id: 'video', label: 'Video', icon: FilmSlate },
         { id: 'audio', label: 'Audio', icon: SpeakerHigh },
@@ -391,7 +389,10 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
         } else if (type === 'prompt') {
             nodeData = { label: 'Prompt', content: '# Prompt\nEnter your prompt here...', ...nodeData };
         } else if (type === 'context') {
+            // Remap context creation to text node style but keep label if needed, or just treat as text
             nodeData = { label: 'Context', content: '# Context\nAdd background information here...', ...nodeData };
+            // Note: We are using TextNode component for 'context' type now (via nodeTypes map), 
+            // so it will render as a TextNode.
         } else if (type === 'video-editor') {
             nodeData = { label: 'Video Editor', inputs: [], ...nodeData };
         }
@@ -1089,6 +1090,7 @@ export default function ProjectEditor({ project }: ProjectEditorProps) {
                                         findNodeIdByName={findNodeIdByName}
                                         nodes={nodes}
                                         edges={edges}
+                                        initialPrompt={initialPrompt}
                                     />
                                 </div>
                             </div>
