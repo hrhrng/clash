@@ -146,6 +146,7 @@ export async function sendMessage(projectId: string, content: string) {
 
 
 export async function createAsset(data: {
+    id?: string; // Optional pre-allocated ID from backend
     name: string;
     projectId: string;
     storageKey: string;
@@ -159,8 +160,8 @@ export async function createAsset(data: {
     try {
         const db = await getDb();
 
-        // Generate semantic ID for asset
-        const assetId = await generateSemanticId(data.projectId);
+        // Use pre-allocated ID if provided, otherwise generate semantic ID for asset
+        const assetId = data.id || await generateSemanticId(data.projectId);
 
         // Ensure taskId exists
         const taskId = data.taskId || crypto.randomUUID();

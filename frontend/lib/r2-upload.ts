@@ -10,14 +10,16 @@ function getR2Client() {
     const accountId = process.env.R2_ACCOUNT_ID;
     const accessKeyId = process.env.R2_ACCESS_KEY_ID;
     const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+    const rawEndpoint = process.env.R2_ENDPOINT;
 
     if (!accountId || !accessKeyId || !secretAccessKey) {
         throw new Error('R2 credentials not configured. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY in .env');
     }
 
+
     return new S3Client({
         region: 'auto',
-        endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+        endpoint: rawEndpoint,
         credentials: {
             accessKeyId,
             secretAccessKey,
@@ -44,8 +46,13 @@ export async function uploadBase64ImageToR2(params: {
         throw new Error('R2 bucket not configured. Set R2_BUCKET_NAME and R2_PUBLIC_URL in .env');
     }
 
+    // Support data URL strings by stripping the prefix if present
+    const normalizedBase64 = base64Data.includes('base64,')
+        ? base64Data.split('base64,')[1]
+        : base64Data;
+
     // Decode base64 to buffer
-    const buffer = Buffer.from(base64Data, 'base64');
+    const buffer = Buffer.from(normalizedBase64, 'base64');
 
     // Generate storage key
     const storageKey = `projects/${projectId}/assets/${fileName}`;

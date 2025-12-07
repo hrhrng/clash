@@ -185,14 +185,16 @@ You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
 - create_canvas_node: Create text/prompt/group nodes
-- create_generation_node: Create image/video generation nodes
+- create_generation_node: Create image/video generation nodes (returns assetId)
 - wait_for_generation: Wait for image/video generation to complete
+- rerun_generation_node: Regenerate an existing generation node with a new asset
 - search_canvas: Search nodes by content
 
-IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
-1. Use create_generation_node
-2. Call wait_for_generation to check status
-3. Only proceed when status is 'completed'
+IMPORTANT: For generation nodes (image_gen, video_gen):
+1. Use create_generation_node - it returns both nodeId and assetId
+2. The assetId is pre-allocated and should be used by the frontend
+3. Call wait_for_generation to check status
+4. To regenerate, use rerun_generation_node with the node's ID
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
@@ -210,14 +212,16 @@ You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
 - create_canvas_node: Create text/prompt/group nodes
-- create_generation_node: Create image/video generation nodes
+- create_generation_node: Create image/video generation nodes (returns assetId)
 - wait_for_generation: Wait for image/video generation to complete
+- rerun_generation_node: Regenerate an existing generation node with a new asset
 - search_canvas: Search nodes by content
 
-IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
-1. Use create_generation_node
-2. Call wait_for_generation to check status
-3. Only proceed when status is 'completed'
+IMPORTANT: For generation nodes (image_gen, video_gen):
+1. Use create_generation_node - it returns both nodeId and assetId
+2. The assetId is pre-allocated and should be used by the frontend
+3. Call wait_for_generation to check status
+4. To regenerate, use rerun_generation_node with the node's ID
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
@@ -237,6 +241,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
             # self._update_node_tool(),
             # self._create_edge_tool(),
             self._wait_for_task_tool(),
+            self._rerun_generation_node_tool(),
             self._search_nodes_tool(),
         ]
 
@@ -363,9 +368,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                             raw_part = {"type": "image_url", "image_url": source} if node.type == "image" else {"type": "media", "data": source}
                             return [raw_part, text_part]
 
-                    return [text_part]
+                    return text_part.get("text")
 
-                return [text_part]
+                return text_part.get("text")
 
             except Exception as e:
                 return f"Error reading node: {e}"
@@ -490,14 +495,18 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
             )
 
         @tool(args_schema=CreateGenerationNodeInput)
-        def create_generation_node(
+        def create_generation_node_and_run(
             node_type: str,
             payload: GenerationNodeData,
             runtime: ToolRuntime,
             position: dict[str, float] | None = None,
             parent_id: str | None = None,
         ) -> str:
-            """Create a new generation node (image/video) on the canvas."""
+            """Create a new generation node (image/video) on the canvas.
+
+            Returns the nodeId and assetId for the created generation node.
+            The assetId should be used when creating the asset in the database.
+            """
 
             project_id = runtime.state.get("project_id", "")
 
@@ -530,12 +539,16 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                             "proposal": result.proposal,
                         })
 
-                return f"Created generation node {result.node_id}"
+                # Return both nodeId and assetId for generation nodes
+                if result.asset_id:
+                    return f"Created generation node - nodeId: {result.node_id}, assetNodeId: {result.asset_id}"
+                else:
+                    return f"Created generation node {result.node_id}"
 
             except Exception as e:
                 return f"Error creating generation node: {e}"
 
-        return create_generation_node
+        return create_generation_node_and_run
 
     def _update_node_tool(self) -> BaseTool:
         """Create update_canvas_node tool."""
@@ -665,6 +678,71 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 return f"Error waiting for task: {e}"
 
         return wait_for_generation
+
+    def _rerun_generation_node_tool(self) -> BaseTool:
+        """Create rerun_generation_node tool."""
+        from langchain_core.tools import tool
+        from langgraph.config import get_stream_writer
+
+        backend = self.backend
+
+        class RerunGenerationNodeInput(BaseModel):
+            node_id: str = Field(description="Generation node ID to rerun")
+
+        @tool(args_schema=RerunGenerationNodeInput)
+        def rerun_generation_node(
+            node_id: str,
+            runtime: ToolRuntime,
+        ) -> str:
+            """Rerun a generation node (image/video) to regenerate the asset.
+
+            This is useful when you want to regenerate an image/video with the same parameters.
+            """
+
+            project_id = runtime.state.get("project_id", "")
+            resolved_backend = backend(runtime) if callable(backend) else backend
+
+            try:
+                # Read the existing node to get its configuration
+                node = resolved_backend.read_node(
+                    project_id=project_id,
+                    node_id=node_id,
+                )
+
+                if node is None:
+                    return f"Error: Node {node_id} not found"
+
+                # Verify it's a generation node
+                # Note: Frontend uses 'action-badge' type with actionType in data
+                if node.type != "action-badge":
+                    return f"Error: Node {node_id} is not a generation node (type: {node.type})"
+
+                # Check if it has actionType (image-gen or video-gen)
+                action_type = node.data.get("actionType") if node.data else None
+                if action_type not in ("image-gen", "video-gen"):
+                    return f"Error: Node {node_id} is not a generation node (actionType: {action_type})"
+
+                # Generate new asset ID if not provided
+                from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
+                checker = create_d1_checker()
+                asset_id = generate_unique_id_for_project(project_id, checker)
+
+                # Emit SSE event to trigger regeneration on frontend
+                writer = get_stream_writer()
+                if writer:
+                    writer({
+                        "action": "rerun_generation_node",
+                        "nodeId": node_id,
+                        "assetId": asset_id,
+                        "nodeData": node.data,
+                    })
+
+                return f"Triggered regeneration for node {node_id} with new assetId: {asset_id}"
+
+            except Exception as e:
+                return f"Error rerunning generation node: {e}"
+
+        return rerun_generation_node
 
     def _search_nodes_tool(self) -> BaseTool:
         """Create search_canvas tool."""

@@ -9,6 +9,7 @@ export interface NodeProposal {
     nodeData: any;
     upstreamNodeIds?: string[];
     message: string;
+    assetId?: string; // Pre-allocated asset ID for generation nodes
 }
 
 interface NodeProposalCardProps {

@@ -4,6 +4,7 @@ import { VideoCamera, Image as ImageIcon, CaretDown, Gear, ArrowsOutSimple, Slid
 import { useProject } from '../ProjectContext';
 import { createAsset } from '../../actions';
 import { useAutoLayout } from '../../hooks/useAutoLayout';
+import { generateSemanticId } from '../../utils/semanticId';
 
 const ActionBadge = ({ data, selected, id }: NodeProps) => {
     const [isHovered, setIsHovered] = useState(false);
@@ -106,8 +107,8 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 throw new Error('No prompt provided. Connect a text/prompt node.');
             }
 
-            // Generate unique asset name
-            const assetName = `${actionType}-${Date.now()}`;
+            // Generate unique asset name (prefer pre-allocated assetId; otherwise request semantic ID)
+            const assetName = data.preAllocatedAssetId || await generateSemanticId(projectId);
 
             // Helper for safe fetching with timeout
             const safeFetch = async (url: string, options: RequestInit, timeout = 60000) => {
@@ -179,7 +180,12 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 const { task_id } = await genResponse.json();
 
                 // 2. Create asset record in database with PENDING status
+                // Use pre-allocated assetId from proposal if available, otherwise generate new one
+                const assetId = data.preAllocatedAssetId;
+                console.log('[ActionBadge] Creating asset with', { assetId, task_id, hasPreAllocated: !!data.preAllocatedAssetId });
+
                 const asset = await createAsset({
+                    id: assetId, // Use pre-allocated ID if available
                     name: assetName,
                     projectId,
                     storageKey: `pending/${task_id}`,
@@ -294,9 +300,14 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 const { task_id, duration: videoDuration } = await genResponse.json();
 
                 // 2. Create asset record in database with PENDING status
+                // Use pre-allocated assetId from proposal if available, otherwise generate new one
+                const assetId = data.preAllocatedAssetId;
+                console.log('[ActionBadge] Creating video asset with', { assetId, task_id, hasPreAllocated: !!data.preAllocatedAssetId });
+
                 // Note: We don't have the URL yet, so we use a placeholder or empty string
                 // The backend will update this record when generation is complete
                 const asset = await createAsset({
+                    id: assetId, // Use pre-allocated ID if available
                     name: assetName,
                     projectId,
                     storageKey: `pending/${task_id}`, // Placeholder

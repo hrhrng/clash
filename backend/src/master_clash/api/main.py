@@ -700,6 +700,14 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         if action == "timeline_edit":
                             yield emitter.format_event("timeline_edit", data)
                             continue
+                        if action == "rerun_generation_node":
+                            # Emit rerun_generation_node event with nodeId, assetId, and nodeData
+                            yield emitter.format_event("rerun_generation_node", {
+                                "nodeId": data.get("nodeId"),
+                                "assetId": data.get("assetId"),
+                                "nodeData": data.get("nodeData")
+                            })
+                            continue
                         if action == "subagent_stream":
                             # Map subagent stream to thinking/text
                             agent = data.get("agent", "Agent")

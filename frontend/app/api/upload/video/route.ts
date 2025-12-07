@@ -13,11 +13,11 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Skip R2 upload for now, use original URL directly
-        const result = {
-            storageKey: `local/${fileName}.mp4`,
-            url: videoUrl,
-        };
+        const result = await uploadVideoFromUrlToR2({
+            videoUrl,
+            projectId,
+            fileName,
+        });
 
         return NextResponse.json(result);
     } catch (error: any) {

@@ -13,13 +13,12 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Skip R2 upload for now, use Base64 directly
-        const isPng = contentType?.includes('png');
-        const prefix = isPng ? 'data:image/png;base64,' : 'data:image/jpeg;base64,';
-        const result = {
-            storageKey: `local/${fileName}`,
-            url: base64Data.startsWith('data:') ? base64Data : `${prefix}${base64Data}`,
-        };
+        const result = await uploadBase64ImageToR2({
+            base64Data,
+            projectId,
+            fileName,
+            contentType,
+        });
 
         return NextResponse.json(result);
     } catch (error: any) {
