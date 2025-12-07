@@ -13,7 +13,9 @@ import { ApprovalCard } from './copilot/ApprovalCard';
 import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
 import { ThinkingProcess } from './copilot/ThinkingProcess';
 import { TodoList, TodoItem } from './copilot/TodoList';
+import { ThinkingIndicator } from './copilot/ThinkingIndicator';
 import { Node, Edge, Connection } from 'reactflow';
+import ReactMarkdown from 'react-markdown';
 
 interface Message {
     id: string;
@@ -37,6 +39,7 @@ interface ChatbotCopilotProps {
     findNodeIdByName?: (name: string) => string | undefined;
     nodes?: Node[];
     edges?: Edge[];
+    initialPrompt?: string;
 }
 
 export default function ChatbotCopilot({
@@ -52,7 +55,8 @@ export default function ChatbotCopilot({
     onAddEdge,
     findNodeIdByName,
     nodes = [],
-    edges = []
+    edges = [],
+    initialPrompt
 }: ChatbotCopilotProps) {
     const { messages, status, sendMessage } = useChat({
         initialMessages: initialMessages.map(m => ({
@@ -64,8 +68,9 @@ export default function ChatbotCopilot({
     } as any);
 
     const [displayItems, setDisplayItems] = useState<any[]>([]);
-    const [isDemoMode, setIsDemoMode] = useState(true);
     const [isAutoPilot, setIsAutoPilot] = useState(true);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [processingStatus, setProcessingStatus] = useState('Thinking');
     const isAutoPilotRef = useRef(isAutoPilot);
 
     useEffect(() => {
@@ -189,9 +194,9 @@ export default function ChatbotCopilot({
         };
     }, []);
 
-    // Sync useChat messages to display items (if not in demo mode or mixed)
+    // Sync useChat messages to display items
     useEffect(() => {
-        if (!isDemoMode && messages.length > 0) {
+        if (messages.length > 0) {
             // Simple sync for now - in real app we'd merge
             setDisplayItems(messages.map((m: any) => ({
                 type: 'message',
@@ -200,7 +205,7 @@ export default function ChatbotCopilot({
                 id: m.id
             })));
         }
-    }, [messages, isDemoMode]);
+    }, [messages]);
 
     const [input, setInput] = useState('');
     const [isResizing, setIsResizing] = useState(false);
@@ -211,156 +216,6 @@ export default function ChatbotCopilot({
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    const runDemoScenario = async (userInput: string) => {
-        // 1. Add User Message
-        const userMsgId = generateId();
-        setDisplayItems(prev => [...prev, {
-            type: 'message',
-            role: 'user',
-            content: userInput,
-            id: userMsgId
-        }]);
-
-        // 2. Director Agent (Orchestrator) - Thinking & Planning
-        const thinkingId = generateId() + '-thinking';
-        setDisplayItems(prev => [...prev, {
-            type: 'thinking',
-            id: thinkingId,
-            content: "Analyzing the user's request to generate a video script.\n\n1.  **Identify Intent**: The user wants to create a video about a specific topic.\n2.  **Determine Workflow**: I need to delegate the scriptwriting task to the ScriptWriter agent.\n3.  **Action Plan**: Call the ScriptWriter to draft the content, then review it before proceeding to video generation."
-        }]);
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        const directorMsgId = generateId() + '-director';
-        setDisplayItems(prev => [...prev, {
-            type: 'message',
-            role: 'assistant',
-            content: "Analyzing request and planning workflow...",
-            id: directorMsgId
-        }]);
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        // 3. Director Delegates to ScriptWriter
-        setDisplayItems(prev => prev.map(item =>
-            item.id === directorMsgId
-                ? { ...item, content: <span>Plan approved. Delegating to <span className="text-indigo-600 font-medium">@ScriptWriter</span>.</span> }
-                : item
-        ));
-
-        // 4. ScriptWriter Agent - Working
-        const scriptWriterId = generateId() + '-scriptwriter';
-        setDisplayItems(prev => [...prev, {
-            type: 'agent_card',
-            id: scriptWriterId,
-            props: {
-                agentName: 'ScriptWriter',
-                status: 'working',
-                persona: 'scriptwriter',
-                logs: [{
-                    id: 'log-1',
-                    type: 'text',
-                    content: <div className="text-xs text-slate-500">Drafting script based on topic: "{userInput}"...</div>
-                }]
-            }
-        }]);
-
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // 5. ScriptWriter Generates Script (Tool Call)
-        const toolCallId = generateId() + '-tool';
-        setDisplayItems(prev => prev.map(item =>
-            item.id === scriptWriterId
-                ? {
-                    ...item,
-                    props: {
-                        ...item.props,
-                        logs: [...(item.props.logs || []), {
-                            id: toolCallId,
-                            type: 'tool_call',
-                            toolProps: {
-                                toolName: 'generate_video_script',
-                                args: { topic: userInput },
-                                status: 'pending',
-                                indent: false // No need for extra indent inside card
-                            }
-                        }]
-                    }
-                }
-                : item
-        ));
-
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        // 6. Complete Tool Call & ScriptWriter
-        setDisplayItems(prev => prev.map(item =>
-            item.id === scriptWriterId
-                ? {
-                    ...item,
-                    props: {
-                        ...item.props,
-                        logs: item.props.logs?.map((log: any) =>
-                            log.id === toolCallId
-                                ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: "Script generated: 'In a world where AI...'" } }
-                                : log
-                        )
-                    }
-                }
-                : item
-        ));
-
-        setDisplayItems(prev => prev.map(item =>
-            item.id === scriptWriterId
-                ? {
-                    ...item,
-                    props: {
-                        ...item.props,
-                        status: 'done',
-                        logs: [...(item.props.logs || []), {
-                            id: generateId() + '-done',
-                            type: 'text',
-                            content: <div className="text-xs text-slate-500">Script completed. Sending back to Director.</div>
-                        }]
-                    }
-                }
-                : item
-        ));
-
-        // 7. Director Asks for Approval
-        const approvalId = generateId() + '-approval';
-        setDisplayItems(prev => [...prev, {
-            type: 'approval_card',
-            id: approvalId,
-            props: {
-                message: "ScriptWriter has finished. Ready to proceed with video generation?",
-                onApprove: () => {
-                    setDisplayItems(p => p.filter(i => i.id !== approvalId));
-
-                    // Director delegates to VideoProducer
-                    const videoProducerId = generateId() + '-videoproducer';
-                    setDisplayItems(p => [...p, {
-                        type: 'agent_card',
-                        id: videoProducerId,
-                        props: {
-                            agentName: 'VideoProducer',
-                            status: 'working',
-                            persona: 'videoproducer',
-                            children: <div className="text-xs text-slate-500">Generating video scenes...</div>
-                        }
-                    }]);
-                },
-                onReject: () => {
-                    setDisplayItems(p => p.filter(i => i.id !== approvalId));
-                    setDisplayItems(p => [...p, {
-                        type: 'message',
-                        role: 'assistant',
-                        content: "Understood. What changes would you like to make to the script?",
-                        id: generateId()
-                    }]);
-                }
-            }
-        }]);
-    };
     // Use ref to access current nodes inside stale closures (EventSource listeners)
     const nodesRef = useRef(nodes);
     useEffect(() => {
@@ -411,6 +266,8 @@ export default function ChatbotCopilot({
     };
 
     const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
+        setIsProcessing(true);
+        setProcessingStatus('Thinking');
         // 1. Add User Message (only if not resuming)
         if (!resume) {
             const userMsgId = generateId();
@@ -440,9 +297,13 @@ export default function ChatbotCopilot({
 
         // Track if stream ended normally to suppress error on close
         let normalEnd = false;
+        let retryCount = 0;
+        const maxRetries = 3;
+        let hasReceivedData = false;
 
         eventSource.onopen = () => {
             console.log('[ChatbotCopilot] SSE Stream connected successfully.');
+            retryCount = 0; // Reset retry count on successful connection
         };
 
         eventSource.onerror = (e) => {
@@ -454,21 +315,48 @@ export default function ChatbotCopilot({
 
             // Check readyState to determine if this is a real error
             if (eventSource.readyState === EventSource.CLOSED) {
-                console.log('[ChatbotCopilot] SSE Stream closed.');
+                console.error('[ChatbotCopilot] SSE Stream closed unexpectedly.');
+
+                // If we haven't received any data and hit max retries, show error
+                if (!hasReceivedData && retryCount >= maxRetries) {
+                    setDisplayItems(prev => [...prev, {
+                        type: 'message',
+                        role: 'assistant',
+                        content: '❌ Unable to connect to the backend server. Please check if the server is running and try again.',
+                        id: generateId()
+                    }]);
+                }
+
                 eventSource.close();
+                setIsProcessing(false);
             } else if (eventSource.readyState === EventSource.CONNECTING) {
-                console.log('[ChatbotCopilot] SSE Stream reconnecting...');
-                // Don't close, let it retry
+                retryCount++;
+                console.log(`[ChatbotCopilot] SSE Stream reconnecting... (attempt ${retryCount}/${maxRetries})`);
+
+                // If exceeded max retries, force close
+                if (retryCount > maxRetries) {
+                    console.error('[ChatbotCopilot] Max retry attempts exceeded. Closing stream.');
+                    setDisplayItems(prev => [...prev, {
+                        type: 'message',
+                        role: 'assistant',
+                        content: '❌ Connection failed after multiple attempts. Please try again later.',
+                        id: generateId()
+                    }]);
+                    eventSource.close();
+                    setIsProcessing(false);
+                }
             } else {
                 console.warn('[ChatbotCopilot] SSE Stream unexpected state:', {
                     readyState: eventSource.readyState,
                     url: url.toString()
                 });
                 eventSource.close();
+                setIsProcessing(false);
             }
         };
 
         eventSource.addEventListener('plan', (e: any) => {
+            hasReceivedData = true;
             try {
                 const data = JSON.parse(e.data);
                 setTodoItems(data.items);
@@ -478,6 +366,7 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('thinking', (e: any) => {
+            hasReceivedData = true;
             console.log('[ChatbotCopilot] Received thinking:', e.data);
             try {
                 const data = JSON.parse(e.data);
@@ -485,7 +374,16 @@ export default function ChatbotCopilot({
 
                 if (agentName && ['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
                     setDisplayItems(prev => {
-                        const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === agentName);
+                        // Find the LAST working agent card with this name (most recent task_delegation)
+                        let existingIndex = -1;
+                        for (let i = prev.length - 1; i >= 0; i--) {
+                            if (prev[i].type === 'agent_card' &&
+                                prev[i].props.agentName === agentName &&
+                                prev[i].props.status === 'working') {
+                                existingIndex = i;
+                                break;
+                            }
+                        }
 
                         if (existingIndex !== -1) {
                             return prev.map((item, index) => {
@@ -566,7 +464,8 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('text', (e: any) => {
-            console.log('[ChatbotCopilot] Received thinking:', e.data);
+            hasReceivedData = true;
+            console.log('[ChatbotCopilot] Received text:', e.data);
             try {
                 const data = JSON.parse(e.data);
                 const agentName = data.agent;
@@ -577,9 +476,16 @@ export default function ChatbotCopilot({
                     if (['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
                         // Add to the corresponding AgentCard
                         setDisplayItems(prev => {
-                            const existingIndex = prev.findIndex(
-                                item => item.type === 'agent_card' && item.props.agentName === agentName
-                            );
+                            // Find the LAST working agent card with this name
+                            let existingIndex = -1;
+                            for (let i = prev.length - 1; i >= 0; i--) {
+                                if (prev[i].type === 'agent_card' &&
+                                    prev[i].props.agentName === agentName &&
+                                    prev[i].props.status === 'working') {
+                                    existingIndex = i;
+                                    break;
+                                }
+                            }
 
                             if (existingIndex !== -1) {
                                 return prev.map((item, index) => {
@@ -651,6 +557,11 @@ export default function ChatbotCopilot({
 
             try {
                 const data = JSON.parse(e.data);
+                if (data.tool === 'task_delegation' && data.input?.agent) {
+                    setProcessingStatus(`${data.input.agent} is working...`);
+                } else {
+                    setProcessingStatus(`Running tool: ${data.tool}`);
+                }
 
                 // If agent is Director (or generic Agent), show standalone tool call
                 // Check for 'Director', 'Agent', or 'agent'
@@ -659,7 +570,9 @@ export default function ChatbotCopilot({
                     if (data.tool === 'task_delegation') {
                         const targetAgent = data.input.agent;
                         const instruction = data.input.instruction;
-                        const agentId = generateId() + '-' + targetAgent.toLowerCase();
+                        const toolCallId = data.id || generateId();
+                        // Use task_delegation tool_call_id as the AgentCard ID for precise matching
+                        const agentCardId = `agent-${toolCallId}`;
 
                         setDisplayItems(prev => {
                             const newItems = [...prev];
@@ -667,7 +580,7 @@ export default function ChatbotCopilot({
                             // 1. Add the tool call (Director's action)
                             newItems.push({
                                 type: 'tool_call',
-                                id: data.id || generateId(),
+                                id: toolCallId,
                                 props: {
                                     toolName: data.tool,
                                     args: data.input,
@@ -676,31 +589,19 @@ export default function ChatbotCopilot({
                                 }
                             });
 
-                            // 2. Activate the target AgentCard
-                            const existingIndex = newItems.findIndex(item => item.type === 'agent_card' && item.props.agentName === targetAgent);
-
-                            if (existingIndex !== -1) {
-                                // Update existing
-                                newItems[existingIndex] = {
-                                    ...newItems[existingIndex],
-                                    props: {
-                                        ...newItems[existingIndex].props,
-                                        status: 'working'
-                                    }
-                                };
-                            } else {
-                                // Create new
-                                newItems.push({
-                                    type: 'agent_card',
-                                    id: agentId,
-                                    props: {
-                                        agentName: targetAgent,
-                                        status: 'working',
-                                        persona: targetAgent.toLowerCase(),
-                                        logs: []
-                                    }
-                                });
-                            }
+                            // 2. Always create a NEW AgentCard for each task_delegation
+                            // Each task_delegation gets its own card, even if it's the same agent
+                            newItems.push({
+                                type: 'agent_card',
+                                id: agentCardId,
+                                props: {
+                                    agentName: targetAgent,
+                                    status: 'working',
+                                    persona: targetAgent.toLowerCase(),
+                                    logs: [],
+                                    delegationId: toolCallId  // Store the delegation ID for matching
+                                }
+                            });
 
                             return newItems;
                         });
@@ -725,8 +626,16 @@ export default function ChatbotCopilot({
                 // For now, we assume tool calls come from sub-agents like ScriptWriter
                 // So we create/update the agent card
                 setDisplayItems(prev => {
-                    // Check if agent card already exists (simplified logic)
-                    const existingAgentIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
+                    // Find the LAST working agent card with this name
+                    let existingAgentIndex = -1;
+                    for (let i = prev.length - 1; i >= 0; i--) {
+                        if (prev[i].type === 'agent_card' &&
+                            prev[i].props.agentName === data.agent &&
+                            prev[i].props.status === 'working') {
+                            existingAgentIndex = i;
+                            break;
+                        }
+                    }
 
                     if (existingAgentIndex !== -1) {
                         // Update existing agent card with new tool call log
@@ -788,7 +697,18 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received tool_end:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                console.log('[ChatbotCopilot] tool_end parsed:', { id: data.id, tool: data.tool, agent: data.agent });
+                console.log('[ChatbotCopilot] tool_end parsed:', { id: data.id, tool: data.tool, agent: data.agent, status: data.status });
+
+                // Use status from backend (defaults to 'success' if not provided for backward compatibility)
+                const toolStatus = data.status || 'success';
+
+                // Reset status to agent working
+                if (data.agent && data.agent !== 'User') {
+                    setProcessingStatus(`${data.agent} is working...`);
+                } else {
+                    setProcessingStatus('Thinking...');
+                }
+
                 setDisplayItems(prev => {
                     console.log('[ChatbotCopilot] Current displayItems before tool_end update:', prev.map(item => ({
                         type: item.type,
@@ -797,68 +717,67 @@ export default function ChatbotCopilot({
                         logs: item.type === 'agent_card' ? item.props.logs?.map((l: any) => ({ id: l.id, type: l.type, toolName: l.toolProps?.toolName })) : undefined
                     })));
                     return prev.map(item => {
-                        // Handle standalone tool call (Director or Agent)
-                        if (item.type === 'tool_call' && (item.id === data.id || (item.props.toolName === data.tool && (data.agent === 'Director' || data.agent === 'Agent' || data.agent === 'agent')))) {
-                            return {
-                                ...item,
-                                props: {
-                                    ...item.props,
-                                    status: 'success',
-                                    result: data.result
-                                }
-                            };
-                        }
-
-                        // Handle task_delegation completion
-                        if (data.tool === 'task_delegation') {
-                            // 1. Update the standalone tool call (if it exists)
-                            if (item.type === 'tool_call' && (item.id === data.id || item.props.toolName === 'task_delegation')) {
+                        // Handle standalone tool call (Director or Agent) - match by ID first, then fallback to tool name
+                        if (item.type === 'tool_call') {
+                            // Prioritize ID matching for exact identification
+                            if (data.id && item.id === data.id) {
                                 return {
                                     ...item,
                                     props: {
                                         ...item.props,
-                                        status: 'success',
+                                        status: toolStatus,
+                                        result: data.result
+                                    }
+                                };
+                            }
+                        }
+
+                        // Handle task_delegation completion
+                        if (data.tool === 'task_delegation') {
+                            // 1. Update the standalone tool call by ID
+                            if (item.type === 'tool_call' && data.id && item.id === data.id) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        status: toolStatus,
                                         result: data.result
                                     }
                                 };
                             }
 
-                            // 2. Update the target agent card
-                            // We try to find the agent card that matches the delegation
-                            // Since we don't have the target agent name in tool_end data easily, 
-                            // we might need to rely on the result string or just update ALL working agent cards?
-                            // Or better: we know task_delegation usually returns "AgentName completed: ..."
-
-                            const match = data.result && typeof data.result === 'string' ? data.result.match(/^(\w+) completed/) : null;
-                            if (match) {
-                                const agentName = match[1];
-                                if (item.type === 'agent_card' && item.props.agentName === agentName) {
-                                    return {
-                                        ...item,
-                                        props: {
-                                            ...item.props,
-                                            status: 'done',
-                                            logs: item.props.logs?.map((log: any) =>
-                                                log.id === data.id
-                                                    ? { ...log, content: <div className="text-green-600 font-medium text-xs mb-2">Task Completed</div> }
-                                                    : log
-                                            )
-                                        }
-                                    };
-                                }
+                            // 2. Update the corresponding AgentCard by delegationId
+                            if (item.type === 'agent_card' && item.props.delegationId === data.id) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        status: toolStatus === 'success' ? 'done' : 'failed'
+                                    }
+                                };
                             }
                         }
 
+                        // Handle agent card tool calls - match by ID within logs
                         if (item.type === 'agent_card' && item.props.agentName === data.agent) {
                             return {
                                 ...item,
                                 props: {
                                     ...item.props,
-                                    logs: item.props.logs?.map((log: any) =>
-                                        log.id === data.id
-                                            ? { ...log, toolProps: { ...log.toolProps, status: 'success', result: data.result } }
-                                            : log
-                                    )
+                                    logs: item.props.logs?.map((log: any) => {
+                                        // Match by ID first for exact identification
+                                        if (log.type === 'tool_call' && data.id && log.id === data.id) {
+                                            return {
+                                                ...log,
+                                                toolProps: {
+                                                    ...log.toolProps,
+                                                    status: toolStatus,
+                                                    result: data.result
+                                                }
+                                            };
+                                        }
+                                        return log;
+                                    })
                                 }
                             };
                         }
@@ -874,6 +793,7 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received sub_agent_start:', e.data);
             try {
                 const data = JSON.parse(e.data);
+                setProcessingStatus(`${data.agent} is working`);
                 setDisplayItems(prev => {
                     const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
                     if (existingIndex !== -1) {
@@ -980,6 +900,7 @@ export default function ChatbotCopilot({
                     }
                 }]);
                 eventSource.close();
+                setIsProcessing(false);
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing human_interrupt event:', err);
             }
@@ -1010,6 +931,7 @@ export default function ChatbotCopilot({
             }
             normalEnd = true;
             eventSource.close();
+            setIsProcessing(false);
         });
 
         eventSource.addEventListener('error', (e: Event) => {
@@ -1033,9 +955,11 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received end event. Closing stream.');
             normalEnd = true;
             eventSource.close();
+            setIsProcessing(false);
         });
 
         eventSource.addEventListener('node_proposal', (e: any) => {
+            hasReceivedData = true;
             try {
                 const data = JSON.parse(e.data);
                 console.log('[ChatbotCopilot] Received node_proposal:', data);
@@ -1186,23 +1110,7 @@ export default function ChatbotCopilot({
         const value = input;
         setInput('');
 
-        if (isDemoMode) {
-            await runStreamScenario(value);
-        } else {
-            await sendMessage({
-                role: 'user',
-                content: value,
-            } as any, {
-                body: {
-                    threadId,
-                    selectedContext: selectedNodes.map(node => ({
-                        id: node.id,
-                        type: node.type,
-                        data: node.data
-                    }))
-                }
-            });
-        }
+        await runStreamScenario(value);
     };
 
     // Process data stream for commands - temporarily disabled as data is not available in useChat return
@@ -1219,6 +1127,28 @@ export default function ChatbotCopilot({
     useEffect(() => {
         scrollToBottom();
     }, [messages, isCollapsed, displayItems]);
+
+    // Auto-send initial prompt if provided (simplified approach)
+    const hasAutoStartedRef = useRef(false);
+    const router = useRouter();
+
+    useEffect(() => {
+        // If there's an initialPrompt and we haven't sent it yet
+        if (initialPrompt && !hasAutoStartedRef.current) {
+            hasAutoStartedRef.current = true;
+
+            console.log('[ChatbotCopilot] Sending initial prompt:', initialPrompt);
+
+            // Clear the URL parameter immediately to prevent re-sending on refresh
+            router.replace(`/projects/${projectId}`, { scroll: false });
+
+            // Delay to ensure component is fully mounted
+            setTimeout(() => {
+                // Send as normal message (resume=false)
+                runStreamScenario(initialPrompt, false);
+            }, 500);
+        }
+    }, [initialPrompt, projectId, router]); // Depend on necessary values
 
     const startResizing = () => {
         setIsResizing(true);
@@ -1383,7 +1313,35 @@ export default function ChatbotCopilot({
                                                     <UserMessage content={item.content} />
                                                 ) : (
                                                     <div className="text-base text-slate-800 leading-relaxed px-1 font-medium">
-                                                        {item.content}
+                                                        <ReactMarkdown
+                                                            components={{
+                                                                p: ({ children }: any) => <p className="mb-4 last:mb-0">{children}</p>,
+                                                                ul: ({ children }: any) => <ul className="list-disc pl-4 mb-4 space-y-1">{children}</ul>,
+                                                                ol: ({ children }: any) => <ol className="list-decimal pl-4 mb-4 space-y-1">{children}</ol>,
+                                                                li: ({ children }: any) => <li className="mb-1">{children}</li>,
+                                                                h1: ({ children }: any) => <h1 className="text-2xl font-bold mb-4 mt-6">{children}</h1>,
+                                                                h2: ({ children }: any) => <h2 className="text-xl font-bold mb-3 mt-5">{children}</h2>,
+                                                                h3: ({ children }: any) => <h3 className="text-lg font-bold mb-2 mt-4">{children}</h3>,
+                                                                code: ({ className, children, ...props }: any) => {
+                                                                    const match = /language-(\w+)/.exec(className || '');
+                                                                    const isInline = !match && !String(children).includes('\n');
+                                                                    return isInline ? (
+                                                                        <code className="bg-slate-100 px-1.5 py-0.5 rounded text-sm font-mono text-pink-500 border border-slate-200" {...props}>
+                                                                            {children}
+                                                                        </code>
+                                                                    ) : (
+                                                                        <code className="block bg-slate-900 text-slate-50 p-4 rounded-lg mb-4 overflow-x-auto text-sm font-mono" {...props}>
+                                                                            {children}
+                                                                        </code>
+                                                                    );
+                                                                },
+                                                                pre: ({ children }: any) => <pre className="not-prose mb-4">{children}</pre>,
+                                                                blockquote: ({ children }: any) => <blockquote className="border-l-4 border-slate-200 pl-4 italic text-slate-500 mb-4">{children}</blockquote>,
+                                                                a: ({ href, children }: any) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{children}</a>,
+                                                            }}
+                                                        >
+                                                            {item.content}
+                                                        </ReactMarkdown>
                                                     </div>
                                                 )
                                             )}
@@ -1405,20 +1363,8 @@ export default function ChatbotCopilot({
                                         </motion.div>
                                     ))}
 
-                                    {isLoading && !isDemoMode && (
-                                        <motion.div
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            className="flex justify-start"
-                                        >
-                                            <div className="bg-white border border-gray-200 px-4 py-3 rounded-matrix">
-                                                <div className="flex items-center gap-1">
-                                                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '0ms' }} />
-                                                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '150ms' }} />
-                                                    <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" style={{ animationDelay: '300ms' }} />
-                                                </div>
-                                            </div>
-                                        </motion.div>
+                                    {isProcessing && (
+                                        <ThinkingIndicator message={processingStatus} />
                                     )}
                                     <div ref={messagesEndRef} />
                                 </div>
@@ -1467,14 +1413,14 @@ export default function ChatbotCopilot({
                                         type="text"
                                         value={input}
                                         onChange={(e) => setInput(e.target.value)}
-                                        placeholder={selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message..."}
-                                        className="flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md"
-                                        disabled={isLoading && !isDemoMode}
+                                        placeholder={isProcessing ? "Agent is thinking..." : (selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message...")}
+                                        className={`flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        disabled={isLoading || isProcessing}
                                     />
                                     <motion.button
                                         type="submit"
-                                        disabled={!input.trim() || (isLoading && !isDemoMode)}
-                                        className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim()
+                                        disabled={!input.trim() || isLoading || isProcessing}
+                                        className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim() && !isProcessing
                                             ? 'bg-gray-900/90 text-white shadow-lg'
                                             : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
                                             }`}

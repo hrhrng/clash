@@ -428,7 +428,7 @@ class StreamEmitter:
         logger.info(f"Node Proposal: {proposal_data.get('id')}")
         yield self.format_event("node_proposal", proposal_data)
         logger.info(f"Tool END: {agent} - {result_text} ({tool_id})")
-        yield self.format_event("tool_end", {"agent": agent, "result": result_text, "id": tool_id})
+        yield self.format_event("tool_end", {"agent": agent, "result": result_text, "status": "success", "id": tool_id, "tool": tool_name})
 
     async def tool_poll_asset(self, agent: str, node_id: str, context: ProjectContext, get_asset_id_func):
         """Tool execution: Poll Asset Status."""
@@ -439,12 +439,12 @@ class StreamEmitter:
         asset_id = get_asset_id_func(node_id, context)
         if not asset_id:
             logger.info(f"Tool Poll RETRY: {node_id}")
-            yield self.format_event("tool_end", {"agent": agent, "result": "Still generating...", "id": tool_id})
+            yield self.format_event("tool_end", {"agent": agent, "result": "Still generating...", "status": "success", "id": tool_id, "tool": "check_asset_status"})
             yield self.format_event("retry", {})
             yield None # Signal not found
         else:
             logger.info(f"Tool Poll SUCCESS: {node_id} -> {asset_id}")
-            yield self.format_event("tool_end", {"agent": agent, "result": f"Asset generated: {asset_id}", "id": tool_id})
+            yield self.format_event("tool_end", {"agent": agent, "result": f"Asset generated: {asset_id}", "status": "success", "id": tool_id, "tool": "check_asset_status"})
             yield asset_id # Signal found
 
 
@@ -491,7 +491,8 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 namespace = []
                 mode = None
                 payload = streamed
-
+                from langchain_core.load import dumps
+                logger.debug(f"Stream: streamed={dumps(streamed)}")
                 # Format is [namespace, mode, data] where namespace is a list
                 if isinstance(streamed, (list, tuple)) and len(streamed) == 3:
                     namespace, mode, payload = streamed
@@ -517,7 +518,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     agent_name = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
 
                     # If this is the root graph (empty namespace) and node is 'agent', it's the Director
-                    if not namespace and agent_name == "agent":
+                    if not namespace and agent_name == "model":
                         logger.info(f"[AGENT_NAME] Root graph agent -> Director")
                         agent_name = "Director"
                     # Handle sub-graph: resolve agent name from task_delegation mapping
@@ -579,6 +580,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                                         logger.info(f"[TOOL_START DEBUG] target_agent: {target_agent}")
 
                                 yield emitter.format_event("tool_start", {
+                                    "id": tool_id,
                                     "tool": tool_name,
                                     "input": tool_args,
                                     "agent": agent_name or "Agent"
@@ -617,6 +619,16 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
 
                         logger.info(f"[TOOL_END] Emitting tool_end: id={tool_call_id}, tool={tool_name}, agent={tool_end_agent}")
 
+                        # Determine if the tool execution was successful or failed
+                        # Check if content indicates an error
+                        is_error = isinstance(content, str) and (
+                            content.lower().startswith("error") or
+                            "error invoking tool" in content.lower() or
+                            "field required" in content.lower() or
+                            "validation error" in content.lower()
+                        )
+                        tool_status = "failed" if is_error else "success"
+
                         # Reset current_delegation_agent when task_delegation completes
                         if tool_name == "task_delegation":
                             logger.info(f"[MAPPING] Clearing current_delegation_agent (was {current_delegation_agent})")
@@ -626,6 +638,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             "id": tool_call_id,
                             "tool": tool_name,  # Use cached tool name
                             "result": content,
+                            "status": tool_status,
                             "agent": tool_end_agent or "Agent"
                         })
                         continue
@@ -686,6 +699,17 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             continue
                         if action == "timeline_edit":
                             yield emitter.format_event("timeline_edit", data)
+                            continue
+                        if action == "subagent_stream":
+                            # Map subagent stream to thinking/text
+                            agent = data.get("agent", "Agent")
+                            content = data.get("content", "")
+                            # For now, treat all subagent stream as 'thinking' or 'text' based on context
+                            # The user specifically asked for 'thinking' block.
+                            # Let's emit as 'thinking' for now to ensure it shows up in the agent card logs?
+                            # Or better, if it's raw text from the model, it's likely the agent 'working'.
+                            # In ChatbotCopilot.tsx, 'thinking' event adds to logs.
+                            yield emitter.thinking(content, agent=agent)
                             continue
                         yield emitter.format_event("custom", data)
 

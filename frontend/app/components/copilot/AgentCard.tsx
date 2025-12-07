@@ -5,10 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { CaretDown, CaretRight, CheckCircle, CircleNotch, PauseCircle, Robot, Crown, FilmStrip, Scroll, MagicWand, VideoCamera } from '@phosphor-icons/react';
 
 import { ToolCall, ToolCallProps } from './ToolCall';
+import { ThinkingProcess } from './ThinkingProcess';
+import ReactMarkdown from 'react-markdown';
 
 export interface AgentLog {
     id: string;
-    type: 'text' | 'tool_call';
+    id: string;
+    type: 'text' | 'tool_call' | 'thinking';
     content?: React.ReactNode;
     toolProps?: ToolCallProps;
     taskName?: string;
@@ -104,11 +107,22 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                             <div className="pt-3 space-y-2">
                                 {logs && logs.map(log => (
                                     <div key={log.id} className="mb-2 last:mb-0">
-                                        {log.type === 'text' && log.content}
+
+                                        {log.type === 'text' && (
+                                            typeof log.content === 'string' ? (
+                                                <div className="text-sm text-slate-600 prose prose-sm max-w-none">
+                                                    <ReactMarkdown>{log.content}</ReactMarkdown>
+                                                </div>
+                                            ) : log.content
+                                        )}
+                                        {log.type === 'thinking' && typeof log.content === 'string' && (
+                                            <ThinkingProcess content={log.content} isExpanded={true} />
+                                        )}
                                         {log.type === 'tool_call' && log.toolProps && (
                                             <ToolCall {...log.toolProps} />
                                         )}
                                     </div>
+
                                 ))}
                                 {children}
                             </div>
@@ -116,6 +130,6 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div>
+        </div >
     );
 }

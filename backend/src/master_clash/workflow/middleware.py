@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal, Sequence, TypedDict, TypeVar
 
 from pydantic import BaseModel, Field
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import BaseMessage, ToolMessage
+from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, InjectedToolCallId
 from langgraph.graph import add_messages
@@ -44,104 +46,6 @@ class AgentState(TypedDict):
     workspace_group_id: str | None  # Optional workspace scope for sub-agents
 
 
-@dataclass
-class ModelRequest:
-    """Request to the language model."""
-
-    messages: list[BaseMessage]
-    tools: list[BaseTool]
-    system_prompt: str | None = None
-
-
-@dataclass
-class ModelResponse:
-    """Response from the language model."""
-
-    message: BaseMessage
-    tool_calls: list[dict[str, Any]] | None = None
-
-
-@dataclass
-class ToolCallRequest:
-    """Request to execute a tool."""
-
-    tool_name: str
-    tool_input: dict[str, Any]
-    tool_call_id: str
-
-
-@dataclass
-class ToolRuntime:
-    """Runtime context passed to tools.
-
-    Provides access to agent state, configuration, and utilities.
-    """
-
-    state: dict[str, Any]
-    config: dict[str, Any]
-    tool_call_id: str
-
-
-class AgentMiddleware(ABC):
-    """Base middleware for agent lifecycle hooks.
-
-    Middlewares are stacked and executed in order:
-    1. wrap_model_call - Before LLM inference
-    2. wrap_tool_call - Before tool execution
-    3. before_agent - Before agent step
-    """
-
-    state_schema: type[AgentState] | None = None
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """Wrap model call with custom logic.
-
-        Args:
-            request: Model request with messages, tools, system prompt
-            handler: Next handler in the chain
-
-        Returns:
-            Model response
-        """
-        return handler(request)
-
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage],
-    ) -> ToolMessage:
-        """Wrap tool call with custom logic.
-
-        Args:
-            request: Tool call request
-            handler: Next handler in the chain
-
-        Returns:
-            Tool message result
-        """
-        return handler(request)
-
-    def before_agent(
-        self,
-        state: AgentState,
-        runtime: ToolRuntime,
-    ) -> dict[str, Any] | None:
-        """Hook before agent step.
-
-        Args:
-            state: Current agent state
-            runtime: Tool runtime context
-
-        Returns:
-            Optional state updates
-        """
-        return None
-
-
 class CanvasState(AgentState):
     """Extended state with canvas data."""
 
@@ -169,6 +73,9 @@ class TimelineMiddleware(AgentMiddleware):
     """Middleware that provides timeline editing tools."""
 
     state_schema = AgentState
+    
+    def __init__(self):
+        self.tools = self._generate_timeline_tools()
 
     def wrap_model_call(
         self,
@@ -176,20 +83,31 @@ class TimelineMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
         """Add timeline tools to the model request."""
-        timeline_tools = self._generate_timeline_tools()
-
-        request.tools = [*request.tools, *timeline_tools]
 
         timeline_prompt = """
 You can control the video timeline via the timeline_editor tool.
 - timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
 """
         if request.system_prompt:
-            request.system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
+            system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
         else:
-            request.system_prompt = timeline_prompt
+            system_prompt = timeline_prompt
 
-        return handler(request)
+        return handler(request.override(system_prompt=system_prompt))
+    
+    async def awrap_model_call(self, request, handler):
+        """Add timeline tools to the model request."""
+
+        timeline_prompt = """
+You can control the video timeline via the timeline_editor tool.
+- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+"""
+        if request.system_prompt:
+            system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
+        else:
+            system_prompt = timeline_prompt
+
+        return await handler(request.override(system_prompt=system_prompt))
 
     def _generate_timeline_tools(self) -> list[BaseTool]:
         """Generate timeline tools."""
@@ -208,15 +126,9 @@ You can control the video timeline via the timeline_editor tool.
         def timeline_editor(
             action: str,
             params: dict[str, Any],
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
+            runtime: ToolRuntime,
         ) -> str:
             """Automated video editor tool."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
 
@@ -257,6 +169,7 @@ class CanvasMiddleware(AgentMiddleware):
             backend: Canvas backend or factory function
         """
         self.backend = backend or StateCanvasBackend()
+        self.tools = self._generate_canvas_tools()
 
     def wrap_model_call(
         self,
@@ -264,11 +177,7 @@ class CanvasMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
         """Add canvas tools to the model request."""
-        # Generate canvas tools
-        canvas_tools = self._generate_canvas_tools()
-
         # Merge with existing tools
-        request.tools = [*request.tools, *canvas_tools]
 
         # Add canvas-specific system prompt
         canvas_prompt = """
@@ -286,11 +195,36 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
 3. Only proceed when status is 'completed'
 """
         if request.system_prompt:
-            request.system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
+            system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
         else:
-            request.system_prompt = canvas_prompt
+            system_prompt = canvas_prompt
 
-        return handler(request)
+        return handler(request.override(system_prompt=system_prompt))
+    
+    async def awrap_model_call(self, request, handler):
+        """Add canvas tools to the model request."""
+
+        # Add canvas-specific system prompt
+        canvas_prompt = """
+You have access to canvas tools for creating and managing visual content:
+- list_canvas_nodes: List nodes on the canvas
+- read_canvas_node: Read a specific node's data
+- create_canvas_node: Create text/prompt/group nodes
+- create_generation_node: Create image/video generation nodes
+- wait_for_generation: Wait for image/video generation to complete
+- search_canvas: Search nodes by content
+
+IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
+1. Use create_generation_node
+2. Call wait_for_generation to check status
+3. Only proceed when status is 'completed'
+"""
+        if request.system_prompt:
+            system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
+        else:
+            system_prompt = canvas_prompt
+
+        return await handler(request.override(system_prompt=system_prompt))
 
     def _generate_canvas_tools(self) -> list[BaseTool]:
         """Generate canvas tools based on backend capabilities."""
@@ -312,22 +246,16 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
 
         backend = self.backend
         class ListCanvasNodesInput(BaseModel):
-            node_type: str | None = Field(default=None, description="Optional filter by node type")
+            node_type: Literal["text", "prompt", "group", "image", "video"] | None = Field(default=None, description="Optional filter by node type")
             parent_id: str | None = Field(default=None, description="Optional filter by parent group")
 
         @tool(args_schema=ListCanvasNodesInput)
         def list_canvas_nodes(
+            runtime: ToolRuntime,
             node_type: str | None = None,
             parent_id: str | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """List nodes on the canvas."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -363,16 +291,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         @tool(args_schema=ReadCanvasNodeInput)
         def read_canvas_node(
             node_id: str,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
+            runtime: ToolRuntime,
         ) -> str:
             """Read a specific node's detailed data."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
-
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
 
@@ -417,7 +338,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
             node_type: Literal["text", "prompt", "group"] = Field(
                 description="Node type to create (non-generative)"
             )
-            data: CanvasNodeData = Field(description="Structured payload for text/prompt/group nodes")
+            payload: CanvasNodeData = Field(description="Structured payload for text/prompt/group nodes")
             position: dict[str, float] | None = Field(
                 default=None, description="Optional canvas coordinates {x, y}"
             )
@@ -429,18 +350,12 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         @tool(args_schema=CreateCanvasNodeInput)
         def create_canvas_node(
             node_type: str,
-            data: CanvasNodeData,
+            payload: CanvasNodeData,
+            runtime: ToolRuntime,
             position: dict[str, float] | None = None,
             parent_id: str | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Create a new node on the canvas."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
 
@@ -456,7 +371,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 result = resolved_backend.create_node(
                     project_id=project_id,
                     node_type=node_type,
-                    data=data.model_dump(exclude_none=True),
+                    data=payload.model_dump(exclude_none=True),
                     position=position,
                     parent_id=parent_id,
                 )
@@ -509,7 +424,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
             node_type: Literal["image_gen", "video_gen"] = Field(
                 description="Generation node type to create"
             )
-            data: GenerationNodeData = Field(description="Structured payload for generation node")
+            payload: GenerationNodeData = Field(description="Structured payload for generation node")
             position: dict[str, float] | None = Field(
                 default=None, description="Optional canvas coordinates {x, y}"
             )
@@ -521,18 +436,12 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         @tool(args_schema=CreateGenerationNodeInput)
         def create_generation_node(
             node_type: str,
-            data: GenerationNodeData,
+            payload: GenerationNodeData,
+            runtime: ToolRuntime,
             position: dict[str, float] | None = None,
             parent_id: str | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Create a new generation node (image/video) on the canvas."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
 
@@ -548,7 +457,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 result = resolved_backend.create_node(
                     project_id=project_id,
                     node_type=node_type,
-                    data=data.dict(exclude_none=True),
+                    data=payload.model_dump(exclude_none=True),
                     position=position,
                     parent_id=parent_id,
                 )
@@ -588,18 +497,11 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         @tool(args_schema=UpdateCanvasNodeInput)
         def update_canvas_node(
             node_id: str,
+            runtime: ToolRuntime,
             data: dict[str, Any] | None = None,
             position: dict[str, float] | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Update an existing node."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
-
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
 
@@ -636,17 +538,11 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         def create_canvas_edge(
             source: str,
             target: str,
+            runtime: ToolRuntime,
             source_handle: str | None = None,
             target_handle: str | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Create an edge connecting two nodes."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -677,21 +573,15 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         backend = self.backend
         class WaitForGenerationInput(BaseModel):
             node_id: str = Field(description="Node with generation task")
-            timeout_seconds: float = Field(default=30.0, description="Max wait time in seconds")
+            timeout_seconds: float = Field(description="Max wait time in seconds")
 
         @tool(args_schema=WaitForGenerationInput)
         def wait_for_generation(
             node_id: str,
-            timeout_seconds: float = 30.0,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
+            timeout_seconds: float,
+            runtime: ToolRuntime,
         ) -> str:
             """Wait for a generation task (image/video) to complete."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -732,16 +622,10 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
         @tool(args_schema=SearchCanvasInput)
         def search_canvas(
             query: str,
+            runtime: ToolRuntime,
             node_types: list[str] | None = None,
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
         ) -> str:
             """Search nodes by content or metadata."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -765,92 +649,3 @@ IMPORTANT: For generation nodes (image_gen, video_gen), you MUST:
                 return f"Error searching: {e}"
 
         return search_canvas
-
-class TodoListMiddleware(AgentMiddleware):
-    """Middleware for task planning and tracking.
-
-    Provides tools for agents to break down complex tasks into steps.
-    """
-
-    def __init__(self):
-        """Initialize todo list middleware."""
-        pass
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest,
-        handler: Callable[[ModelRequest], ModelResponse],
-    ) -> ModelResponse:
-        """Add todo tools to the model request."""
-        # Generate todo tools
-        todo_tools = self._generate_todo_tools()
-
-        # Merge with existing tools
-        request.tools = [*request.tools, *todo_tools]
-
-        # Add todo-specific system prompt
-        todo_prompt = """
-You have access to todo list tools for planning:
-- write_todos: Create or update task list
-- read_todos: Read current task list
-
-Use these to break down complex tasks into manageable steps.
-"""
-        if request.system_prompt:
-            request.system_prompt = f"{request.system_prompt}\n\n{todo_prompt}"
-        else:
-            request.system_prompt = todo_prompt
-
-        return handler(request)
-
-    def _generate_todo_tools(self) -> list[BaseTool]:
-        """Generate todo tools."""
-        from langchain_core.tools import tool
-        class TodoItem(BaseModel):
-            content: str = Field(description="Task content")
-            status: str = Field(default="pending", description="Task status label")
-
-        class WriteTodosInput(BaseModel):
-            todos: list[TodoItem] = Field(description="List of tasks")
-
-        @tool(args_schema=WriteTodosInput)
-        def write_todos(
-            todos: list[TodoItem],
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
-        ) -> str:
-            """Create or update task list."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
-
-            # Store in state
-            runtime.state["todos"] = todos
-            return f"Updated task list with {len(todos)} items."
-
-        @tool
-        def read_todos(
-            state: Annotated[dict, InjectedState] = None,
-            config: RunnableConfig = None,
-            tool_call_id: Annotated[str, InjectedToolCallId] = None,
-        ) -> str:
-            """Read current task list."""
-            if state is None:
-                return "Error: Runtime context required"
-            
-            runtime = ToolRuntime(state=state, config=config or {}, tool_call_id=tool_call_id or "")
-
-            todos = runtime.state.get("todos", [])
-            if not todos:
-                return "No tasks in list."
-
-            lines = ["Task list:"]
-            for i, todo in enumerate(todos, 1):
-                status = todo.get("status", "pending")
-                content = todo.get("content", "")
-                lines.append(f"{i}. [{status}] {content}")
-            return "\n".join(lines)
-
-        return [write_todos, read_todos]

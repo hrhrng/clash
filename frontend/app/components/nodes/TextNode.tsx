@@ -127,7 +127,7 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
                     </div>
 
                     {/* Editor Content */}
-                    <div className="flex-1 overflow-hidden bg-white">
+                    <div className="flex-1 overflow-y-auto bg-white">
                         <MilkdownEditor value={content} onChange={setContent} />
                     </div>
                 </motion.div>
