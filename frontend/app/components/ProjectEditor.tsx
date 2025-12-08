@@ -709,20 +709,35 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         }
     };
 
-    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file && pendingNodeType) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const src = e.target?.result as string;
-                addNode(pendingNodeType, { src, label: file.name });
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('projectId', project.id);
+                formData.append('type', pendingNodeType);
+
+                const res = await fetch('/api/upload/asset', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!res.ok) {
+                    const errorText = await res.text();
+                    throw new Error(errorText || 'Failed to upload to R2');
+                }
+
+                const { url, storageKey } = await res.json();
+                addNode(pendingNodeType, { src: url, label: file.name, status: 'completed', storageKey });
+            } catch (err) {
+                console.error('Failed to upload file to R2', err);
+            } finally {
                 setPendingNodeType(null);
-            };
-            reader.onerror = () => {
-                console.error('Failed to read file');
-                setPendingNodeType(null);
-            };
-            reader.readAsDataURL(file);
+                if (event.target) {
+                    event.target.value = '';
+                }
+            }
         }
     };
 

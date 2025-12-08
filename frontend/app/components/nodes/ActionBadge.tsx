@@ -127,17 +127,23 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 }
             };
 
+            const getReferenceImageUrls = (sources: string[]) => {
+                const urls: string[] = [];
+                sources.forEach((src) => {
+                    if (!src) return;
+                    if (src.startsWith('http://') || src.startsWith('https://')) {
+                        urls.push(src);
+                    } else if (src.includes('base64,')) {
+                        console.warn('Skipping base64 image on frontend, backend expects URLs. Upload image to get a URL instead.');
+                    }
+                });
+                return urls;
+            };
+
             if (actionType === 'image-gen') {
                 // Collect connected images
                 const imageNodes = connectedNodes.filter(n => n?.type === 'image');
-                const base64Images = imageNodes.map(n => {
-                    const src = n?.data?.src;
-                    // Remove data:image/xxx;base64, prefix if present
-                    if (src && src.includes('base64,')) {
-                        return src.split('base64,')[1];
-                    }
-                    return null;
-                }).filter(Boolean);
+                const referenceImageUrls = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
 
                 // Map display model name to backend model name
                 let backendModel = 'gemini-2.5-flash-image';
@@ -148,15 +154,16 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                 const genResponse = await safeFetch('/api/generate/image', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        system_prompt: '',
-                        aspect_ratio: '16:9',
-                        base64_images: base64Images,
-                        model_name: backendModel,
-                        callback_url: `${window.location.origin}/api/internal/assets/update`
-                    }),
-                });
+                        body: JSON.stringify({
+                            prompt,
+                            system_prompt: '',
+                            aspect_ratio: '16:9',
+                            base64_images: [],
+                            reference_image_urls: referenceImageUrls,
+                            model_name: backendModel,
+                            callback_url: `${window.location.origin}/api/internal/assets/update`
+                        }),
+                    });
 
                 if (!genResponse.ok) {
                     let errorMessage = 'Image generation failed';
@@ -257,24 +264,18 @@ const ActionBadge = ({ data, selected, id }: NodeProps) => {
                     throw new Error('Video generation requires at least one connected image node');
                 }
 
-                const base64Images = imageNodes.map(n => {
-                    const src = n?.data?.src;
-                    // Remove data:image/xxx;base64, prefix if present
-                    if (src && src.includes('base64,')) {
-                        return src.split('base64,')[1];
-                    }
-                    return null;
-                }).filter(Boolean);
+                const referenceImageUrls = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
 
                 // 1. Call Python backend to generate video (returns task_id immediately)
                 const genResponse = await safeFetch('/api/generate/video', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        base64_images: base64Images,
-                        prompt,
-                        duration: 5,
-                        cfg_scale: 0.5,
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            base64_images: [],
+                            reference_image_urls: referenceImageUrls,
+                            prompt,
+                            duration: 5,
+                            cfg_scale: 0.5,
                         model: model === 'Kling' ? 'kling-v1' : model.toLowerCase().replace(' ', '-'),
                         callback_url: `${window.location.origin}/api/internal/assets/update`
                     }),

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import asyncio
 import json
 import uuid
+import base64
 
 from master_clash.config import get_settings
 from master_clash.tools.nano_banana import nano_banana_gen
@@ -48,13 +49,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def strip_data_url(base64_str: str) -> str:
+    return base64_str.split("base64,", 1)[1] if "base64," in base64_str else base64_str
+
+
+def fetch_urls_to_base64(urls: list[str]) -> list[str]:
+    """Fetch HTTP(S) image URLs and convert to base64 strings."""
+    results: list[str] = []
+    for url in urls or []:
+        if not url:
+            continue
+        try:
+            resp = requests.get(url)
+            resp.raise_for_status()
+            results.append(base64.b64encode(resp.content).decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"Failed to fetch reference image {url}: {e}")
+    return results
+
 # Request/Response Models
 class GenerateImageRequest(BaseModel):
     """Request to generate image using Nano Banana."""
     prompt: str = Field(..., description="Image generation prompt")
     system_prompt: str = Field(default="", description="System-level instructions")
     aspect_ratio: str = Field(default="16:9", description="Image aspect ratio")
-    base64_images: list[str] = Field(default=[], description="List of base64 encoded reference images")
+    base64_images: list[str] = Field(default=[], description="List of base64 encoded reference images (pure base64 preferred)")
+    reference_image_urls: list[str] = Field(default=[], description="Optional HTTP(S) image URLs to use as references")
     model_name: str | None = Field(default="gemini-2.5-flash-image", description="Model to use")
     callback_url: str | None = Field(default=None, description="Callback URL for status updates")
 
@@ -70,7 +91,8 @@ class GenerateImageResponse(BaseModel):
 class GenerateVideoRequest(BaseModel):
     """Request to generate video using Kling."""
     image_url: str | None = Field(default=None, description="Source image URL")
-    base64_images: list[str] = Field(default=[], description="Optional base64 images")
+    base64_images: list[str] = Field(default=[], description="Optional base64 images (pure base64 preferred)")
+    reference_image_urls: list[str] = Field(default=[], description="Optional HTTP(S) image URLs to use as references")
     prompt: str = Field(..., description="Video generation prompt")
     duration: int = Field(default=5, description="Duration in seconds")
     cfg_scale: float = Field(default=0.5, description="CFG Scale")
@@ -197,6 +219,11 @@ async def generate_image(request: GenerateImageRequest, background_tasks: Backgr
     import uuid
     internal_task_id = str(uuid.uuid4())
 
+    # base64_images should be base64; still allow data URLs for backward compatibility
+    base64_inputs = [strip_data_url(img) for img in request.base64_images or [] if img]
+    url_inputs = fetch_urls_to_base64(request.reference_image_urls)
+    normalized_images = base64_inputs + url_inputs
+
     # Start background task
     background_tasks.add_task(
         process_image_generation,
@@ -204,7 +231,7 @@ async def generate_image(request: GenerateImageRequest, background_tasks: Backgr
         {
             "text": request.prompt,
             "system_prompt": request.system_prompt,
-            "base64_images": request.base64_images,
+            "base64_images": normalized_images,
             "aspect_ratio": request.aspect_ratio,
         },
         request.callback_url
@@ -282,13 +309,17 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
     import uuid
     internal_task_id = str(uuid.uuid4())
     
+    base64_inputs = [strip_data_url(img) for img in request.base64_images or [] if img]
+    url_inputs = fetch_urls_to_base64(request.reference_image_urls)
+    normalized_images = base64_inputs + url_inputs
+
     # Start background task
     background_tasks.add_task(
         process_video_generation, 
         internal_task_id, 
         {
             "image_path": request.image_url,
-            "base64_images": request.base64_images,
+            "base64_images": normalized_images,
             "prompt": request.prompt,
             "duration": request.duration,
             "cfg_scale": request.cfg_scale,
@@ -492,7 +523,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 mode = None
                 payload = streamed
                 from langchain_core.load import dumps
-                logger.debug(f"Stream: streamed={dumps(streamed)}")
+                logger.info(f"Stream: streamed={dumps(streamed)}")
                 # Format is [namespace, mode, data] where namespace is a list
                 if isinstance(streamed, (list, tuple)) and len(streamed) == 3:
                     namespace, mode, payload = streamed

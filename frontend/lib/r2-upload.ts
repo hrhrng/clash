@@ -5,6 +5,12 @@
 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
+const sanitizeFileName = (fileName: string) => fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+const buildStorageKey = (projectId: string, fileName: string) => {
+    return `projects/${projectId}/assets/${sanitizeFileName(fileName)}`;
+};
+
 // Initialize R2 client with environment variables
 function getR2Client() {
     const accountId = process.env.R2_ACCOUNT_ID;
@@ -55,7 +61,7 @@ export async function uploadBase64ImageToR2(params: {
     const buffer = Buffer.from(normalizedBase64, 'base64');
 
     // Generate storage key
-    const storageKey = `projects/${projectId}/assets/${fileName}`;
+    const storageKey = buildStorageKey(projectId, fileName);
 
     // Upload to R2
     const client = getR2Client();
@@ -101,7 +107,7 @@ export async function uploadVideoFromUrlToR2(params: {
     const buffer = Buffer.from(arrayBuffer);
 
     // Generate storage key
-    const storageKey = `projects/${projectId}/assets/${fileName}.mp4`;
+    const storageKey = buildStorageKey(projectId, `${fileName}.mp4`);
 
     // Upload to R2
     const client = getR2Client();
@@ -117,5 +123,45 @@ export async function uploadVideoFromUrlToR2(params: {
     // Return public URL
     const url = `${publicUrl}/${storageKey}`;
 
+    return { storageKey, url };
+}
+
+/**
+ * Upload arbitrary binary data (Buffer/ArrayBuffer/Uint8Array) to R2
+ */
+export async function uploadBufferToR2(params: {
+    buffer: Buffer | ArrayBuffer | Uint8Array;
+    projectId: string;
+    fileName: string;
+    contentType?: string;
+}) {
+    const { buffer, projectId, fileName, contentType = 'application/octet-stream' } = params;
+
+    const bucketName = process.env.R2_BUCKET_NAME;
+    const publicUrl = process.env.R2_PUBLIC_URL;
+
+    if (!bucketName || !publicUrl) {
+        throw new Error('R2 bucket not configured. Set R2_BUCKET_NAME and R2_PUBLIC_URL in .env');
+    }
+
+    const normalizedBuffer = Buffer.isBuffer(buffer)
+        ? buffer
+        : buffer instanceof ArrayBuffer
+            ? Buffer.from(buffer)
+            : Buffer.from(buffer);
+
+    const storageKey = buildStorageKey(projectId, fileName);
+
+    const client = getR2Client();
+    await client.send(
+        new PutObjectCommand({
+            Bucket: bucketName,
+            Key: storageKey,
+            Body: normalizedBuffer,
+            ContentType: contentType,
+        })
+    );
+
+    const url = `${publicUrl}/${storageKey}`;
     return { storageKey, url };
 }
