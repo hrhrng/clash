@@ -227,6 +227,15 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             system_prompt = f"{request.system_prompt}\n\n{canvas_prompt}"
         else:
             system_prompt = canvas_prompt
+        # if isinstance(last_message:=request.messages[-1], ToolMessage):
+        #     if last_message.name == "read_canvas_node":
+        #         if isinstance(last_message.content, dict):
+        #             content = last_message.content['text']
+        #         else:
+        #             content = last_message.content
+        #         if content.startswith("video"): # 加上视频Message
+        #             messages = request.messages.append(UserMessage(""))
+                
 
         return await handler(request.override(system_prompt=system_prompt))
 
@@ -306,7 +315,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             node_id: str,
             runtime: ToolRuntime,
         ) -> list[str | dict]:
-            """Read a specific node's detailed data."""
+            """Read a specific node's detailed data.
+                For image, specially, you can see it.
+            """
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
 
@@ -350,27 +361,49 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                     if source:
                         try:
                             if node.type == "video":
-                                base64_data, mime_type = to_base64_and_mime(source, "video/mp4")
-                                media_part = {
-                                    "type": "media",
-                                    "data": base64_data,
-                                    "mime_type": mime_type,
-                                }
+                                # download source url video to temp_path
+                                # import tempfile
+                                # import requests
+                                # with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                                #     r = requests.get(source)
+                                #     tmp.write(r.content)
+                                # from google import genai
+                                # client = genai.Client()
+                                # uri = client.files.upload(tmp.name)
+                                # while uri.state.name == "PROCESSING":
+                                #     import time
+                                #     time.sleep(2)
+                                #     uri = client.files.get(name=uri.name)
+                                # media_part = {
+                                #     "type": "media",
+                                #     "file_uri": uri.uri,
+                                #     "mime_type": "video/mp4",
+                                # }
+                                # from langchain.messages import HumanMessage
+                                # runtime.state.get("messages").append(
+                                #     HumanMessage(
+                                #         [
+                                #             f"this is the video of node {node_id}",
+                                #             media_part
+                                #         ]
+                                #     )
+                                # )
+                                pass
                             else:
                                 base64_data, mime_type = to_base64_and_mime(source, "image/jpeg")
                                 media_part = {
                                     "type": "image_url",
                                     "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
                                 }
-                            return [media_part, text_part]
+                                return [media_part, text_part]
                         except Exception:
                             # If conversion fails, fall back to returning raw source + text
                             raw_part = {"type": "image_url", "image_url": source} if node.type == "image" else {"type": "media", "data": source}
                             return [raw_part, text_part]
 
-                    return text_part.get("text")
+                    return [text_part]
 
-                return text_part.get("text")
+                return [text_part]
 
             except Exception as e:
                 return f"Error reading node: {e}"

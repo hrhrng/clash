@@ -4,6 +4,7 @@ import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
 import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/lib/db/schema';
 import { getRequestContext } from '@cloudflare/next-on-pages';
+import { uploadBufferToR2, uploadVideoFromUrlToR2 } from '@/lib/r2-upload';
 
 // Helper to get DB (duplicated from actions.ts for now)
 const getDb = async () => {
@@ -54,13 +55,75 @@ export async function POST(request: Request) {
 
         console.log('[API] Found asset:', asset.id, 'Current status:', asset.status);
 
+        let updatedUrl = url || asset.url;
+        let updatedStorageKey = asset.storageKey;
+
+        const r2PublicBase = process.env.R2_PUBLIC_URL;
+        const shouldUploadToR2 = status === 'completed'
+            && updatedUrl
+            && typeof updatedUrl === 'string'
+            && (!r2PublicBase || !updatedUrl.startsWith(r2PublicBase));
+
+        if (shouldUploadToR2 && updatedUrl) {
+            // Always upload generated assets to R2 so we don't persist base64 or external URLs
+            if (updatedUrl.includes('base64,')) {
+                const mimeMatch = updatedUrl.match(/^data:(.*?);base64,(.*)$/);
+                const contentType = mimeMatch?.[1] || (asset.type === 'video' ? 'video/mp4' : 'image/png');
+                const base64Payload = mimeMatch?.[2] || updatedUrl.split('base64,')[1];
+                const ext = contentType.split('/')[1]?.split(';')[0] || (asset.type === 'video' ? 'mp4' : 'png');
+
+                const uploadResult = await uploadBufferToR2({
+                    buffer: Buffer.from(base64Payload, 'base64'),
+                    projectId: asset.projectId,
+                    fileName: `${asset.id}.${ext}`,
+                    contentType,
+                });
+
+                updatedUrl = uploadResult.url;
+                updatedStorageKey = uploadResult.storageKey;
+            } else if (asset.type === 'video') {
+                const uploadResult = await uploadVideoFromUrlToR2({
+                    videoUrl: updatedUrl,
+                    projectId: asset.projectId,
+                    fileName: asset.id,
+                });
+
+                updatedUrl = uploadResult.url;
+                updatedStorageKey = uploadResult.storageKey;
+            } else {
+                const response = await fetch(updatedUrl);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch asset from ${updatedUrl}: ${response.status}`);
+                }
+
+                const arrayBuffer = await response.arrayBuffer();
+                const contentType = response.headers.get('content-type') || 'application/octet-stream';
+                const extension = contentType.split('/')[1]?.split(';')[0] || 'bin';
+
+                const uploadResult = await uploadBufferToR2({
+                    buffer: arrayBuffer,
+                    projectId: asset.projectId,
+                    fileName: `${asset.id}.${extension}`,
+                    contentType,
+                });
+
+                updatedUrl = uploadResult.url;
+                updatedStorageKey = uploadResult.storageKey;
+            }
+        }
+
+        const metadataValue = metadata
+            ? (typeof metadata === 'string' ? metadata : JSON.stringify(metadata))
+            : asset.metadata;
+
         // Update asset
         await db.update(schema.assets)
             .set({
                 status,
-                url: url || asset.url,
+                url: updatedUrl,
+                storageKey: updatedStorageKey,
                 description: description || asset.description,
-                metadata: metadata ? JSON.stringify(metadata) : asset.metadata,
+                metadata: metadataValue,
                 // updatedAt: new Date(), // Assuming updatedAt exists? Schema doesn't have it for assets, only createdAt.
             })
             .where(eq(schema.assets.id, asset.id));
