@@ -50,11 +50,11 @@ export async function createProject(prompt: string) {
     redirect(`/projects/${project.id}?prompt=${encodeURIComponent(prompt)}`);
 }
 
-export async function getProjects() {
+export async function getProjects(limit = 10) {
     const db = await getDb();
     return await db.query.projects.findMany({
         orderBy: [desc(projects.createdAt)],
-        limit: 10,
+        limit: limit,
     });
 }
 
@@ -83,6 +83,12 @@ export async function updateProjectName(id: string, name: string) {
         .set({ name })
         .where(eq(projects.id, id));
     revalidatePath(`/projects/${id}`);
+}
+
+export async function deleteProject(id: string) {
+    const db = await getDb();
+    await db.delete(projects).where(eq(projects.id, id));
+    revalidatePath('/projects');
 }
 
 // Chat/Agent Actions
@@ -161,17 +167,41 @@ export async function createAsset(data: {
         const db = await getDb();
 
         // Use pre-allocated ID if provided, otherwise generate semantic ID for asset
-        const assetId = data.id || await generateSemanticId(data.projectId);
+        let assetId = data.id || await generateSemanticId(data.projectId);
 
         // Ensure taskId exists
         const taskId = data.taskId || crypto.randomUUID();
-        const assetData = { ...data, id: assetId, taskId };
+        const baseAssetData = { ...data, taskId };
 
-        // Insert asset first
-        const [asset] = await db.insert(schema.assets).values({
-            ...assetData,
-            description: null // Start with null description
-        }).returning();
+        // Insert asset first, retry once with a fresh ID if the pre-allocated one collides
+        let asset;
+        try {
+            [asset] = await db.insert(schema.assets).values({
+                ...baseAssetData,
+                id: assetId,
+                description: null // Start with null description
+            }).returning();
+        } catch (error: any) {
+            const message = String(error?.message || '');
+            const isIdConflict =
+                message.includes('UNIQUE constraint failed: asset.id') ||
+                message.includes('UNIQUE constraint failed: assets.id') ||
+                message.includes('SQLITE_CONSTRAINT');
+
+            if (!isIdConflict) {
+                throw error;
+            }
+
+            // Generate a new ID and retry once
+            assetId = await generateSemanticId(data.projectId);
+            console.warn('[createAsset] assetId collision, retrying with new id', { previous: data.id, retry: assetId });
+
+            [asset] = await db.insert(schema.assets).values({
+                ...baseAssetData,
+                id: assetId,
+                description: null
+            }).returning();
+        }
 
         console.log('createAsset success:', asset);
 

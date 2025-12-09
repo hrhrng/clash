@@ -154,18 +154,26 @@ def kling_video_gen(
     """
     # Determine start and end images
     start_image = None
+    start_is_base64 = True
     tail_image = None
+    tail_is_base64 = True
 
     if base64_images and len(base64_images) > 0:
         start_image = base64_images[0]
+        start_is_base64 = not str(start_image).startswith(("http://", "https://"))
         if len(base64_images) > 1:
             tail_image = base64_images[1]
+            tail_is_base64 = not str(tail_image).startswith(("http://", "https://"))
     elif image_path:
         # Fallback to image_path if no base64_images provided
         start_image = image_to_base64(image_path)
-    
+        start_is_base64 = True
+
     if not start_image:
         raise ValueError("No input image provided (base64_images or image_path required)")
+
+    # If either image is a URL, send as URL (is_base64=False) so Kling fetches it directly
+    is_base64_flag = start_is_base64 and (tail_image is None or tail_is_base64)
 
     # Initialize generator
     generator = KlingVideoGenerator()
@@ -178,7 +186,7 @@ def kling_video_gen(
         duration=duration,
         cfg_scale=cfg_scale,
         negative_prompt=negative_prompt,
-        is_base64=True,
+        is_base64=is_base64_flag,
         model=model,
         max_wait_time=600,  # Increase timeout to 10 minutes
     )

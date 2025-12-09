@@ -383,7 +383,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             nodeData = { actionType: 'image-gen', modelName: 'Nano Banana', ...nodeData };
         } else if (type === 'action-badge-video' || type === 'video-gen') {
             nodeType = 'action-badge';
-            nodeData = { actionType: 'video-gen', modelName: 'Veo3', ...nodeData };
+            nodeData = { actionType: 'video-gen', modelName: 'Kling', ...nodeData };
         } else if (type === 'text') {
             nodeData = { label: 'Text Node', content: '# Hello World\nDouble click to edit.', ...nodeData };
         } else if (type === 'prompt') {
@@ -755,7 +755,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     if (!rest.height) rest.height = 60;
                 } else if (type === 'video-gen') {
                     type = 'action-badge';
-                    data = { actionType: 'video-gen', modelName: 'Veo3', ...data };
+                    data = { actionType: 'video-gen', modelName: 'Kling', ...data };
                     if (!rest.width) rest.width = 200;
                     if (!rest.height) rest.height = 60;
                 }

@@ -205,18 +205,29 @@ Sub-agents have isolated context and their own tools.
                     graph = target.graph
                 else:
                     # Compile SubAgent definition on first use
+                    
                     logger.info(f"Compiling sub-agent: {agent}")
                     graph = self._compile_subagent(target)
 
                 # Invoke sub-agent
                 logger.info(f"Invoking sub-agent: {agent}")
-                result = await graph.ainvoke(sub_state)
+                config:RunnableConfig = config.copy()
+                config["metadata"].update({"agent_id": runtime.tool_call_id})
+                result = await graph.ainvoke(sub_state, config)
+                from langchain_core.load import dumps
+                logger.info(dumps(result))
                 messages = result.get("messages", [])
 
                 if messages:
                     last_msg = messages[-1]
                     content = getattr(last_msg, "content", "")
-                    logger.info(f"Sub-agent {agent} completed successfully")
+                    logger.info(f"Sub-agent {agent} completed successfully {content}")
+                    if isinstance(content, list):
+                        content = content[-1]
+                        if isinstance(content, str):
+                            content = content.strip()
+                        elif isinstance(content, dict) and "text" in content:
+                            content = content["text"]
                     return f"{agent} completed: {content}"
 
                 logger.info(f"Sub-agent {agent} completed with no output")

@@ -180,7 +180,7 @@ class CanvasBackendProtocol(Protocol):
         """
         ...
 
-    def wait_for_task(
+    async def wait_for_task(
         self,
         project_id: str,
         node_id: str,
@@ -411,14 +411,14 @@ class StateCanvasBackend:
             error="Edge creation not yet implemented via SSE",
         )
 
-    def wait_for_task(
+    async def wait_for_task(
         self,
         project_id: str,
         node_id: str,
         timeout_seconds: float = 30.0,
     ) -> TaskStatusResult:
         """Wait for generation task to complete."""
-        from master_clash.context import find_node_by_id, get_asset_id, get_project_context
+        from master_clash.context import find_node_by_id, get_asset_id, get_project_context, get_status
 
         context = get_project_context(project_id, force_refresh=True)
         if not context:
@@ -428,32 +428,18 @@ class StateCanvasBackend:
             )
 
         # Check if asset exists
-        asset_id = get_asset_id(node_id, context)
-        if asset_id:
-            # Task completed
-            node = find_node_by_id(node_id, context)
-            output = {"asset_id": asset_id}
-            if node:
-                output["node_data"] = node.data
-
-            return TaskStatusResult(
-                status="completed",
-                output=output,
-            )
-
-        # Check if node exists
-        node = find_node_by_id(node_id, context)
-        if node:
-            # Node exists but no asset yet - still generating
-            return TaskStatusResult(
-                status="generating",
-            )
-
-        # Node not found
-        return TaskStatusResult(
-            status="node_not_found",
-            error=f"Node {node_id} not found",
-        )
+        status = get_status(node_id, context)
+        
+        if not status:
+            return TaskStatusResult(status="completed")
+        
+        if status != "completed":
+            import asyncio
+            await asyncio.sleep(timeout_seconds)
+            status = get_status(node_id, context)
+        if not status:
+            return TaskStatusResult(status="completed")
+        return TaskStatusResult(status=status)
 
     def timeline_edit(
         self,
