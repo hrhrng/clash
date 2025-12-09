@@ -15,65 +15,66 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [showDescription, setShowDescription] = useState(false);
 
     useEffect(() => {
-        // Poll if pending OR (completed but missing description)
-        const shouldPoll = (status === 'pending') || (status === 'completed' && !description);
+        // Poll until we have a completed asset with a URL (and optionally description)
+        const shouldPoll = !!data.assetId && (status !== 'failed') && (status !== 'completed' || !imageUrl);
 
-        if (shouldPoll && data.assetId) {
+        if (shouldPoll) {
             const interval = setInterval(async () => {
                 try {
                     console.log(`[ImageNode] Polling asset ${data.assetId}...`);
                     const res = await fetch(`/api/assets/${data.assetId}`);
-                    if (res.ok) {
-                        const asset = await res.json();
-                        console.log(`[ImageNode] Polling response for ${data.assetId}:`, { status: asset.status, url: asset.url });
-                        if (asset) {
-                            // Update status if changed
-                            if (asset.status !== status) {
-                                console.log(`[ImageNode] Status changed: ${status} -> ${asset.status}`);
-                                setStatus(asset.status);
-                            }
+                    if (!res.ok) return;
 
-                            // Update URL if changed
-                            if (asset.url !== imageUrl) {
-                                setImageUrl(asset.url);
-                            }
+                    const asset = await res.json();
+                    console.log(`[ImageNode] Polling response for ${data.assetId}:`, { status: asset.status, url: asset.url });
 
-                            // Update description if available
-                            if (asset.description && asset.description !== description) {
-                                setDescription(asset.description);
-                            }
+                    if (!asset) return;
 
-                            // Update node data
-                            setNodes((nds) =>
-                                nds.map((node) => {
-                                    if (node.id === id) {
-                                        return {
-                                            ...node,
-                                            data: {
-                                                ...node.data,
-                                                src: asset.url,
-                                                status: asset.status,
-                                                description: asset.description,
-                                            },
-                                        };
-                                    }
-                                    return node;
-                                })
-                            );
+                    // Apply remote updates
+                    if (asset.status && asset.status !== status) {
+                        setStatus(asset.status);
+                    }
 
-                            // Stop polling if completed and description exists (or failed)
-                            if (asset.status === 'failed' || (asset.status === 'completed' && asset.description)) {
-                                clearInterval(interval);
-                            }
-                        }
+                    if (asset.url && asset.url !== imageUrl) {
+                        setImageUrl(asset.url);
+                    }
+
+                    if (asset.description && asset.description !== description) {
+                        setDescription(asset.description);
+                    }
+
+                    // Update node data for downstream consumers
+                    if ((asset.url && asset.url !== data.src) || (asset.status && asset.status !== data.status) || (asset.description && asset.description !== data.description)) {
+                        setNodes((nds) =>
+                            nds.map((node) => {
+                                if (node.id === id) {
+                                    return {
+                                        ...node,
+                                        data: {
+                                            ...node.data,
+                                            src: asset.url || node.data.src,
+                                            status: asset.status || node.data.status,
+                                            description: asset.description || node.data.description,
+                                        },
+                                    };
+                                }
+                                return node;
+                            })
+                        );
+                    }
+
+                    // Stop polling once we have a completed asset with a URL, or on failure
+                    if (asset.status === 'failed' || (asset.status === 'completed' && asset.url)) {
+                        clearInterval(interval);
                     }
                 } catch (e) {
                     console.error("Polling error:", e);
                 }
             }, 3000);
+
             return () => clearInterval(interval);
         }
-    }, [status, description, data.assetId, id, setNodes, imageUrl]);
+    }, [status, description, data.assetId, id, setNodes, imageUrl, data.src, data.status, data.description]);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();

@@ -32,6 +32,9 @@ from master_clash.workflow.backends import (
     TimelineResult,
     UpdateNodeResult,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Type aliases
 T = TypeVar("T")
@@ -275,27 +278,74 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             resolved_backend = backend(runtime) if callable(backend) else backend
 
             try:
-                nodes = resolved_backend.list_nodes(
-                    project_id=project_id,
-                    node_type=node_type,
-                    parent_id=parent_id,
-                )
-
+                # Fetch all nodes so we can build a full tree; filters are applied during formatting
+                nodes = resolved_backend.list_nodes(project_id=project_id, node_type=None, parent_id=None)
+                logger.info(f"list canvas nodes: {nodes}")
                 if not nodes:
                     return "No nodes found."
 
-                lines = ["Canvas nodes:"]
+                # Build parent -> children map
+                from collections import defaultdict
+
+                children: dict[str | None, list[NodeInfo]] = defaultdict(list)
                 for node in nodes:
+                    children[node.parent_id].append(node)
+
+                def display_label(node: NodeInfo) -> str:
                     data = node.data or {}
                     name = data.get("label") or data.get("name") or ""
                     description = data.get("description") or ""
-
-                    line = f"- {node.id} ({node.type}): {name}" if name else f"- {node.id} ({node.type})"
+                    base = f"{node.id} ({node.type})"
+                    if name:
+                        base = f"{base}: {name}"
                     if description:
-                        line = f"{line} - {description}"
+                        base = f"{base} - {description}"
+                    if node.type == "group":
+                        base = f"{base}/"
+                    return base
 
-                    lines.append(line)
-                return "\n".join(lines)
+                def matches_filter(node: NodeInfo) -> bool:
+                    return node_type is None or node.type == node_type
+
+                def render_tree(current_parent: str | None, indent: str = "") -> tuple[list[str], bool]:
+                    lines: list[str] = []
+                    has_match = False
+
+                    # Groups first, then others, for a folder-like view
+                    sorted_children = sorted(
+                        children.get(current_parent, []),
+                        key=lambda n: (0 if n.type == "group" else 1, (n.data or {}).get("label", ""), n.id),
+                    )
+
+                    for child in sorted_children:
+                        child_lines: list[str] = []
+                        child_matches = matches_filter(child)
+
+                        if child.type == "group":
+                            rendered_child_lines, subtree_has_match = render_tree(child.id, indent + "  ")
+                            if child_matches or subtree_has_match:
+                                lines.append(f"{indent}- {display_label(child)}")
+                                lines.extend(rendered_child_lines)
+                                has_match = True
+                                continue
+                        else:
+                            if child_matches:
+                                lines.append(f"{indent}- {display_label(child)}")
+                                has_match = True
+                                continue
+
+                        # If the child didn't match and isn't a group with matches, skip it
+                    return lines, has_match
+
+                # Start from requested parent or root (None)
+                root_parent = parent_id or None
+                tree_lines, has_any = render_tree(root_parent, "")
+
+                if not has_any:
+                    return "No nodes found."
+
+                header = "Canvas nodes (tree):"
+                return "\n".join([header, *tree_lines])
 
             except Exception as e:
                 return f"Error listing nodes: {e}"
@@ -507,8 +557,8 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                 default=None,
                 description="Optional override; inferred from node_type when omitted",
             )
-            upstreamNodeIds: list[str] | None = Field(
-                default=None, description="Optional upstream node linkages, could link image node to reference or edit and prompt node as natural language instruction"
+            upstreamNodeIds: list[str] = Field(
+                description="Necessary upstream node linkages, could link image node to reference or edit and prompt node as natural language instruction"
             )
 
             class Config:
@@ -574,7 +624,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
 
                 # Return both nodeId and assetId for generation nodes
                 if result.asset_id:
-                    return f"Created generation node - nodeId: {result.node_id}, assetNodeId: {result.asset_id}"
+                    return f"Created an generating asset with node_id {result.asset_id}"
                 else:
                     return f"Created generation node {result.node_id}"
 
@@ -674,22 +724,22 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
 
         backend = self.backend
         class WaitForGenerationInput(BaseModel):
-            node_id: str = Field(description="Node with generation task")
+            node_id: str = Field(description="id of generated asset node or assetId")
             timeout_seconds: float = Field(description="Max wait time in seconds")
 
         @tool(args_schema=WaitForGenerationInput)
-        def wait_for_generation(
+        async def wait_for_generation(
             node_id: str,
             timeout_seconds: float,
             runtime: ToolRuntime,
         ) -> str:
-            """Wait for a generation task (image/video) to complete."""
+            """Wait for a generated asset node to be ready"""
 
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
 
             try:
-                result = resolved_backend.wait_for_task(
+                result = await resolved_backend.wait_for_task(
                     project_id=project_id,
                     node_id=node_id,
                     timeout_seconds=timeout_seconds,
@@ -699,8 +749,8 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                     return f"Error: {result.error}"
 
                 if result.status == "completed":
-                    return f"Task completed. Output: {result.output}"
-                elif result.status == "generating":
+                    return f"Task completed."
+                elif result.status in ("pending" , "generating"):
                     return f"Task still generating. Please retry wait_for_generation after a moment."
                 elif result.status == "failed":
                     return f"Task failed: {result.error}"
@@ -727,7 +777,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             node_id: str,
             runtime: ToolRuntime,
         ) -> str:
-            """Rerun a generation node (image/video) to regenerate the asset.
+            """Rerun a generation node (action-badge) to regenerate the asset.
 
             This is useful when you want to regenerate an image/video with the same parameters.
             """

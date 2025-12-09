@@ -25,6 +25,7 @@ from master_clash.workflow.multi_agent import graph
 # from master_clash.video_analysis import VideoAnalysisOrchestrator, VideoAnalysisConfig, VideoAnalysisResult
 from langchain_core.messages import HumanMessage
 import requests
+from master_clash.utils import image_to_base64
 
 
 # Configure logging
@@ -54,8 +55,19 @@ def strip_data_url(base64_str: str) -> str:
     return base64_str.split("base64,", 1)[1] if "base64," in base64_str else base64_str
 
 
-def fetch_urls_to_base64(urls: list[str]) -> list[str]:
-    """Fetch HTTP(S) image URLs and convert to base64 strings."""
+def fetch_urls_to_base64(
+    urls: list[str],
+    failed_urls: list[str] | None = None,
+    raise_on_fail: bool = False,
+) -> list[str]:
+    """
+    Fetch HTTP(S) image URLs and convert to base64 strings.
+
+    Args:
+        urls: list of URLs to fetch
+        failed_urls: optional list to append failures to
+        raise_on_fail: when True, raise HTTPException on first failure
+    """
     results: list[str] = []
     for url in urls or []:
         if not url:
@@ -66,6 +78,13 @@ def fetch_urls_to_base64(urls: list[str]) -> list[str]:
             results.append(base64.b64encode(resp.content).decode("utf-8"))
         except Exception as e:
             logger.warning(f"Failed to fetch reference image {url}: {e}")
+            if failed_urls is not None:
+                failed_urls.append(url)
+            if raise_on_fail:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to fetch reference image: {url}"
+                )
     return results
 
 # Request/Response Models
@@ -221,7 +240,7 @@ async def generate_image(request: GenerateImageRequest, background_tasks: Backgr
 
     # base64_images should be base64; still allow data URLs for backward compatibility
     base64_inputs = [strip_data_url(img) for img in request.base64_images or [] if img]
-    url_inputs = fetch_urls_to_base64(request.reference_image_urls)
+    url_inputs = fetch_urls_to_base64(request.reference_image_urls, raise_on_fail=True)
     normalized_images = base64_inputs + url_inputs
 
     # Start background task
@@ -308,17 +327,43 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
     """
     import uuid
     internal_task_id = str(uuid.uuid4())
-    
+
+    # Normalize all possible image inputs to base64
+    primary_image_base64 = None
+    failed_reference_urls: list[str] = []
+    if request.image_url:
+        if request.image_url.startswith(("http://", "https://")):
+            fetched = fetch_urls_to_base64([request.image_url], failed_reference_urls, raise_on_fail=True)
+            if fetched:
+                primary_image_base64 = fetched[0]
+        elif "base64," in request.image_url:
+            primary_image_base64 = strip_data_url(request.image_url)
+        else:
+            try:
+                primary_image_base64 = image_to_base64(request.image_url)
+            except Exception as e:
+                logger.warning(f"Failed to read image_path {request.image_url}: {e}")
+
     base64_inputs = [strip_data_url(img) for img in request.base64_images or [] if img]
-    url_inputs = fetch_urls_to_base64(request.reference_image_urls)
-    normalized_images = base64_inputs + url_inputs
+    url_inputs = fetch_urls_to_base64(request.reference_image_urls, failed_reference_urls, raise_on_fail=True)
+    normalized_images = ([primary_image_base64] if primary_image_base64 else []) + base64_inputs + url_inputs
+
+    # If we still don't have an image but we have reachable URLs, fall back to passing the URL to Kling (it can fetch URLs)
+    if not normalized_images and failed_reference_urls:
+        logger.warning(f"No images could be fetched; falling back to passing URLs directly: {failed_reference_urls}")
+        normalized_images = failed_reference_urls
+
+    if not normalized_images:
+        raise HTTPException(
+            status_code=400,
+            detail="An input image is required. Provide base64_images, reference_image_urls, or image_url."
+        )
 
     # Start background task
     background_tasks.add_task(
         process_video_generation, 
         internal_task_id, 
         {
-            "image_path": request.image_url,
             "base64_images": normalized_images,
             "prompt": request.prompt,
             "duration": request.duration,
@@ -425,17 +470,22 @@ class StreamEmitter:
         logger.info(f"Emitting event: {event_type} - {str(data)[:200]}...")
         return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
-    def text(self, content: str, agent: str = "Director") -> str:
+    def text(self, content: str, agent: str = "Director", agent_id: str | None = None) -> str:
         """Output text token/message."""
-        return self.format_event("text", {"agent": agent, "content": content})
+        payload = {"agent": agent, "content": content}
+        if agent_id:
+            payload["agent_id"] = agent_id
+        return self.format_event("text", payload)
 
-    def thinking(self, content: str, agent: str = None, id: str = None) -> str:
+    def thinking(self, content: str, agent: str = None, id: str = None, agent_id: str | None = None) -> str:
         """Output thinking token/message."""
         data = {"content": content}
         if agent:
             data["agent"] = agent
         if id:
             data["id"] = id
+        if agent_id:
+            data["agent_id"] = agent_id
         return self.format_event("thinking", data)
 
     def sub_agent_start(self, agent: str, task: str, id: str) -> str:
@@ -509,8 +559,45 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
         emitted_tool_ids = set()
         tool_id_to_name = {}  # Cache tool_call_id -> tool_name mapping
         tool_call_to_agent = {}  # Cache task_delegation tool_call_id -> target_agent_name mapping
-        namespace_to_agent = {}  # Cache namespace (first element) -> agent_name mapping
-        current_delegation_agent = None  # Track the currently active delegated agent
+        # Cache namespace (first element) -> (agent_name, agent_id)
+        # agent_id is the task_delegation tool_call_id that spawned this namespace
+        namespace_to_agent: dict[str, tuple[str, str | None]] = {}
+        # Queue of pending delegations: when a new namespace appears right after task_delegation,
+        # use the next queued (agent, tool_id) as its identity so agent_id == tool_call_id.
+
+        def resolve_agent(namespace, fallback_agent: str | None) -> tuple[str | None, str | None]:
+            """Map a namespace to a stable agent + agent_id (delegation tool_call_id)."""
+            agent = fallback_agent
+            agent_id = None
+            ns_first = namespace[0] if namespace and isinstance(namespace[0], str) else None
+
+            # 1) Try to derive agent_id from namespace (tools:<id> / calls:<id> / tools:call_xxx)
+            if ns_first and ":" in ns_first:
+                _, maybe_call = ns_first.split(":", 1)
+                agent_id = maybe_call  # even if it lacks call_ prefix
+                mapped_agent = tool_call_to_agent.get(agent_id)
+                if mapped_agent:
+                    agent = mapped_agent
+                    namespace_to_agent[ns_first] = (mapped_agent, agent_id)
+
+            # 2) Check cache
+            if ns_first:
+                cached = namespace_to_agent.get(ns_first)
+                if cached:
+                    agent, agent_id = cached
+                    logger.info(f"[AGENT_NAME] Resolved from cache: {ns_first} -> {agent} ({agent_id})")
+                elif agent_id and not agent:
+                    # 3) If we have an id but missing name, try mapping from tool_call_to_agent
+                    mapped_agent = tool_call_to_agent.get(agent_id)
+                    if mapped_agent:
+                        agent = mapped_agent
+                        namespace_to_agent[ns_first] = (mapped_agent, agent_id)
+                        logger.info(f"[AGENT_NAME] Mapped via tool_call_to_agent: {ns_first} -> {agent} ({agent_id})")
+
+            # 4) Fallback id for isolation
+            if ns_first and not agent_id:
+                agent_id = ns_first
+            return agent, agent_id
 
         try:
             async for streamed in graph.astream(
@@ -552,23 +639,17 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     if not namespace and agent_name == "model":
                         logger.info(f"[AGENT_NAME] Root graph agent -> Director")
                         agent_name = "Director"
-                    # Handle sub-graph: resolve agent name from task_delegation mapping
-                    elif namespace:
-                        # The namespace format is like: ('tools:UUID',) or ('tools:UUID', '1')
-                        # We use a simple strategy: assume the most recent task_delegation is the current sub-agent
-                        ns_first = namespace[0] if namespace and isinstance(namespace[0], str) else None
-
-                        # Check if we've already cached this namespace
-                        if ns_first and ns_first in namespace_to_agent:
-                            agent_name = namespace_to_agent[ns_first]
-                            logger.info(f"[AGENT_NAME] Resolved from cache: {ns_first} -> {agent_name}")
-                        elif ns_first and current_delegation_agent:
-                            # Cache this namespace to the current delegated agent
-                            namespace_to_agent[ns_first] = current_delegation_agent
-                            agent_name = current_delegation_agent
-                            logger.info(f"[AGENT_NAME] New namespace {ns_first} -> {current_delegation_agent}")
-                        else:
-                            logger.debug(f"[NAMESPACE] No mapping for namespace: {namespace}, current_delegation={current_delegation_agent}")
+                    # Handle sub-graph: resolve agent name/id from task_delegation mapping
+                    agent_name, agent_id = resolve_agent(namespace, agent_name)
+                    #
+                    agent_id = metadata.get("agent_id", "")
+                    logger.info(f"real agent_id: {agent_id}")
+                    # Normalize agent_id and prefer mapped agent name
+                    if isinstance(agent_id, str) and agent_id.startswith("tools:"):
+                        agent_id = agent_id.split(":", 1)[1]
+                    mapped_agent = tool_call_to_agent.get(agent_id) if agent_id else None
+                    if mapped_agent:
+                        agent_name = mapped_agent
 
                     # Handle tool calls
                     tool_calls = []
@@ -604,9 +685,10 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                                     target_agent = tool_args.get("agent")
                                     if target_agent:
                                         tool_call_to_agent[tool_id] = target_agent
-                                        current_delegation_agent = target_agent  # Track active delegation
+                                        namespace_to_agent[f"tools:{tool_id}"] = (target_agent, tool_id)
+                                        namespace_to_agent[f"calls:{tool_id}"] = (target_agent, tool_id)
+                                        namespace_to_agent[tool_id] = (target_agent, tool_id)
                                         logger.info(f"[MAPPING] Cached: {tool_id} -> {target_agent}")
-                                        logger.info(f"[MAPPING] Set current_delegation_agent = {target_agent}")
                                         logger.info(f"[TOOL_START DEBUG] task_delegation args: {tool_args}")
                                         logger.info(f"[TOOL_START DEBUG] target_agent: {target_agent}")
 
@@ -614,7 +696,8 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                                     "id": tool_id,
                                     "tool": tool_name,
                                     "input": tool_args,
-                                    "agent": agent_name or "Agent"
+                                    "agent": agent_name or "Agent",
+                                    "agent_id": agent_id
                                 })
 
                     # Handle tool outputs (ToolMessage)
@@ -640,12 +723,15 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         # If this is a task_delegation tool_end, the agent should be Director (the one who called it)
                         # Otherwise, use the resolved agent_name from namespace
                         tool_end_agent = agent_name
+                        tool_end_agent_id = agent_id
                         if tool_name == "task_delegation":
                             # task_delegation is always called by Director
                             tool_end_agent = "Director"
+                            tool_end_agent_id = tool_call_id  # use delegation call id as the block id
                         elif not namespace:
                             # Root graph, should be Director
                             tool_end_agent = "Director"
+                            tool_end_agent_id = None
                         # else: use the resolved agent_name from namespace (sub-agent)
 
                         logger.info(f"[TOOL_END] Emitting tool_end: id={tool_call_id}, tool={tool_name}, agent={tool_end_agent}")
@@ -660,17 +746,13 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         )
                         tool_status = "failed" if is_error else "success"
 
-                        # Reset current_delegation_agent when task_delegation completes
-                        if tool_name == "task_delegation":
-                            logger.info(f"[MAPPING] Clearing current_delegation_agent (was {current_delegation_agent})")
-                            current_delegation_agent = None
-
                         yield emitter.format_event("tool_end", {
                             "id": tool_call_id,
                             "tool": tool_name,  # Use cached tool name
                             "result": content,
                             "status": tool_status,
-                            "agent": tool_end_agent or "Agent"
+                            "agent": tool_end_agent or "Agent",
+                            "agent_id": tool_end_agent_id
                         })
                         continue
                     else:
@@ -708,18 +790,18 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                                 thinking_text = part.get("thinking", "")
                                 if thinking_text:
                                     logger.info(f"[THINKING] Sending thinking with agent={agent_name}, namespace={namespace}")
-                                    yield emitter.thinking(thinking_text, agent=agent_name or "Agent")
+                                    yield emitter.thinking(thinking_text, agent=agent_name or "Agent", agent_id=agent_id)
                             # Handle text blocks
                             elif part_type == "text":
                                 part_text = part.get("text", "")
                                 if part_text:
-                                    yield emitter.text(part_text, agent=agent_name or "Agent")
+                                    yield emitter.text(part_text, agent=agent_name or "Agent", agent_id=agent_id)
                         continue
 
                     # Fallback for non-list content
                     text_content = _extract_text(content)
                     if text_content:
-                        yield emitter.text(text_content, agent=agent_name or "Agent")
+                        yield emitter.text(text_content, agent=agent_name or "Agent", agent_id=agent_id)
 
                 elif mode == "custom":
                     data = payload
@@ -742,13 +824,14 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         if action == "subagent_stream":
                             # Map subagent stream to thinking/text
                             agent = data.get("agent", "Agent")
+                            _, agent_id = resolve_agent(namespace, agent)
                             content = data.get("content", "")
                             # For now, treat all subagent stream as 'thinking' or 'text' based on context
                             # The user specifically asked for 'thinking' block.
                             # Let's emit as 'thinking' for now to ensure it shows up in the agent card logs?
                             # Or better, if it's raw text from the model, it's likely the agent 'working'.
                             # In ChatbotCopilot.tsx, 'thinking' event adds to logs.
-                            yield emitter.thinking(content, agent=agent)
+                            yield emitter.thinking(content, agent=agent, agent_id=agent_id)
                             continue
                         yield emitter.format_event("custom", data)
 

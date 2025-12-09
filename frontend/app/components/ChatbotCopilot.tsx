@@ -214,8 +214,22 @@ export default function ChatbotCopilot({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const isLoading = status === 'streaming' || status === 'submitted';
 
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const [shouldStickToBottom, setShouldStickToBottom] = useState(true);
+    // Map agent name -> agent_id (delegation tool_call_id) so late events without agent_id can still attach
+    const agentNameToIdRef = useRef<Record<string, string>>({});
+
     const scrollToBottom = () => {
+        if (!shouldStickToBottom) return;
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const handleScroll = () => {
+        const container = scrollContainerRef.current;
+        if (!container) return;
+        const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        const nearBottom = distanceToBottom < 120; // small buffer so user control wins once they scroll up
+        setShouldStickToBottom(nearBottom);
     };
 
     // Use ref to access current nodes inside stale closures (EventSource listeners)
@@ -373,15 +387,16 @@ export default function ChatbotCopilot({
             try {
                 const data = JSON.parse(e.data);
                 const agentName = data.agent;
+                const resolvedAgentId = data.agent_id || (agentName ? agentNameToIdRef.current[agentName] : undefined);
 
-                if (agentName && ['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
+                // Only attach when we have a concrete agent_id to avoid mis-grouping
+                if (resolvedAgentId) {
                     setDisplayItems(prev => {
-                        // Find the LAST working agent card with this name (most recent task_delegation)
+                        // Find the LAST working agent card with this agentId (most recent task_delegation)
                         let existingIndex = -1;
                         for (let i = prev.length - 1; i >= 0; i--) {
                             if (prev[i].type === 'agent_card' &&
-                                prev[i].props.agentName === agentName &&
-                                prev[i].props.status === 'working') {
+                                prev[i].props.agentId === resolvedAgentId) {
                                 existingIndex = i;
                                 break;
                             }
@@ -390,14 +405,15 @@ export default function ChatbotCopilot({
                         if (existingIndex !== -1) {
                             return prev.map((item, index) => {
                                 if (index === existingIndex) {
-                                    return {
-                                        ...item,
-                                        props: {
-                                            ...item.props,
-                                            logs: (() => {
-                                                const existingLogs = item.props.logs || [];
-                                                // Check if the last log is a thinking block
-                                                const lastLog = existingLogs[existingLogs.length - 1];
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        agentId: item.props.agentId || resolvedAgentId,
+                                        logs: (() => {
+                                            const existingLogs = item.props.logs || [];
+                                            // Check if the last log is a thinking block
+                                            const lastLog = existingLogs[existingLogs.length - 1];
                                                 if (lastLog && lastLog.type === 'thinking') {
                                                     // Merge with existing thinking block
                                                     return existingLogs.map((log, i) =>
@@ -423,8 +439,9 @@ export default function ChatbotCopilot({
                         } else {
                             return [...prev, {
                                 type: 'agent_card',
-                                id: `agent-${agentName}-${generateId()}`,
+                                id: `agent-${resolvedAgentId}`,
                                 props: {
+                                    agentId: resolvedAgentId,
                                     agentName: agentName,
                                     status: 'working',
                                     persona: agentName.toLowerCase(),
@@ -437,6 +454,10 @@ export default function ChatbotCopilot({
                             }];
                         }
                     });
+                    // Backfill mapping if missing
+                    if (agentName && resolvedAgentId && agentNameToIdRef.current[agentName] !== resolvedAgentId) {
+                        agentNameToIdRef.current[agentName] = resolvedAgentId;
+                    }
                 } else {
                     // Main agent thinking - merge consecutive thinking blocks into one
                     setDisplayItems(prev => {
@@ -471,23 +492,17 @@ export default function ChatbotCopilot({
             try {
                 const data = JSON.parse(e.data);
                 const agentName = data.agent;
+                const resolvedAgentId = data.agent_id || (agentName ? agentNameToIdRef.current[agentName] : undefined);
 
                 // Only process assistant messages
                 if (agentName && agentName !== 'User') {
-                    // Check if this is a sub-agent's text
-                    if (['ConceptArtist', 'StoryboardArtist', 'ScriptWriter', 'VideoProducer'].includes(agentName)) {
-                        // Add to the corresponding AgentCard
+                    // Sub-agent text: rely on agent_id as the unique block id
+                    if (resolvedAgentId) {
                         setDisplayItems(prev => {
-                            // Find the LAST working agent card with this name
-                            let existingIndex = -1;
-                            for (let i = prev.length - 1; i >= 0; i--) {
-                                if (prev[i].type === 'agent_card' &&
-                                    prev[i].props.agentName === agentName &&
-                                    prev[i].props.status === 'working') {
-                                    existingIndex = i;
-                                    break;
-                                }
-                            }
+                            const existingIndex = prev.findIndex(item =>
+                                item.type === 'agent_card' &&
+                                item.props.agentId === resolvedAgentId
+                            );
 
                             if (existingIndex !== -1) {
                                 return prev.map((item, index) => {
@@ -496,19 +511,17 @@ export default function ChatbotCopilot({
                                             ...item,
                                             props: {
                                                 ...item.props,
+                                                agentId: item.props.agentId || resolvedAgentId,
                                                 logs: (() => {
                                                     const existingLogs = item.props.logs || [];
-                                                    // Check if the last log is a text block
                                                     const lastLog = existingLogs[existingLogs.length - 1];
                                                     if (lastLog && lastLog.type === 'text') {
-                                                        // Merge with existing text block
                                                         return existingLogs.map((log, i) =>
                                                             i === existingLogs.length - 1
                                                                 ? { ...log, content: log.content + data.content }
                                                                 : log
                                                         );
                                                     } else {
-                                                        // Create new text block
                                                         const newId = data.id ? `${data.id}-text` : `text-${generateId()}`;
                                                         return [...existingLogs, {
                                                             id: newId,
@@ -523,29 +536,51 @@ export default function ChatbotCopilot({
                                     return item;
                                 });
                             }
-                            // If AgentCard doesn't exist yet, we'll ignore this text (it will be added later)
-                            return prev;
-                        });
-                    } else {
-                        // This is Director's text - add to main message bubble
-                        // Ensure we have an assistant message bubble
-                        setDisplayItems(prev => {
-                            const lastItem = prev[prev.length - 1];
-                            if (!lastItem || lastItem.type !== 'message' || lastItem.role !== 'assistant') {
-                                return [...prev, {
-                                    type: 'message',
-                                    role: 'assistant',
-                                    content: '', // Start empty, filled by typewriter
-                                    id: generateId()
-                                }];
-                            }
-                            return prev;
-                        });
 
-                        // Add to queue and start processing
-                        textQueueRef.current += data.content;
-                        processTypewriterQueue();
+                            // Create a new agent card if it wasn't created yet
+                            return [...prev, {
+                                type: 'agent_card',
+                                id: `agent-${resolvedAgentId}`,
+                                props: {
+                                    agentId: resolvedAgentId,
+                                    agentName,
+                                    status: 'working',
+                                    persona: agentName.toLowerCase(),
+                                    logs: [{
+                                        id: data.id ? `${data.id}-text` : `text-${generateId()}`,
+                                        type: 'text',
+                                        content: data.content
+                                    }]
+                                }
+                            }];
+                        });
+                        if (agentName && resolvedAgentId && agentNameToIdRef.current[agentName] !== resolvedAgentId) {
+                            agentNameToIdRef.current[agentName] = resolvedAgentId;
+                        }
+                        return;
                     }
+
+                    // No agent_id for sub-agent: ignore to avoid mis-append
+                    if (agentName !== 'Director' && agentName !== 'Agent' && !agentId) {
+                        return;
+                    }
+
+                    // Director text (agent_id absent)
+                    setDisplayItems(prev => {
+                        const lastItem = prev[prev.length - 1];
+                        if (!lastItem || lastItem.type !== 'message' || lastItem.role !== 'assistant') {
+                            return [...prev, {
+                                type: 'message',
+                                role: 'assistant',
+                                content: '',
+                                id: generateId()
+                            }];
+                        }
+                        return prev;
+                    });
+
+                    textQueueRef.current += data.content;
+                    processTypewriterQueue();
                 }
             } catch (err) {
                 console.error('[ChatbotCopilot] Error parsing text event:', err);
@@ -559,6 +594,7 @@ export default function ChatbotCopilot({
 
             try {
                 const data = JSON.parse(e.data);
+                const agentIdFromPayload = data.agent_id;
                 if (data.tool === 'task_delegation' && data.input?.agent) {
                     setProcessingStatus(`${data.input.agent} is working...`);
                 } else {
@@ -597,6 +633,7 @@ export default function ChatbotCopilot({
                                 type: 'agent_card',
                                 id: agentCardId,
                                 props: {
+                                    agentId: toolCallId,
                                     agentName: targetAgent,
                                     status: 'working',
                                     persona: targetAgent.toLowerCase(),
@@ -604,6 +641,11 @@ export default function ChatbotCopilot({
                                     delegationId: toolCallId  // Store the delegation ID for matching
                                 }
                             });
+
+                            // Cache mapping for this agent name to delegation id
+                            if (targetAgent && toolCallId) {
+                                agentNameToIdRef.current[targetAgent] = toolCallId;
+                            }
 
                             return newItems;
                         });
@@ -623,16 +665,16 @@ export default function ChatbotCopilot({
                     return;
                 }
 
-                const agentId = generateId() + '-' + data.agent.toLowerCase();
+                const agentId = agentIdFromPayload;
 
                 // For now, we assume tool calls come from sub-agents like ScriptWriter
                 // So we create/update the agent card
                 setDisplayItems(prev => {
-                    // Find the LAST working agent card with this name
+                    // Find the LAST working agent card with this agentId
                     let existingAgentIndex = -1;
                     for (let i = prev.length - 1; i >= 0; i--) {
                         if (prev[i].type === 'agent_card' &&
-                            prev[i].props.agentName === data.agent &&
+                            prev[i].props.agentId === agentId &&
                             prev[i].props.status === 'working') {
                             existingAgentIndex = i;
                             break;
@@ -671,8 +713,9 @@ export default function ChatbotCopilot({
                         // Create new agent card with tool call log
                         return [...prev, {
                             type: 'agent_card',
-                            id: agentId,
+                            id: agentId ? `agent-${agentId}` : generateId(),
                             props: {
+                                agentId,
                                 agentName: data.agent,
                                 status: 'working',
                                 persona: data.agent.toLowerCase(),
@@ -716,6 +759,7 @@ export default function ChatbotCopilot({
                         type: item.type,
                         id: item.id,
                         agentName: item.type === 'agent_card' ? item.props.agentName : undefined,
+                        agentId: item.type === 'agent_card' ? item.props.agentId : undefined,
                         logs: item.type === 'agent_card' ? item.props.logs?.map((l: any) => ({ id: l.id, type: l.type, toolName: l.toolProps?.toolName })) : undefined
                     })));
                     return prev.map(item => {
@@ -758,10 +802,21 @@ export default function ChatbotCopilot({
                                     }
                                 };
                             }
+
+                            // 3. Update by agentId (delegation tool_call_id)
+                            if (item.type === 'agent_card' && item.props.agentId === data.agent_id) {
+                                return {
+                                    ...item,
+                                    props: {
+                                        ...item.props,
+                                        status: toolStatus === 'success' ? 'done' : 'failed'
+                                    }
+                                };
+                            }
                         }
 
                         // Handle agent card tool calls - match by ID within logs
-                        if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                        if (item.type === 'agent_card' && item.props.agentId === data.agent_id) {
                             return {
                                 ...item,
                                 props: {
@@ -795,19 +850,29 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received sub_agent_start:', e.data);
             try {
                 const data = JSON.parse(e.data);
-                setProcessingStatus(`${data.agent} is working`);
+                const agentId = data.agent_id || data.id;
+                const agentName = data.agent;
+                const taskName = data.task;
+                setProcessingStatus(`${agentName} is working`);
                 setDisplayItems(prev => {
-                    const existingIndex = prev.findIndex(item => item.type === 'agent_card' && item.props.agentName === data.agent);
+                    const existingIndex = prev.findIndex(item =>
+                        item.type === 'agent_card' &&
+                        (
+                            (agentId && item.props.agentId === agentId) ||
+                            (!agentId && item.props.agentName === agentName) ||
+                            (!item.props.agentId && item.props.agentName === agentName)
+                        )
+                    );
                     if (existingIndex !== -1) {
                         return prev.map((item, index) => {
                             if (index === existingIndex) {
                                 const logs = item.props.logs || [];
                                 const lastLog = logs[logs.length - 1];
                                 // Deduplicate if same task
-                                if (lastLog && lastLog.taskName === data.task) {
+                                if (lastLog && lastLog.taskName === taskName) {
                                     return {
                                         ...item,
-                                        props: { ...item.props, status: 'working' }
+                                        props: { ...item.props, status: 'working', agentId: item.props.agentId || agentId }
                                     };
                                 }
                                 return {
@@ -815,6 +880,7 @@ export default function ChatbotCopilot({
                                     props: {
                                         ...item.props,
                                         status: 'working',
+                                        agentId: item.props.agentId || agentId,
                                         logs: (() => {
                                             const existingLogs = logs;
                                             // Deduplicate by ID if present
@@ -823,8 +889,8 @@ export default function ChatbotCopilot({
                                             return [...existingLogs, {
                                                 id: data.id || generateId(),
                                                 type: 'text',
-                                                taskName: data.task,
-                                                content: <div className="text-blue-600 font-medium text-xs mt-2">Starting: {data.task}</div>
+                                                taskName: taskName,
+                                                content: <div className="text-blue-600 font-medium text-xs mt-2">Starting: {taskName}</div>
                                             }];
                                         })()
                                     }
@@ -835,16 +901,17 @@ export default function ChatbotCopilot({
                     } else {
                         return [...prev, {
                             type: 'agent_card',
-                            id: `agent-${data.agent}-${generateId()}`,
+                            id: `agent-${agentId || agentName}-${generateId()}`,
                             props: {
-                                agentName: data.agent,
+                                agentId,
+                                agentName,
                                 status: 'working',
-                                persona: data.agent.toLowerCase(),
+                                persona: agentName.toLowerCase(),
                                 logs: [{
                                     id: data.id || generateId(),
                                     type: 'text',
-                                    taskName: data.task,
-                                    content: <div className="text-blue-600 font-medium text-xs">Starting: {data.task}</div>
+                                    taskName: taskName,
+                                    content: <div className="text-blue-600 font-medium text-xs">Starting: {taskName}</div>
                                 }]
                             }
                         }];
@@ -858,15 +925,21 @@ export default function ChatbotCopilot({
         eventSource.addEventListener('sub_agent_end', (e: any) => {
             try {
                 const data = JSON.parse(e.data);
+                const agentId = data.agent_id || data.id;
                 setDisplayItems(prev => prev.map(item => {
-                    if (item.type === 'agent_card' && item.props.agentName === data.agent) {
+                    if (item.type === 'agent_card' &&
+                        (
+                            (agentId && item.props.agentId === agentId) ||
+                            (!agentId && item.props.agentName === data.agent) ||
+                            (!item.props.agentId && item.props.agentName === data.agent)
+                        )) {
                         return {
                             ...item,
                             props: {
                                 ...item.props,
                                 status: 'done',
                                 logs: [...(item.props.logs || []), {
-                                    id: data.id + '-end',
+                                    id: (data.id || generateId()) + '-end',
                                     type: 'text',
                                     content: <div className="text-green-600 font-medium text-xs mb-2">Completed: {data.result}</div>
                                 }]
@@ -1011,6 +1084,8 @@ export default function ChatbotCopilot({
                 const executeProposal = () => {
                     // Determine Node ID: Use data.nodeData.id if present (preferred), else data.id (proposal id? maybe not), else undefined
                     const targetNodeId = data.nodeData?.id;
+                    // Strip backend-provided assetId; it's only a temporary pre-allocation and should not be persisted
+                    const { assetId: _assetId, ...nodeDataWithoutAssetId } = data.nodeData || {};
                     // Extract pre-allocated assetId from proposal (if available)
                     const preAllocatedAssetId = data.assetId || data.nodeData?.assetId;
 
@@ -1019,7 +1094,7 @@ export default function ChatbotCopilot({
                         let createdNodeId: string | undefined;
                         if (onAddNode) {
                             createdNodeId = onAddNode(data.nodeType, {
-                                ...data.nodeData,
+                                ...nodeDataWithoutAssetId,
                                 id: targetNodeId, // Pass custom ID
                                 parentId: resolvedGroupId,
                                 autoRun: true,
@@ -1163,6 +1238,7 @@ export default function ChatbotCopilot({
 
         const value = input;
         setInput('');
+        setShouldStickToBottom(true);
 
         await runStreamScenario(value);
     };
@@ -1180,7 +1256,7 @@ export default function ChatbotCopilot({
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isCollapsed, displayItems]);
+    }, [messages, isCollapsed, displayItems, shouldStickToBottom]);
 
     // Auto-send initial prompt if provided (simplified approach)
     const hasAutoStartedRef = useRef(false);
@@ -1353,7 +1429,11 @@ export default function ChatbotCopilot({
                             exit={{ opacity: 0 }}
                             className="h-full flex flex-col pt-16 relative"
                         >
-                            <div className="absolute inset-0 top-16 overflow-y-auto px-6 pt-4 pb-32">
+                            <div
+                                ref={scrollContainerRef}
+                                onScroll={handleScroll}
+                                className="absolute inset-0 top-16 overflow-y-auto px-6 pt-4 pb-32"
+                            >
                                 <div className="space-y-6">
                                     {displayItems.map((item: any) => (
                                         <motion.div

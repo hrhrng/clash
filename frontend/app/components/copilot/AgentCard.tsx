@@ -116,7 +116,7 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                                             ) : log.content
                                         )}
                                         {log.type === 'thinking' && typeof log.content === 'string' && (
-                                            <ThinkingProcess content={log.content} isExpanded={true} />
+                                            <ThinkingProcess content={log.content} />
                                         )}
                                         {log.type === 'tool_call' && log.toolProps && (
                                             <ToolCall {...log.toolProps} />

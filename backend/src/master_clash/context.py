@@ -61,7 +61,7 @@ def fetch_project_context(project_id: str) -> Optional[ProjectContext]:
     """
     url = _build_frontend_url(project_id)
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=50)
         resp.raise_for_status()
         payload = resp.json()
         context = ProjectContext(**payload)
@@ -103,4 +103,10 @@ def get_asset_id(node_id: str, project_context: ProjectContext) -> Optional[str]
     node = find_node_by_id(node_id, project_context)
     if node and node.data:
         return node.data.get("assetId")
+    return None
+
+def get_status(node_id: str, project_context: ProjectContext) -> Optional[str]:
+    node = find_node_by_id(node_id, project_context)
+    if node and node.data:
+        return node.data.get("status")
     return None

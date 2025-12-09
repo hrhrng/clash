@@ -1,9 +1,10 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Plus, CalendarBlank } from '@phosphor-icons/react';
+import { Plus, CalendarBlank, Trash } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { Project } from '@generated/client';
+import { deleteProject, createProject } from '../actions';
 
 interface ProjectsClientProps {
     projects: Project[];
@@ -33,6 +34,12 @@ export default function ProjectsClient({ projects }: ProjectsClientProps) {
                         className="group flex h-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 transition-all hover:border-red-200 hover:bg-red-50"
                         whileHover={{ x: 2 }}
                         whileTap={{ scale: 0.98 }}
+                        onClick={async () => {
+                            const prompt = window.prompt('Enter a name or description for your new video project:');
+                            if (prompt) {
+                                await createProject(prompt);
+                            }
+                        }}
                     >
                         <Plus
                             className="mb-3 h-12 w-12 text-gray-400 transition-colors group-hover:text-red-500"
@@ -73,6 +80,22 @@ function ProjectCard({ project }: { project: Project }) {
                 {/* Thumbnail */}
                 <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-6xl transition-all group-hover:from-red-50 group-hover:to-red-100">
                     {thumbnail}
+                </div>
+
+                {/* Delete Button */}
+                <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                        onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (confirm('Are you sure you want to delete this project?')) {
+                                await deleteProject(project.id);
+                            }
+                        }}
+                        className="rounded-full bg-white/90 p-2 text-slate-400 shadow-sm backdrop-blur-sm transition-colors hover:bg-red-50 hover:text-red-500"
+                    >
+                        <Trash className="h-4 w-4" weight="bold" />
+                    </button>
                 </div>
 
                 {/* Content */}
