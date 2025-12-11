@@ -5,7 +5,7 @@ import { X } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
 
-const Editor = dynamic(() => import('@remotion-fast/ui').then(mod => mod.Editor), {
+const Editor = dynamic(() => import('@master-clash/remotion-ui').then(mod => mod.Editor), {
     ssr: false,
     loading: () => <div className="text-white p-4">Loading Editor...</div>
 });
