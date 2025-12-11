@@ -1,7 +1,7 @@
 [project]
-name = "master-clash"
+name = "master-clash-api"
 version = "0.1.0"
-description = "AI-powered video production toolkit with multi-agent orchestration"
+description = "Master Clash API Server - AI-powered video production toolkit"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

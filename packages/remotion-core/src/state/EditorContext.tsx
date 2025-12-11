@@ -1,0 +1,328 @@
+import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import type { EditorState, EditorAction, Track, Item, Asset } from '../types';
+
+// Initial state
+const initialState: EditorState = {
+  tracks: [],
+  selectedItemId: null,
+  selectedTrackId: null,
+  currentFrame: 0,
+  playing: false,
+  zoom: 1,
+  assets: [],
+  compositionWidth: 1920,
+  compositionHeight: 1080,
+  fps: 30,
+  durationInFrames: 1500, // 50 seconds at 30fps
+};
+
+// Reducer function
+function editorReducer(state: EditorState, action: EditorAction): EditorState {
+  switch (action.type) {
+    case 'ADD_TRACK':
+      return {
+        ...state,
+        tracks: [...state.tracks, action.payload],
+      };
+
+    case 'INSERT_TRACK': {
+      console.log('INSERT_TRACK reducer called with:', action.payload);
+      const newTracks = [...state.tracks];
+      const { track, index } = action.payload;
+
+      // Insert at specific index
+      newTracks.splice(index, 0, track);
+
+      console.log('New tracks after insertion:', newTracks);
+
+      return {
+        ...state,
+        tracks: newTracks,
+      };
+    }
+
+    case 'REMOVE_TRACK':
+      return {
+        ...state,
+        tracks: state.tracks.filter((t) => t.id !== action.payload),
+        selectedTrackId: state.selectedTrackId === action.payload ? null : state.selectedTrackId,
+      };
+
+    case 'UPDATE_TRACK':
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id === action.payload.id ? { ...t, ...action.payload.updates } : t
+        ),
+      };
+
+    case 'REORDER_TRACKS':
+      return {
+        ...state,
+        tracks: action.payload,
+      };
+
+    case 'ADD_ITEM':
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id === action.payload.trackId
+            ? { ...t, items: [...t.items, action.payload.item] }
+            : t
+        ),
+      };
+
+    case 'REMOVE_ITEM': {
+      // Remove the item first
+      const tracksAfterRemoval = state.tracks.map((t) =>
+        t.id === action.payload.trackId
+          ? { ...t, items: t.items.filter((i) => i.id !== action.payload.itemId) }
+          : t
+      );
+
+      // Auto-delete empty tracks
+      const finalTracks = tracksAfterRemoval.filter((t) => t.items.length > 0);
+
+      return {
+        ...state,
+        tracks: finalTracks,
+        selectedItemId: state.selectedItemId === action.payload.itemId ? null : state.selectedItemId,
+      };
+    }
+
+    case 'UPDATE_ITEM':
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id === action.payload.trackId
+            ? {
+              ...t,
+              items: t.items.map((i) =>
+                i.id === action.payload.itemId ? ({ ...i, ...action.payload.updates } as Item) : i
+              ),
+            }
+            : t
+        ),
+      };
+
+    case 'SPLIT_ITEM': {
+      const { trackId, itemId, splitFrame } = action.payload;
+      console.log('🔪 SPLIT_ITEM action triggered:', { trackId, itemId, splitFrame });
+
+      return {
+        ...state,
+        tracks: state.tracks.map((t) => {
+          if (t.id !== trackId) return t;
+
+          const newItems = t.items.flatMap((item) => {
+            if (item.id !== itemId) return [item];
+
+            console.log('📋 Original item to split:', JSON.stringify(item, null, 2));
+
+            // Check if split frame is within item bounds
+            const itemEnd = item.from + item.durationInFrames;
+            console.log(`📏 Item bounds: from=${item.from}, end=${itemEnd}, splitFrame=${splitFrame}`);
+
+            if (splitFrame <= item.from || splitFrame >= itemEnd) {
+              console.warn('⚠️ Split frame out of bounds, keeping original item');
+              return [item];
+            }
+
+            // Step 1: Copy - 创建副本并修改 ID
+            const cleanBase = (it: any) => {
+              const clone = { ...it };
+              delete clone.sourceMinStartInFrames;
+              delete clone.sourceMaxEndInFrames;
+              delete clone.justInserted;
+              return clone;
+            };
+
+            const secondItem: any = {
+              ...cleanBase(item),
+              id: `${item.id}-split-${Date.now()}`,
+            };
+
+            // Step 2: 第一个 item - 保留前半部分
+            const firstDuration = splitFrame - item.from;
+            const currentOffset = (item as any).sourceStartInFrames || 0;
+
+            const firstItem: any = {
+              ...cleanBase(item),
+              durationInFrames: firstDuration,
+              // 保持原始的 sourceStartInFrames，不添加任何人工锁
+              // 素材的天然边界会自动限制扩展范围
+              ...(item.type === 'video' || item.type === 'audio'
+                ? {
+                  sourceStartInFrames: currentOffset,
+                }
+                : {}),
+            };
+
+            // Step 3: 第二个 item - 保留后半部分
+            const secondDuration = itemEnd - splitFrame;
+            const consumedFrames = splitFrame - item.from;
+            const newSourceOffset = currentOffset + consumedFrames;
+
+            Object.assign(secondItem, {
+              from: splitFrame,
+              durationInFrames: secondDuration,
+              // 设置新的 sourceStartInFrames 到 split 点，不添加任何人工锁
+              // 素材的天然边界会自动限制扩展范围
+              ...(item.type === 'video' || item.type === 'audio'
+                ? {
+                  sourceStartInFrames: newSourceOffset,
+                }
+                : {}),
+              // Mark as justInserted so TimelineItem will regenerate thumbnail
+              justInserted: item.type === 'video',
+            });
+
+            console.log('✂️ Split result:');
+            console.log('  Original item:', JSON.stringify(item, null, 2));
+            console.log('  First item (right trim):', JSON.stringify(firstItem, null, 2));
+            console.log('  Second item (left trim):', JSON.stringify(secondItem, null, 2));
+
+            // 检查差异
+            const origKeys = Object.keys(item).sort();
+            const firstKeys = Object.keys(firstItem).sort();
+            const secondKeys = Object.keys(secondItem).sort();
+            console.log('  Keys comparison:', {
+              original: origKeys,
+              first: firstKeys,
+              second: secondKeys,
+              missingInFirst: origKeys.filter(k => !firstKeys.includes(k)),
+              missingInSecond: origKeys.filter(k => !secondKeys.includes(k))
+            });
+
+            return [firstItem as Item, secondItem as Item];
+          });
+
+          console.log('📦 New items array after split:', newItems.map(i => ({ id: i.id, from: i.from, duration: i.durationInFrames })));
+          return { ...t, items: newItems };
+        }),
+      };
+    }
+
+    case 'SELECT_ITEM':
+      return { ...state, selectedItemId: action.payload };
+
+    case 'SELECT_TRACK':
+      return { ...state, selectedTrackId: action.payload };
+
+    case 'SET_CURRENT_FRAME':
+      return { ...state, currentFrame: action.payload };
+
+    case 'SET_PLAYING':
+      return { ...state, playing: action.payload };
+
+    case 'SET_ZOOM':
+      return { ...state, zoom: action.payload };
+
+    case 'ADD_ASSET':
+      const existingIndex = state.assets.findIndex(a => a.id === action.payload.id);
+      if (existingIndex !== -1) {
+        // Update existing asset
+        const newAssets = [...state.assets];
+        newAssets[existingIndex] = action.payload;
+        return {
+          ...state,
+          assets: newAssets,
+        };
+      }
+      return {
+        ...state,
+        assets: [...state.assets, action.payload],
+      };
+
+    case 'REMOVE_ASSET':
+      return {
+        ...state,
+        assets: state.assets.filter((a) => a.id !== action.payload),
+      };
+
+    case 'SET_COMPOSITION_SIZE':
+      return {
+        ...state,
+        compositionWidth: action.payload.width,
+        compositionHeight: action.payload.height,
+      };
+
+    case 'SET_DURATION':
+      return { ...state, durationInFrames: action.payload };
+
+    default:
+      return state;
+  }
+}
+
+// Context
+type EditorContextType = {
+  state: EditorState;
+  dispatch: React.Dispatch<EditorAction>;
+};
+
+const EditorContext = createContext<EditorContextType | undefined>(undefined);
+
+// Provider
+export function EditorProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(editorReducer, initialState);
+
+  // Listen for window messages
+  useMessageListener(dispatch);
+
+  return (
+    <EditorContext.Provider value={{ state, dispatch }}>
+      {children}
+    </EditorContext.Provider>
+  );
+}
+
+// Message Listener Hook
+function useMessageListener(dispatch: React.Dispatch<EditorAction>) {
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Security check: validate origin if deployed
+      // if (event.origin !== 'http://localhost:3000') return;
+
+      if (event.data?.type === 'INIT_ASSETS') {
+        console.log('Received assets from parent:', event.data.payload);
+        const assets = event.data.payload;
+        if (Array.isArray(assets)) {
+          assets.forEach((asset: any) => {
+            // Map incoming asset format to Editor's Asset type if necessary
+            // Assuming payload matches Asset interface for now, or simple mapping
+            const newAsset: Asset = {
+              id: asset.id || `asset-${Date.now()}-${Math.random()}`,
+              type: asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : 'audio',
+              src: asset.src || asset.url,
+              name: asset.name || 'Imported Asset',
+              createdAt: Date.now(),
+              readOnly: true,
+            };
+            dispatch({ type: 'ADD_ASSET', payload: newAsset });
+          });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // Notify parent that editor is ready
+    if (window.opener) {
+      window.opener.postMessage({ type: 'EDITOR_READY' }, '*');
+    }
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [dispatch]);
+}
+
+// Hook
+export function useEditor() {
+  const context = useContext(EditorContext);
+  if (!context) {
+    throw new Error('useEditor must be used within EditorProvider');
+  }
+  return context;
+}

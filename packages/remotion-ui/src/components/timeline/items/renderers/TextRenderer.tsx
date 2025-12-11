@@ -1,0 +1,30 @@
+import React from 'react';
+import type { TextItem } from '@remotion-fast/core';
+import type { ItemRenderProps } from '../registry';
+
+
+export const TextRenderer: React.FC<ItemRenderProps> = ({ item, width, height }) => {
+  const text = item as TextItem;
+  return (
+    <div
+      style={{
+        position: 'relative',
+        width,
+        height,
+        background: 'transparent',
+        color: text.color || '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '4px 8px',
+        fontSize: text.fontSize || 16,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+        textOverflow: 'ellipsis',
+      }}
+      title={text.text}
+    >
+      {text.text}
+    </div>
+  );
+};
+
