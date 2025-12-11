@@ -85,3 +85,14 @@ assets/output/
 *.key
 credentials.json
 service-account.json
+
+# Turborepo
+.turbo
+
+# pnpm
+.pnpm-store
+pnpm-lock.yaml
+
+# uv
+uv.lock
+.python-version

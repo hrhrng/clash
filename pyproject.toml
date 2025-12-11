@@ -1,0 +1,17 @@
+[tool.uv.workspace]
+members = [
+    "apps/api",
+    "packages/py-*"
+]
+
+[tool.uv]
+# 共享的 Python 版本要求
+python-version = "3.12"
+
+# 共享的开发依赖
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
