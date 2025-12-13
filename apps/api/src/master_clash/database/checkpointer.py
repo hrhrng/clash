@@ -4,7 +4,6 @@ This module provides checkpoint storage for LangGraph workflows,
 enabling state persistence, recovery, and time-travel debugging.
 """
 
-from typing import Optional
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -86,7 +85,7 @@ async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver
 
 
 def checkpoint_exists(
-    checkpointer: SqliteSaver, thread_id: str, checkpoint_ns: Optional[str] = None
+    checkpointer: SqliteSaver, thread_id: str, checkpoint_ns: str | None = None
 ) -> bool:
     """Check if a checkpoint exists for a given thread.
 

@@ -1,7 +1,9 @@
 import json
 import logging
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+
 from master_clash.config import get_settings
 from master_clash.prompts import DIRECTOR_SYSTEM_PROMPT
 
@@ -12,7 +14,7 @@ class DirectorAgent:
     def __init__(self):
         # Use a capable model for reasoning
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash", 
+            model="gemini-2.5-flash",
             temperature=0.7,
             base_url=settings.google_ai_studio_base_url,
             transport="rest",
@@ -31,13 +33,13 @@ class DirectorAgent:
             logger.info("Director Agent planning...")
             response = await self.llm.ainvoke(messages)
             content = response.content
-            
+
             # Clean up potential markdown code blocks
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
                  content = content.split("```")[1].split("```")[0]
-            
+
             plan = json.loads(content.strip())
             logger.info(f"Director Agent plan: {plan}")
             return plan

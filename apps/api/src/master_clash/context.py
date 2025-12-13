@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Dict, Optional, Any
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
@@ -8,25 +8,26 @@ from pydantic import BaseModel
 
 from master_clash.config import get_settings
 
+
 class NodeModel(BaseModel):
     id: str
     type: str
-    data: Dict[str, Any]
-    position: Dict[str, float]
-    parentId: Optional[str] = None
+    data: dict[str, Any]
+    position: dict[str, float]
+    parentId: str | None = None  # noqa: N815
 
 class EdgeModel(BaseModel):
     id: str
     source: str
     target: str
-    type: Optional[str] = None
+    type: str | None = None
 
 class ProjectContext(BaseModel):
-    nodes: List[NodeModel]
-    edges: List[EdgeModel]
+    nodes: list[NodeModel]
+    edges: list[EdgeModel]
 
 # In-memory store for project context
-_PROJECT_CONTEXTS: Dict[str, ProjectContext] = {}
+_PROJECT_CONTEXTS: dict[str, ProjectContext] = {}
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def _build_frontend_url(project_id: str) -> str:
     return urljoin(base.rstrip("/") + "/", _context_path.format(project_id=project_id).lstrip("/"))
 
 
-def fetch_project_context(project_id: str) -> Optional[ProjectContext]:
+def fetch_project_context(project_id: str) -> ProjectContext | None:
     """
     Fetch project context from the frontend service.
 
@@ -73,7 +74,7 @@ def fetch_project_context(project_id: str) -> Optional[ProjectContext]:
         return _PROJECT_CONTEXTS.get(project_id)
 
 
-def get_project_context(project_id: str, force_refresh: bool = False) -> Optional[ProjectContext]:
+def get_project_context(project_id: str, force_refresh: bool = False) -> ProjectContext | None:
     """
     Retrieve project context, preferring the frontend API over in-memory cache.
 
@@ -92,20 +93,21 @@ def get_project_context(project_id: str, force_refresh: bool = False) -> Optiona
 def set_project_context(project_id: str, context: ProjectContext):
     _PROJECT_CONTEXTS[project_id] = context
 
-def find_node_by_id(node_id: str, project_context: ProjectContext) -> Optional[NodeModel]:
-    if not project_context: return None
+def find_node_by_id(node_id: str, project_context: ProjectContext) -> NodeModel | None:
+    if not project_context:
+        return None
     for node in project_context.nodes:
         if node.id == node_id:
             return node
     return None
 
-def get_asset_id(node_id: str, project_context: ProjectContext) -> Optional[str]:
+def get_asset_id(node_id: str, project_context: ProjectContext) -> str | None:
     node = find_node_by_id(node_id, project_context)
     if node and node.data:
         return node.data.get("assetId")
     return None
 
-def get_status(node_id: str, project_context: ProjectContext) -> Optional[str]:
+def get_status(node_id: str, project_context: ProjectContext) -> str | None:
     node = find_node_by_id(node_id, project_context)
     if node and node.data:
         return node.data.get("status")

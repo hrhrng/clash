@@ -322,7 +322,9 @@ Style: Concept art, cinematic composition, production design quality
 
         locations = screenplay.key_locations
         if locations_to_design:
-            locations = [l for l in locations if l.location_name in locations_to_design]
+            locations = [
+                location for location in locations if location.location_name in locations_to_design
+            ]
 
         if parallel:
             self.logger.info(f"🚀 Using parallel mode (max_workers={max_workers})")

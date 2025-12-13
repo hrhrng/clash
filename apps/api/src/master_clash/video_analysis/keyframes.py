@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import hashlib
 import logging
 from pathlib import Path
 

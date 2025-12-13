@@ -3,10 +3,13 @@
 Run this to test the new architecture with mock data.
 """
 
-import asyncio
 from master_clash.context import NodeModel, Position, ProjectContext, set_project_context
 from master_clash.workflow.backends import StateCanvasBackend
-from master_clash.workflow.middleware import CanvasMiddleware, TimelineMiddleware, TodoListMiddleware
+from master_clash.workflow.middleware import (
+    CanvasMiddleware,
+    TimelineMiddleware,
+    TodoListMiddleware,
+)
 
 
 def setup_mock_context():
@@ -62,7 +65,7 @@ def setup_mock_context():
     set_project_context("test-project", context)
     print("✅ Mock context setup complete")
     print(f"   - {len(context.nodes)} nodes created")
-    print(f"   - 1 group (workspace) created")
+    print("   - 1 group (workspace) created")
 
 
 def test_backend_operations():

@@ -2,10 +2,10 @@
 Canvas manipulation tools for agents to create and manage nodes on the canvas.
 """
 
-from langchain_core.tools import tool
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
 import logging
+from typing import Any
+
+from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,11 @@ class CanvasState:
     This is a simplified in-memory representation that can be synced with frontend.
     """
     def __init__(self):
-        self.nodes: Dict[str, Dict[str, Any]] = {}
-        self.groups: Dict[str, Dict[str, Any]] = {}
-        self.edges: List[Dict[str, Any]] = []
+        self.nodes: dict[str, dict[str, Any]] = {}
+        self.groups: dict[str, dict[str, Any]] = {}
+        self.edges: list[dict[str, Any]] = []
 
-    def add_group(self, group_id: str, label: str, parent_id: Optional[str] = None):
+    def add_group(self, group_id: str, label: str, parent_id: str | None = None):
         """Add a group to the canvas"""
         self.groups[group_id] = {
             "id": group_id,
@@ -37,7 +37,7 @@ class CanvasState:
         return self.groups[group_id]
 
     def add_node(self, node_id: str, node_type: str, label: str,
-                 content: Any, parent_id: Optional[str] = None):
+                 content: Any, parent_id: str | None = None):
         """Add a node to the canvas"""
         self.nodes[node_id] = {
             "id": node_id,
@@ -64,7 +64,7 @@ class CanvasState:
         logger.info(f"Created edge: {source_id} -> {target_id}")
         return edge
 
-    def get_group_context(self, group_id: str) -> Dict[str, Any]:
+    def get_group_context(self, group_id: str) -> dict[str, Any]:
         """Get semantic context of a group including all its children"""
         if group_id not in self.groups:
             return {}
@@ -83,7 +83,7 @@ class CanvasState:
 
     def get_canvas_summary(self) -> str:
         """Get a summary of the entire canvas state"""
-        summary = f"Canvas State:\n"
+        summary = "Canvas State:\n"
         summary += f"- Groups: {len(self.groups)}\n"
         summary += f"- Nodes: {len(self.nodes)}\n"
         summary += f"- Edges: {len(self.edges)}\n\n"
@@ -115,7 +115,7 @@ def reset_canvas_state():
 # ========================================
 
 @tool
-def create_group(label: str, group_id: str, parent_id: Optional[str] = None) -> dict:
+def create_group(label: str, group_id: str, parent_id: str | None = None) -> dict:
     """
     Create a new group on the canvas to organize related nodes.
 
@@ -128,7 +128,7 @@ def create_group(label: str, group_id: str, parent_id: Optional[str] = None) -> 
         Dictionary with group information
     """
     canvas = get_canvas_state()
-    group = canvas.add_group(group_id, label, parent_id)
+    canvas.add_group(group_id, label, parent_id)
     return {
         "success": True,
         "group_id": group_id,
@@ -142,8 +142,8 @@ def create_text_node(
     label: str,
     content: str,
     node_id: str,
-    parent_id: Optional[str] = None,
-    upstream_id: Optional[str] = None
+    parent_id: str | None = None,
+    upstream_id: str | None = None
 ) -> dict:
     """
     Create a text node on the canvas for storing script, notes, or other textual content.
@@ -159,7 +159,7 @@ def create_text_node(
         Dictionary with node information
     """
     canvas = get_canvas_state()
-    node = canvas.add_node(node_id, "text", label, content, parent_id)
+    canvas.add_node(node_id, "text", label, content, parent_id)
 
     if upstream_id:
         canvas.add_edge(upstream_id, node_id)
@@ -178,9 +178,9 @@ def create_image_generation_node(
     label: str,
     prompt: str,
     node_id: str,
-    parent_id: Optional[str] = None,
-    upstream_id: Optional[str] = None,
-    reference_images: Optional[List[str]] = None
+    parent_id: str | None = None,
+    upstream_id: str | None = None,
+    reference_images: list[str] | None = None
 ) -> dict:
     """
     Create an image generation node that will generate a visual based on the prompt.
@@ -204,7 +204,7 @@ def create_image_generation_node(
         "status": "pending"  # pending, generating, completed, error
     }
 
-    node = canvas.add_node(node_id, "image_generation", label, content, parent_id)
+    canvas.add_node(node_id, "image_generation", label, content, parent_id)
 
     if upstream_id:
         canvas.add_edge(upstream_id, node_id)
@@ -224,8 +224,8 @@ def create_video_generation_node(
     prompt: str,
     node_id: str,
     source_image_id: str,
-    parent_id: Optional[str] = None,
-    upstream_id: Optional[str] = None,
+    parent_id: str | None = None,
+    upstream_id: str | None = None,
     duration: float = 5.0
 ) -> dict:
     """
@@ -252,7 +252,7 @@ def create_video_generation_node(
         "status": "pending"
     }
 
-    node = canvas.add_node(node_id, "video_generation", label, content, parent_id)
+    canvas.add_node(node_id, "video_generation", label, content, parent_id)
 
     # Always connect from source image
     canvas.add_edge(source_image_id, node_id)

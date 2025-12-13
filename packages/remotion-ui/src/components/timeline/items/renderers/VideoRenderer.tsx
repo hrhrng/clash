@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, Asset, VideoItem } from '@remotion-fast/core';
+import type { Item, Asset, VideoItem } from '@master-clash/remotion-core';
 
 import type { ItemRenderProps } from '../registry';
 import { secondsToFrames } from '../../utils/timeFormatter';

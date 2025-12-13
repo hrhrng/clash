@@ -13,8 +13,8 @@ import {
   DragMoveEvent,
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
-import { useEditor } from '@remotion-fast/core';
-import type { Item } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Item } from '@master-clash/remotion-core';
 import { TimelineHeader } from './timeline/TimelineHeader';
 import { TimelineRuler } from './timeline/TimelineRuler';
 import { TimelineTracksContainer } from './timeline/TimelineTracksContainer';

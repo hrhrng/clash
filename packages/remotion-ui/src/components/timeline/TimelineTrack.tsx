@@ -1,9 +1,9 @@
 import React, { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import type { Track, Asset, Item } from '@remotion-fast/core';
+import type { Track, Asset, Item } from '@master-clash/remotion-core';
 import { TimelineItem } from './TimelineItem';
 import { frameToPixels, secondsToFrames } from './utils/timeFormatter';
-import { useEditor } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
 
 interface TimelineTrackProps {
   track: Track;

@@ -186,11 +186,7 @@ class GeminiVideoAnalyzer:
         try:
             # 查找 JSON 代码块
             json_match = re.search(r"```json\s*(\{.*?\})\s*```", response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # 尝试直接解析
-                json_str = response_text
+            json_str = json_match.group(1) if json_match else response_text
 
             data = json.loads(json_str)
 

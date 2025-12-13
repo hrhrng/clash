@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, Asset, AudioItem } from '@remotion-fast/core';
+import type { Item, Asset, AudioItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 
 

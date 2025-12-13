@@ -7,10 +7,22 @@ install:
 	@echo "Installing Python dependencies..."
 	uv sync
 
-# 启动开发服务器 (前后端并行)
+# 启动前端开发服务器
+dev-web:
+	@echo "Starting frontend..."
+	cd apps/web && pnpm dev
+
+# 启动后端开发服务器
+dev-api:
+	@echo "Starting backend..."
+	PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8000
+
+# 同时启动前后端（使用并行执行）
 dev:
 	@echo "Starting all services..."
-	pnpm turbo run dev
+	@echo "Frontend: http://localhost:3000"
+	@echo "Backend:  http://localhost:8000"
+	@$(MAKE) -j2 dev-web dev-api
 
 # 构建所有包
 build:

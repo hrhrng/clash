@@ -1,5 +1,5 @@
 import React from 'react';
-import type { SolidItem } from '@remotion-fast/core';
+import type { SolidItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 
 export const SolidRenderer: React.FC<ItemRenderProps> = ({ item, width, height }) => {

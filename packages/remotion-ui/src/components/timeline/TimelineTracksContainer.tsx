@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useEditor } from '@remotion-fast/core';
-import type { Track, Asset, Item } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Track, Asset, Item } from '@master-clash/remotion-core';
 import { secondsToFrames } from './utils/timeFormatter';
 import { TimelineItem } from './TimelineItem';
 import { currentDraggedAsset, currentAssetDragOffset } from '../AssetPanel';

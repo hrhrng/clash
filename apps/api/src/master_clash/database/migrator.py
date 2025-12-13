@@ -6,8 +6,8 @@ ordered SQL files from `migrations/{dialect}`.
 
 from __future__ import annotations
 
+import contextlib
 from importlib.resources import files
-from typing import Iterable
 
 from master_clash.database.ports import Database
 
@@ -71,10 +71,8 @@ def run_migrations(db: Database, dialect: str) -> list[str]:
         elif isinstance(row, dict):
             applied.add(row.get("version"))
         else:
-            try:
+            with contextlib.suppress(Exception):
                 applied.add(row[0])
-            except Exception:
-                pass
 
     applied_now: list[str] = []
     for name in _list_migrations(package):

@@ -1031,8 +1031,8 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                         variant={BackgroundVariant.Dots}
                                         gap={12}
                                         size={1.5}
-                                        color="#cbd5e1"
-                                        style={{ backgroundColor: '#f1f5f9' }}
+                                        color="var(--canvas-dot)"
+                                        style={{ backgroundColor: 'var(--canvas-bg)' }}
                                     />
 
 

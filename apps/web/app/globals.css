@@ -4,11 +4,15 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --canvas-bg: #f1f5f9;
+  --canvas-dot: #cbd5e1;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-canvas-bg: var(--canvas-bg);
+  --color-canvas-dot: var(--canvas-dot);
   --font-sans: var(--font-inter);
   --font-display: var(--font-space-grotesk);
   --font-mono: var(--font-jetbrains-mono);
@@ -19,6 +23,8 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --canvas-bg: #0f172a;
+    --canvas-dot: #334155;
   }
 }
 

@@ -7,6 +7,6 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   minify: false,
-  external: ['react', 'react-dom', 'remotion', '@remotion-fast/core'],
+  external: ['react', 'react-dom', 'remotion', '@master-clash/remotion-core'],
   treeshake: true,
 })

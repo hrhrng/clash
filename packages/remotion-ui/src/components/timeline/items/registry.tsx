@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, Asset } from '@remotion-fast/core';
+import type { Item, Asset } from '@master-clash/remotion-core';
 
 // Each item renderer receives the item, its bound asset (if any),
 // and layout info precomputed by the parent container.

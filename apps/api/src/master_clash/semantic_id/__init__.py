@@ -5,18 +5,18 @@ IDs are composed of three words from carefully curated wordlists, forming
 identifiers like "alpha-ocean-square" or "beta-mountain-circle".
 """
 
-from .generator import SemanticIDGenerator, generate_semantic_id
-from .wordlists import (
-    TECH_SCIENCE_WORDS,
-    NATURE_ELEMENTS_WORDS,
-    GEOMETRY_ABSTRACT_WORDS,
-    ALL_WORDLISTS,
-)
 from .d1_checker import D1IDChecker, create_d1_checker
 from .db_integration import (
     InMemoryIDChecker,
     generate_unique_id_for_project,
     generate_unique_ids_for_project,
+)
+from .generator import SemanticIDGenerator, generate_semantic_id
+from .wordlists import (
+    ALL_WORDLISTS,
+    GEOMETRY_ABSTRACT_WORDS,
+    NATURE_ELEMENTS_WORDS,
+    TECH_SCIENCE_WORDS,
 )
 
 __all__ = [

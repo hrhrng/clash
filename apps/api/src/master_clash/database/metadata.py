@@ -274,10 +274,9 @@ class MetadataTracker:
         """,
             (f"%{self.run_id}%",),
         )
-        if isinstance(ck_row, dict):
-            checkpoint_count = list(ck_row.values())[0]
-        else:
-            checkpoint_count = ck_row[0]
+        checkpoint_count = (
+            list(ck_row.values())[0] if isinstance(ck_row, dict) else ck_row[0]
+        )
 
         # Get API call stats
         api_row = self.db.fetchone(

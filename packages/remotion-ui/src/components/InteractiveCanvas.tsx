@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
-import { VideoComposition } from '@remotion-fast/remotion-components';
-import type { Track, Item, ItemProperties } from '@remotion-fast/core';
+import { VideoComposition } from '@master-clash/remotion-components';
+import type { Track, Item, ItemProperties } from '@master-clash/remotion-core';
 import { findTopItemAtPoint } from './canvas/hitTest';
 
 interface InteractiveCanvasProps {

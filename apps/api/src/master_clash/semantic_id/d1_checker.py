@@ -4,7 +4,7 @@ Provides production-ready ID checking using Cloudflare D1 database.
 Matches the existing asset table schema where semantic_id is stored in the 'id' field.
 """
 
-from typing import Optional
+import contextlib
 import json
 
 from master_clash.config import get_settings
@@ -27,7 +27,7 @@ class D1IDChecker:
         - created_at (INTEGER): Unix timestamp
     """
 
-    def __init__(self, db: Optional[D1Database] = None):
+    def __init__(self, db: D1Database | None = None):
         """Initialize D1 ID checker.
 
         Args:
@@ -83,7 +83,7 @@ class D1IDChecker:
         storage_key: str,
         url: str,
         asset_type: str = "unknown",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         """Register a new asset with a semantic ID in the database.
 
@@ -150,7 +150,7 @@ class D1IDChecker:
             print(f"Error fetching project IDs for {project_id}: {e}")
             return []
 
-    def get_asset(self, semantic_id: str, project_id: str) -> Optional[dict]:
+    def get_asset(self, semantic_id: str, project_id: str) -> dict | None:
         """Get asset details by semantic ID.
 
         Args:
@@ -183,10 +183,8 @@ class D1IDChecker:
 
                 # Parse metadata JSON if present
                 if asset.get("metadata"):
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError, TypeError):
                         asset["metadata"] = json.loads(asset["metadata"])
-                    except:
-                        pass
 
                 return asset
 
@@ -310,6 +308,6 @@ if __name__ == "__main__":
 
     if count > 0:
         ids = checker.get_project_ids(project_id)
-        print(f"  All asset IDs:")
+        print("  All asset IDs:")
         for i, asset_id in enumerate(ids, 1):
             print(f"    {i}. {asset_id}")

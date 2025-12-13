@@ -11,7 +11,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from master_clash.config import settings
+from master_clash.config import get_settings
 
 from .models import TranscriptionSegment
 
@@ -29,7 +29,7 @@ class AudioTranscriber:
             api_key: OpenAI API 密钥，默认从配置读取
             model: Whisper 模型名称
         """
-        self.api_key = api_key or settings.openai_api_key
+        self.api_key = api_key or get_settings().openai_api_key
         if not self.api_key:
             raise ValueError("OpenAI API key is required for transcription")
 
@@ -49,7 +49,6 @@ class AudioTranscriber:
         Returns:
             音频文件路径
         """
-        import subprocess
 
         video_path_obj = Path(video_path)
         if output_path is None:
@@ -90,7 +89,7 @@ class AudioTranscriber:
         except FileNotFoundError:
             raise RuntimeError(
                 "FFmpeg not found. Please install FFmpeg: brew install ffmpeg (macOS) or apt-get install ffmpeg (Linux)"
-            )
+            ) from None
 
     async def transcribe_audio(
         self,
@@ -206,7 +205,9 @@ class AudioTranscriber:
         with open(output_path, "w", encoding="utf-8") as f:
             for i, seg in enumerate(segments, start=1):
                 f.write(f"{i}\n")
-                f.write(f"{format_timestamp(seg.start_time)} --> {format_timestamp(seg.end_time)}\n")
+                f.write(
+                    f"{format_timestamp(seg.start_time)} --> {format_timestamp(seg.end_time)}\n"
+                )
                 f.write(f"{seg.text}\n\n")
 
         logger.info(f"SRT exported to {output_path}")
@@ -230,7 +231,9 @@ class AudioTranscriber:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("WEBVTT\n\n")
             for seg in segments:
-                f.write(f"{format_timestamp(seg.start_time)} --> {format_timestamp(seg.end_time)}\n")
+                f.write(
+                    f"{format_timestamp(seg.start_time)} --> {format_timestamp(seg.end_time)}\n"
+                )
                 f.write(f"{seg.text}\n\n")
 
         logger.info(f"VTT exported to {output_path}")

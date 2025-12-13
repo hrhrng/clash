@@ -1,6 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { useEditor } from '@remotion-fast/core';
-import type { Item, Track } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Item, Track } from '@master-clash/remotion-core';
 import { Reorder } from 'framer-motion';
 
 export const Timeline: React.FC = () => {

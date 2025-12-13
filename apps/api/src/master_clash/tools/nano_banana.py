@@ -1,8 +1,10 @@
 
-from langchain_core.tools import tool
-from master_clash.config import get_settings
-from master_clash.utils import *
 import logging
+
+from langchain_core.tools import tool
+
+from master_clash.config import get_settings
+from master_clash.utils import image_message_part_template, text_message_part_template
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +100,7 @@ def _save_image_to_file(
     from pathlib import Path
 
     # Use configured output directory if not provided
-    if output_dir is None:
-        output_dir = settings.output_dir
-    else:
-        output_dir = Path(output_dir)
+    output_dir = settings.output_dir if output_dir is None else Path(output_dir)
 
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -174,7 +173,7 @@ def _base_nano_banana_gen(
         )
         if image_block:
             return image_block["image_url"].get("url").split(",")[-1]
-            
+
         # Look for text block to give better error
         text_block = next(
             (
@@ -186,7 +185,7 @@ def _base_nano_banana_gen(
         )
         if text_block:
              raise ValueError(f"Model returned text instead of image: {text_block.get('text')}")
-             
+
         raise ValueError("No image generated in response")
 
     return _get_image_base64(response)
@@ -377,6 +376,7 @@ def test_agent_with_nano_banana():
     """
     from langchain.agents import create_agent
     from langchain_google_genai import ChatGoogleGenerativeAI
+
     from master_clash.utils import image_to_base64
 
     # Step 1: Register images with descriptive names

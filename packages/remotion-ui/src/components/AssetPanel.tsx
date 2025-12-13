@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
-import { useEditor } from '@remotion-fast/core';
-import type { Asset, TextItem, ImageItem, VideoItem } from '@remotion-fast/core';
-import { loadAudioWaveform } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Asset, TextItem, ImageItem, VideoItem } from '@master-clash/remotion-core';
+import { loadAudioWaveform } from '@master-clash/remotion-core';
 
 // Export for TimelineTracksContainer to use
 export let currentDraggedAsset: any = null;
