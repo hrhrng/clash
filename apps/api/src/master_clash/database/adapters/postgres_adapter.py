@@ -6,7 +6,8 @@ Automatically converts SQLite-style `?` placeholders into `%s` for psycopg.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 try:
     import psycopg
@@ -25,7 +26,7 @@ def _qmark_to_psycopg(query: str) -> str:
 
 
 class _PsycopgCursorWrapper:
-    def __init__(self, cursor: "psycopg.Cursor"):
+    def __init__(self, cursor: psycopg.Cursor):
         self._cursor = cursor
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> Any:

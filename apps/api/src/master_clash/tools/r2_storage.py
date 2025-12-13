@@ -6,7 +6,6 @@ R2 is S3-compatible, so we use boto3 for interaction.
 
 import base64
 import uuid
-from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +13,6 @@ import boto3
 from botocore.client import Config
 
 from master_clash.config import get_settings
-
 
 AssetType = Literal["image", "video", "audio", "text"]
 
@@ -232,7 +230,7 @@ class R2Storage:
                 Key=storage_key,
             )
             return True
-        except:
+        except Exception:
             return False
 
 

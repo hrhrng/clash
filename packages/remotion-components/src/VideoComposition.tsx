@@ -8,7 +8,7 @@ import {
   useCurrentFrame,
   interpolate,
 } from 'remotion';
-import type { Track, Item } from '@remotion-fast/core';
+import type { Track, Item } from '@master-clash/remotion-core';
 
 console.log('🎬 VideoComposition.tsx module loaded!');
 (window as any).REMOTION_DEBUG = true;

@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 import cv2
-from scenedetect import detect, ContentDetector, AdaptiveDetector, ThresholdDetector
+from scenedetect import AdaptiveDetector, ContentDetector, ThresholdDetector, detect
 
 from .models import Keyframe
 
@@ -107,7 +107,7 @@ class PySceneDetectKeyframeDetector:
             raise RuntimeError(f"Failed to open video: {video_path}")
 
         try:
-            fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.get(cv2.CAP_PROP_FPS)
 
             # 准备输出目录
             video_path_obj = Path(video_path)

@@ -96,3 +96,5 @@ pnpm-lock.yaml
 # uv
 uv.lock
 .python-version
+
+/assets

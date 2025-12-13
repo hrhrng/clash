@@ -5,13 +5,15 @@ Supports both URL and base64-encoded image inputs.
 Uses JWT authentication with Access Key and Secret Key.
 """
 
+import contextlib
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 import jwt
 import requests
 from dotenv import load_dotenv
+
 from master_clash.database.metadata import MetadataTracker
 
 load_dotenv()
@@ -107,8 +109,8 @@ class KlingVideoGenerator:
         max_wait_time: int = 300,
         is_base64: bool = False,
         model: str | None = None,
-        tracker: Optional[MetadataTracker] = None,
-        checkpoint_id: Optional[str] = None,
+        tracker: MetadataTracker | None = None,
+        checkpoint_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate video from image using Kling AI.
@@ -184,7 +186,7 @@ class KlingVideoGenerator:
         )
         duration_ms = int((time.time() - t0) * 1000)
         if tracker:
-            try:
+            with contextlib.suppress(Exception):
                 tracker.record_api_call(
                     service="kling",
                     endpoint="POST /v1/videos/image2video",
@@ -199,8 +201,6 @@ class KlingVideoGenerator:
                     status_code=response.status_code,
                     duration_ms=duration_ms,
                 )
-            except Exception:
-                pass
         if not response.ok:
             print(f"Kling API Error: {response.status_code} - {response.text}")
         response.raise_for_status()
@@ -226,8 +226,8 @@ class KlingVideoGenerator:
         task_id: str,
         poll_interval: int,
         max_wait_time: int,
-        tracker: Optional[MetadataTracker] = None,
-        checkpoint_id: Optional[str] = None,
+        tracker: MetadataTracker | None = None,
+        checkpoint_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Poll generation status until completion.
@@ -251,7 +251,7 @@ class KlingVideoGenerator:
             )
             duration_ms = int((time.time() - t0) * 1000)
             if tracker:
-                try:
+                with contextlib.suppress(Exception):
                     tracker.record_api_call(
                         service="kling",
                         endpoint="GET /v1/videos/image2video/{task_id}",
@@ -261,8 +261,6 @@ class KlingVideoGenerator:
                         status_code=response.status_code,
                         duration_ms=duration_ms,
                     )
-                except Exception:
-                    pass
             response.raise_for_status()
 
             result = response.json()

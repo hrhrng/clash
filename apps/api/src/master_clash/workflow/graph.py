@@ -3,25 +3,20 @@
 This module provides the main API for creating agents with middleware.
 """
 
-from typing import Sequence, Any
+from collections.abc import Sequence
+from typing import Any
 
+from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
-from langchain_core.messages import SystemMessage
-from langgraph.graph import END, StateGraph
-from langgraph.prebuilt import ToolNode
 
 from master_clash.workflow.backends import CanvasBackendProtocol, StateCanvasBackend
 from master_clash.workflow.middleware import (
     AgentMiddleware,
-    AgentState,
     CanvasMiddleware,
-    TimelineMiddleware,
 )
 from master_clash.workflow.subagents import SubAgent, SubAgentMiddleware
-from langchain.agents import create_agent
 
 
 def create_agent_with_middleware(
@@ -108,8 +103,6 @@ def create_supervisor_agent(
     Returns:
         Compiled supervisor agent
     """
-    from langchain_core.tools import tool
-    from langgraph.config import get_stream_writer
 
     # Create supervisor-specific tools
     backend = backend or StateCanvasBackend()

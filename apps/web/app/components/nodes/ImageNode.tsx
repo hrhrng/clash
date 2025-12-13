@@ -14,6 +14,9 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [description, setDescription] = useState(data.description || '');
     const [showDescription, setShowDescription] = useState(false);
 
+    // Debug logging
+    console.log(`[ImageNode ${id}] Init:`, { assetId: data.assetId, src: data.src, status: data.status, currentStatus: status, imageUrl });
+
     useEffect(() => {
         // Poll until we have a completed asset with a URL (and optionally description)
         const shouldPoll = !!data.assetId && (status !== 'failed') && (status !== 'completed' || !imageUrl);

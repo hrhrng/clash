@@ -4,8 +4,9 @@ This module defines the abstract interface for canvas operations,
 similar to how deepagents abstracts filesystem operations.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -285,7 +286,7 @@ class StateCanvasBackend:
         node_id: str,
     ) -> NodeInfo | None:
         """Read node from project context."""
-        from master_clash.context import get_project_context, find_node_by_id
+        from master_clash.context import find_node_by_id, get_project_context
 
         context = get_project_context(project_id, force_refresh=True)
         if not context:
@@ -319,6 +320,7 @@ class StateCanvasBackend:
         import uuid
 
         from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
+
         # Generate semantic ID
         checker = create_d1_checker()
         node_id = generate_unique_id_for_project(project_id, checker)
@@ -360,8 +362,8 @@ class StateCanvasBackend:
         # Add assetId to proposal for generation nodes
         if asset_id:
             proposal["assetId"] = asset_id
-            proposal["nodeData"]["assetId"] = asset_id
-
+            if "nodeData" in proposal and proposal["nodeData"] is not None:
+                proposal["nodeData"]["assetId"] = asset_id
         if upstream_node_ids:
             # Deduplicate while preserving order
             seen = set()
@@ -418,7 +420,10 @@ class StateCanvasBackend:
         timeout_seconds: float = 30.0,
     ) -> TaskStatusResult:
         """Wait for generation task to complete."""
-        from master_clash.context import find_node_by_id, get_asset_id, get_project_context, get_status
+        from master_clash.context import (
+            get_project_context,
+            get_status,
+        )
 
         context = get_project_context(project_id, force_refresh=True)
         if not context:
@@ -429,12 +434,13 @@ class StateCanvasBackend:
 
         # Check if asset exists
         status = get_status(node_id, context)
-        
+
         if not status:
             return TaskStatusResult(status="completed")
-        
+
         if status != "completed":
             import asyncio
+
             await asyncio.sleep(timeout_seconds)
             status = get_status(node_id, context)
         if not status:

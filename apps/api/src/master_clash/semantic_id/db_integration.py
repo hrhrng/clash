@@ -4,7 +4,7 @@ Provides utilities to generate unique IDs with database collision detection.
 Supports checking ID uniqueness within project scopes.
 """
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 from .generator import SemanticIDGenerator
 
@@ -130,7 +130,7 @@ class DatabaseIDChecker:
 def generate_unique_id_for_project(
     project_id: str,
     checker: IDChecker,
-    generator: Optional[SemanticIDGenerator] = None,
+    generator: SemanticIDGenerator | None = None,
 ) -> str:
     """Generate a unique semantic ID for a project.
 
@@ -164,7 +164,7 @@ def generate_unique_ids_for_project(
     project_id: str,
     count: int,
     checker: IDChecker,
-    generator: Optional[SemanticIDGenerator] = None,
+    generator: SemanticIDGenerator | None = None,
 ) -> list[str]:
     """Generate multiple unique semantic IDs for a project.
 

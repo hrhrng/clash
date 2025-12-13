@@ -1,4 +1,4 @@
-import type { Item, Track } from '@remotion-fast/core';
+import type { Item, Track } from '@master-clash/remotion-core';
 
 import { calculateSnapForItemRange, getAllSnapTargets } from '../utils/snapCalculator';
 

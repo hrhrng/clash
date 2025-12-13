@@ -5,7 +5,7 @@ Ensures uniqueness within a project scope through database collision detection.
 """
 
 import random
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from .wordlists import ALL_WORDLISTS
 
@@ -24,7 +24,7 @@ class SemanticIDGenerator:
 
     def __init__(
         self,
-        wordlists: Optional[list[list[str]]] = None,
+        wordlists: list[list[str]] | None = None,
         separator: str = "-",
         max_attempts: int = 100,
     ):
@@ -59,7 +59,7 @@ class SemanticIDGenerator:
     def generate_unique(
         self,
         is_unique: Callable[[str], bool],
-        context: Optional[str] = None,
+        context: str | None = None,
     ) -> str:
         """Generate a unique semantic ID within a given context.
 
@@ -112,7 +112,7 @@ class SemanticIDGenerator:
         self,
         count: int,
         is_unique: Callable[[str], bool],
-        context: Optional[str] = None,
+        context: str | None = None,
     ) -> list[str]:
         """Generate a batch of unique semantic IDs.
 
@@ -148,7 +148,7 @@ class SemanticIDGenerator:
 
 # Convenience function for quick ID generation
 def generate_semantic_id(
-    wordlists: Optional[list[list[str]]] = None,
+    wordlists: list[list[str]] | None = None,
     separator: str = "-",
 ) -> str:
     """Generate a single semantic ID using default settings.
@@ -203,7 +203,7 @@ def estimate_collision_probability(wordlists: list[list[str]], existing_count: i
     return probability
 
 
-def get_id_space_size(wordlists: Optional[list[list[str]]] = None) -> int:
+def get_id_space_size(wordlists: list[list[str]] | None = None) -> int:
     """Calculate the total number of possible unique IDs.
 
     Args:

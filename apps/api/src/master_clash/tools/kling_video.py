@@ -109,10 +109,7 @@ def _save_video_to_file(
         Full path to saved file
     """
     # Use configured output directory if not provided
-    if output_dir is None:
-        output_dir = settings.output_dir
-    else:
-        output_dir = Path(output_dir)
+    output_dir = settings.output_dir if output_dir is None else Path(output_dir)
 
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)

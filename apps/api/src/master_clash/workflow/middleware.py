@@ -7,32 +7,26 @@ Inspired by deepagents' middleware architecture, each middleware can:
 - Hook into agent lifecycle
 """
 
-import uuid
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Annotated, Any, Callable, Literal, Sequence, TypedDict, TypeVar
+import logging
+from collections.abc import Callable
+from typing import Annotated, Any, Literal, TypedDict, TypeVar
 
-from pydantic import BaseModel, Field
-from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
+from langchain.messages import SystemMessage
 from langchain.tools import BaseTool, ToolRuntime
-from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool, InjectedToolCallId
+from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
-from langgraph.prebuilt import InjectedState
+from pydantic import BaseModel, Field
 
 from master_clash.workflow.backends import (
     CanvasBackendProtocol,
-    CreateNodeResult,
     NodeInfo,
     StateCanvasBackend,
-    TaskStatusResult,
-    TimelineOperation,
-    TimelineResult,
-    UpdateNodeResult,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +69,6 @@ def _canvas_reducer(
 class TimelineMiddleware(AgentMiddleware):
     """Middleware that provides timeline editing tools."""
 
-    state_schema = AgentState
-    
     def __init__(self):
         self.tools = self._generate_timeline_tools()
 
@@ -96,8 +88,8 @@ You can control the video timeline via the timeline_editor tool.
         else:
             system_prompt = timeline_prompt
 
-        return handler(request.override(system_prompt=system_prompt))
-    
+        return handler(request.override(system_message=SystemMessage(system_prompt)))
+
     async def awrap_model_call(self, request, handler):
         """Add timeline tools to the model request."""
 
@@ -110,7 +102,9 @@ You can control the video timeline via the timeline_editor tool.
         else:
             system_prompt = timeline_prompt
 
-        return await handler(request.override(system_prompt=system_prompt))
+        return await handler(
+            request.override(system_message=SystemMessage(system_prompt))
+        )
 
     def _generate_timeline_tools(self) -> list[BaseTool]:
         """Generate timeline tools."""
@@ -122,7 +116,9 @@ You can control the video timeline via the timeline_editor tool.
         from langgraph.config import get_stream_writer
 
         class TimelineEditorInput(BaseModel):
-            action: str = Field(description="Timeline action, e.g. add_clip, set_duration, render")
+            action: str = Field(
+                description="Timeline action, e.g. add_clip, set_duration, render"
+            )
             params: dict[str, Any] = Field(description="Action parameters")
 
         @tool(args_schema=TimelineEditorInput)
@@ -138,13 +134,14 @@ You can control the video timeline via the timeline_editor tool.
             try:
                 # Emit SSE event for timeline editing
                 writer = get_stream_writer()
-                if writer:
-                    writer({
+                writer(
+                    {
                         "action": "timeline_edit",
                         "edit_action": action,
                         "params": params,
                         "project_id": project_id,
-                    })
+                    }
+                )
 
                 return f"Timeline action '{action}' executed successfully"
 
@@ -159,8 +156,6 @@ class CanvasMiddleware(AgentMiddleware):
 
     Similar to FilesystemMiddleware in deepagents, but for canvas operations.
     """
-
-    state_schema = CanvasState
 
     def __init__(
         self,
@@ -204,8 +199,8 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         else:
             system_prompt = canvas_prompt
 
-        return handler(request.override(system_prompt=system_prompt))
-    
+        return handler(request.override(system_message=SystemMessage(system_prompt)))
+
     async def awrap_model_call(self, request, handler):
         """Add canvas tools to the model request."""
 
@@ -238,9 +233,10 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         #             content = last_message.content
         #         if content.startswith("video"): # 加上视频Message
         #             messages = request.messages.append(UserMessage(""))
-                
 
-        return await handler(request.override(system_prompt=system_prompt))
+        return await handler(
+            request.override(system_message=SystemMessage(system_prompt))
+        )
 
     def _generate_canvas_tools(self) -> list[BaseTool]:
         """Generate canvas tools based on backend capabilities."""
@@ -262,9 +258,14 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         from langchain_core.tools import tool
 
         backend = self.backend
+
         class ListCanvasNodesInput(BaseModel):
-            node_type: Literal["text", "prompt", "group", "image", "video"] | None = Field(default=None, description="Optional filter by node type")
-            parent_id: str | None = Field(default=None, description="Optional filter by parent group")
+            node_type: Literal["text", "prompt", "group", "image", "video"] | None = (
+                Field(default=None, description="Optional filter by node type")
+            )
+            parent_id: str | None = Field(
+                default=None, description="Optional filter by parent group"
+            )
 
         @tool(args_schema=ListCanvasNodesInput)
         def list_canvas_nodes(
@@ -279,7 +280,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
 
             try:
                 # Fetch all nodes so we can build a full tree; filters are applied during formatting
-                nodes = resolved_backend.list_nodes(project_id=project_id, node_type=None, parent_id=None)
+                nodes = resolved_backend.list_nodes(
+                    project_id=project_id, node_type=None, parent_id=None
+                )
                 logger.info(f"list canvas nodes: {nodes}")
                 if not nodes:
                     return "No nodes found."
@@ -307,22 +310,29 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                 def matches_filter(node: NodeInfo) -> bool:
                     return node_type is None or node.type == node_type
 
-                def render_tree(current_parent: str | None, indent: str = "") -> tuple[list[str], bool]:
+                def render_tree(
+                    current_parent: str | None, indent: str = ""
+                ) -> tuple[list[str], bool]:
                     lines: list[str] = []
                     has_match = False
 
                     # Groups first, then others, for a folder-like view
                     sorted_children = sorted(
                         children.get(current_parent, []),
-                        key=lambda n: (0 if n.type == "group" else 1, (n.data or {}).get("label", ""), n.id),
+                        key=lambda n: (
+                            0 if n.type == "group" else 1,
+                            (n.data or {}).get("label", ""),
+                            n.id,
+                        ),
                     )
 
                     for child in sorted_children:
-                        child_lines: list[str] = []
                         child_matches = matches_filter(child)
 
                         if child.type == "group":
-                            rendered_child_lines, subtree_has_match = render_tree(child.id, indent + "  ")
+                            rendered_child_lines, subtree_has_match = render_tree(
+                                child.id, indent + "  "
+                            )
                             if child_matches or subtree_has_match:
                                 lines.append(f"{indent}- {display_label(child)}")
                                 lines.extend(rendered_child_lines)
@@ -357,6 +367,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         from langchain_core.tools import tool
 
         backend = self.backend
+
         class ReadCanvasNodeInput(BaseModel):
             node_id: str = Field(description="Target node ID")
 
@@ -364,9 +375,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         def read_canvas_node(
             node_id: str,
             runtime: ToolRuntime,
-        ) -> list[str | dict]:
+        ) -> list[str | dict] | str:
             """Read a specific node's detailed data.
-                For image, specially, you can see it.
+            For image, specially, you can see it.
             """
             project_id = runtime.state.get("project_id", "")
             resolved_backend = backend(runtime) if callable(backend) else backend
@@ -383,20 +394,36 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                 data = node.data or {}
                 name = data.get("label") or data.get("name") or node.id
                 description = data.get("description") or data.get("content") or ""
-                text_part = {"type": "text", "text": f"{name}: {description} type: {node.type}" if description else name}
+                text_part = {
+                    "type": "text",
+                    "text": (
+                        f"{name}: {description} type: {node.type}"
+                        if description
+                        else name
+                    ),
+                }
 
                 # If the node is an image/video, return straightforward media + text parts
                 if node.type in {"image", "video"}:
                     from master_clash.utils import get_asset_base64
 
                     def pick_source() -> str | None:
-                        for key in ("base64", "src", "url", "thumbnail", "poster", "cover"):
+                        for key in (
+                            "base64",
+                            "src",
+                            "url",
+                            "thumbnail",
+                            "poster",
+                            "cover",
+                        ):
                             value = data.get(key)
                             if isinstance(value, str) and value:
                                 return value
                         return None
 
-                    def to_base64_and_mime(source: str, default_mime: str) -> tuple[str, str]:
+                    def to_base64_and_mime(
+                        source: str, default_mime: str
+                    ) -> tuple[str, str]:
                         if source.startswith("data:"):
                             header, payload = source.split(",", 1)
                             mime = header.split(":", 1)[1].split(";")[0] or default_mime
@@ -440,15 +467,23 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                                 # )
                                 pass
                             else:
-                                base64_data, mime_type = to_base64_and_mime(source, "image/jpeg")
+                                base64_data, mime_type = to_base64_and_mime(
+                                    source, "image/jpeg"
+                                )
                                 media_part = {
                                     "type": "image_url",
-                                    "image_url": {"url": f"data:{mime_type};base64,{base64_data}"},
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{base64_data}"
+                                    },
                                 }
                                 return [media_part, text_part]
                         except Exception:
                             # If conversion fails, fall back to returning raw source + text
-                            raw_part = {"type": "image_url", "image_url": source} if node.type == "image" else {"type": "media", "data": source}
+                            raw_part = (
+                                {"type": "image_url", "image_url": source}
+                                if node.type == "image"
+                                else {"type": "media", "data": source}
+                            )
                             return [raw_part, text_part]
 
                     return [text_part]
@@ -485,7 +520,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             node_type: Literal["text", "prompt", "group"] = Field(
                 description="Node type to create (non-generative)"
             )
-            payload: CanvasNodeData = Field(description="Structured payload for text/prompt/group nodes")
+            payload: CanvasNodeData = Field(
+                description="Structured payload for text/prompt/group nodes"
+            )
             position: dict[str, float] | None = Field(
                 default=None, description="Optional canvas coordinates {x, y}"
             )
@@ -529,11 +566,12 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                 # Emit SSE proposal if available
                 if result.proposal:
                     writer = get_stream_writer()
-                    if writer:
-                        writer({
+                    writer(
+                        {
                             "action": "create_node_proposal",
                             "proposal": result.proposal,
-                        })
+                        }
+                    )
 
                 return f"Created node {result.node_id}"
 
@@ -552,12 +590,14 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         class GenerationNodeData(BaseModel):
             label: str = Field(description="Display label for the node")
             # prompt: str = Field(description="Generation prompt for image/video models")
-            modelName: str | None = Field(default=None, description="Optional model name override")
-            actionType: Literal["image-gen", "video-gen"] | None = Field(
+            modelName: str | None = Field(  # noqa: N815
+                default=None, description="Optional model name override"
+            )
+            actionType: Literal["image-gen", "video-gen"] | None = Field(  # noqa: N815
                 default=None,
                 description="Optional override; inferred from node_type when omitted",
             )
-            upstreamNodeIds: list[str] = Field(
+            upstreamNodeIds: list[str] = Field(  # noqa: N815
                 description="Necessary upstream node linkages, could link image node to reference or edit and prompt node as natural language instruction"
             )
 
@@ -568,7 +608,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
             node_type: Literal["image_gen", "video_gen"] = Field(
                 description="Generation node type to create"
             )
-            payload: GenerationNodeData = Field(description="Structured payload for generation node")
+            payload: GenerationNodeData = Field(
+                description="Structured payload for generation node"
+            )
             position: dict[str, float] | None = Field(
                 default=None, description="Optional canvas coordinates {x, y}"
             )
@@ -616,11 +658,12 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                 # Emit SSE proposal if available
                 if result.proposal:
                     writer = get_stream_writer()
-                    if writer:
-                        writer({
+                    writer(
+                        {
                             "action": "create_node_proposal",
                             "proposal": result.proposal,
-                        })
+                        }
+                    )
 
                 # Return both nodeId and assetId for generation nodes
                 if result.asset_id:
@@ -641,7 +684,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
 
         class UpdateCanvasNodeInput(BaseModel):
             node_id: str = Field(description="Target node ID")
-            data: dict[str, Any] | None = Field(default=None, description="Partial data update")
+            data: dict[str, Any] | None = Field(
+                default=None, description="Partial data update"
+            )
             position: dict[str, float] | None = Field(
                 default=None, description="Optional position update {x, y}"
             )
@@ -680,11 +725,16 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         from langchain_core.tools import tool
 
         backend = self.backend
+
         class CreateCanvasEdgeInput(BaseModel):
             source: str = Field(description="Source node ID")
             target: str = Field(description="Target node ID")
-            source_handle: str | None = Field(default=None, description="Optional source handle")
-            target_handle: str | None = Field(default=None, description="Optional target handle")
+            source_handle: str | None = Field(
+                default=None, description="Optional source handle"
+            )
+            target_handle: str | None = Field(
+                default=None, description="Optional target handle"
+            )
 
         @tool(args_schema=CreateCanvasEdgeInput)
         def create_canvas_edge(
@@ -723,6 +773,7 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         from langchain_core.tools import tool
 
         backend = self.backend
+
         class WaitForGenerationInput(BaseModel):
             node_id: str = Field(description="id of generated asset node or assetId")
             timeout_seconds: float = Field(description="Max wait time in seconds")
@@ -749,9 +800,9 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                     return f"Error: {result.error}"
 
                 if result.status == "completed":
-                    return f"Task completed."
-                elif result.status in ("pending" , "generating"):
-                    return f"Task still generating. Please retry wait_for_generation after a moment."
+                    return "Task completed."
+                elif result.status in ("pending", "generating"):
+                    return "Task still generating. Please retry wait_for_generation after a moment."
                 elif result.status == "failed":
                     return f"Task failed: {result.error}"
                 else:
@@ -806,19 +857,25 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
                     return f"Error: Node {node_id} is not a generation node (actionType: {action_type})"
 
                 # Generate new asset ID if not provided
-                from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
+                from master_clash.semantic_id import (
+                    create_d1_checker,
+                    generate_unique_id_for_project,
+                )
+
                 checker = create_d1_checker()
                 asset_id = generate_unique_id_for_project(project_id, checker)
 
                 # Emit SSE event to trigger regeneration on frontend
                 writer = get_stream_writer()
                 if writer:
-                    writer({
-                        "action": "rerun_generation_node",
-                        "nodeId": node_id,
-                        "assetId": asset_id,
-                        "nodeData": node.data,
-                    })
+                    writer(
+                        {
+                            "action": "rerun_generation_node",
+                            "nodeId": node_id,
+                            "assetId": asset_id,
+                            "nodeData": node.data,
+                        }
+                    )
 
                 return f"Triggered regeneration for node {node_id} with new assetId: {asset_id}"
 
@@ -832,9 +889,12 @@ IMPORTANT: For generation nodes (image_gen, video_gen):
         from langchain_core.tools import tool
 
         backend = self.backend
+
         class SearchCanvasInput(BaseModel):
             query: str = Field(description="Search query")
-            node_types: list[str] | None = Field(default=None, description="Optional filter by node types")
+            node_types: list[str] | None = Field(
+                default=None, description="Optional filter by node types"
+            )
 
         @tool(args_schema=SearchCanvasInput)
         def search_canvas(

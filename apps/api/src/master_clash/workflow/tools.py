@@ -1,9 +1,12 @@
-from typing import List, Optional, Dict, Any
-from langchain_core.tools import tool
-from master_clash.context import get_project_context, find_node_by_id, get_asset_id
-from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
-import uuid
 import json
+import uuid
+from typing import Any
+
+from langchain_core.tools import tool
+
+from master_clash.context import find_node_by_id, get_asset_id, get_project_context
+from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
+
 
 @tool
 def list_node_info(project_id: str) -> str:
@@ -14,7 +17,7 @@ def list_node_info(project_id: str) -> str:
     context = get_project_context(project_id, force_refresh=True)
     if not context:
         return "No context found for this project."
-    
+
     nodes_info = []
     for node in context.nodes:
         info = {
@@ -24,7 +27,7 @@ def list_node_info(project_id: str) -> str:
             "parentId": node.parentId
         }
         nodes_info.append(info)
-    
+
     return json.dumps(nodes_info, indent=2)
 
 @tool
@@ -35,26 +38,26 @@ def read_node(project_id: str, node_id: str) -> str:
     context = get_project_context(project_id, force_refresh=True)
     if not context:
         return "No context found."
-    
+
     node = find_node_by_id(node_id, context)
     if not node:
         return f"Node {node_id} not found."
-    
+
     # Return relevant data based on node type
     return json.dumps(node.data, indent=2)
 
 @tool
-def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Optional[str] = None, upstream_node_ids: Optional[List[str]] = None) -> str:
+def create_node(project_id: str, type: str, data: dict[str, Any], group_id: str | None = None, upstream_node_ids: list[str] | None = None) -> str:
     """
     Creates a multimodal node on the canvas.
-    
+
     Args:
         project_id: The project ID.
         type: The type of node (e.g., 'text', 'image', 'video', 'group', 'prompt', 'action-badge-image').
         data: The data for the node (e.g., content, label).
         group_id: Optional parent group ID.
         upstream_node_ids: Optional upstream node IDs for connections.
-        
+
     Returns:
         A JSON string representing the proposal that was sent to the UI.
     """
@@ -68,7 +71,7 @@ def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Opti
 
     # Proposal ID remains temporary UUID
     proposal_id = f"proposal-{uuid.uuid4().hex[:8]}"
-    
+
     # Map high-level types to frontend types if needed
     node_type = type
     if type == "text":
@@ -80,7 +83,7 @@ def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Opti
     elif type == "image_gen":
         node_type = "action-badge-image"
         type = "generative" # Frontend expects 'generative' for the proposal type wrapper?
-        
+
     proposal = {
         "id": proposal_id,
         "type": "generative" if type == "image_gen" or type == "video_gen" else "simple", # Simplified logic
@@ -93,11 +96,11 @@ def create_node(project_id: str, type: str, data: Dict[str, Any], group_id: Opti
         "upstreamNodeIds": upstream_node_ids,
         "message": f"Proposed {type} node: {data.get('label', 'Untitled')}"
     }
-    
+
     if type == "group":
         proposal["type"] = "group"
 
-    # We return the proposal as a JSON string. 
+    # We return the proposal as a JSON string.
     # The calling code (StreamEmitter adapter) needs to parse this and emit the event.
     return json.dumps({
         "action": "create_node_proposal",
@@ -113,21 +116,21 @@ def wait_for_task(project_id: str, node_id: str) -> str:
     context = get_project_context(project_id, force_refresh=True)
     if not context:
         return "No context found."
-        
+
     asset_id = get_asset_id(node_id, context)
     if asset_id:
         return f"completed: {asset_id}"
-    
+
     # In a real scenario, we might check if the node exists and has a 'loading' state.
     # For now, if asset_id is missing but node exists, we assume it's generating or not started.
     node = find_node_by_id(node_id, context)
     if node:
         return "generating"
-    
+
     return "node_not_found"
 
 @tool
-def timeline_editor(project_id: str, action: str, params: Dict[str, Any]) -> str:
+def timeline_editor(project_id: str, action: str, params: dict[str, Any]) -> str:
     """
     Automated video editor tool.
     Actions: 'add_clip', 'set_duration', 'add_audio', 'render'.

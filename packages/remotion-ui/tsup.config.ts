@@ -14,8 +14,8 @@ export default defineConfig({
     '@remotion/player',
     'framer-motion',
     '@dnd-kit/modifiers',
-    '@remotion-fast/core',
-    '@remotion-fast/remotion-components'
+    '@master-clash/remotion-core',
+    '@master-clash/remotion-components'
   ],
   treeshake: true,
 })

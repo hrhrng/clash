@@ -1,6 +1,6 @@
 import React from 'react';
-import { useEditor } from '@remotion-fast/core';
-import type { TextItem, SolidItem, VideoItem, AudioItem } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { TextItem, SolidItem, VideoItem, AudioItem } from '@master-clash/remotion-core';
 
 
 export const PropertiesPanel: React.FC = () => {

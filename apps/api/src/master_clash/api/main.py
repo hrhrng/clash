@@ -3,40 +3,37 @@ FastAPI server for Master Clash backend.
 Handles AI generation - returns base64 images or temporary URLs.
 Frontend handles storage and database.
 """
-from contextlib import asynccontextmanager
+
+import asyncio
+import base64
+import json
+import logging
+import uuid
 from typing import Any
 
-import logging
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import requests
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
-import asyncio
-import json
-import uuid
-import base64
 
-from master_clash.config import get_settings
-from master_clash.tools.nano_banana import nano_banana_gen
-from master_clash.tools.kling_video import kling_video_gen
-from master_clash.tools.description import generate_description
-from master_clash.context import ProjectContext, NodeModel, EdgeModel, _PROJECT_CONTEXTS, set_project_context, get_project_context
-from master_clash.workflow.multi_agent import graph
 # from master_clash.video_analysis import VideoAnalysisOrchestrator, VideoAnalysisConfig, VideoAnalysisResult
 from langchain_core.messages import HumanMessage
-import requests
-from master_clash.utils import image_to_base64
+from pydantic import BaseModel, Field
 
+from master_clash.config import get_settings
+from master_clash.context import ProjectContext, set_project_context
+from master_clash.tools.description import generate_description
+from master_clash.tools.kling_video import kling_video_gen
+from master_clash.tools.nano_banana import nano_banana_gen
+from master_clash.utils import image_to_base64
+from master_clash.workflow.multi_agent import graph
 
 # Configure logging
 settings = get_settings()
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("backend.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler("backend.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -82,26 +79,31 @@ def fetch_urls_to_base64(
                 failed_urls.append(url)
             if raise_on_fail:
                 raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to fetch reference image: {url}"
-                )
+                    status_code=400, detail=f"Failed to fetch reference image: {url}"
+                ) from e
     return results
+
 
 # Request/Response Models
 class GenerateImageRequest(BaseModel):
     """Request to generate image using Nano Banana."""
+
     prompt: str = Field(..., description="Image generation prompt")
     system_prompt: str = Field(default="", description="System-level instructions")
     aspect_ratio: str = Field(default="16:9", description="Image aspect ratio")
-    base64_images: list[str] = Field(default=[], description="List of base64 encoded reference images (pure base64 preferred)")
-    reference_image_urls: list[str] = Field(default=[], description="Optional HTTP(S) image URLs to use as references")
+    base64_images: list[str] = Field(
+        default=[], description="List of base64 encoded reference images (pure base64 preferred)"
+    )
+    reference_image_urls: list[str] = Field(
+        default=[], description="Optional HTTP(S) image URLs to use as references"
+    )
     model_name: str | None = Field(default="gemini-2.5-flash-image", description="Model to use")
     callback_url: str | None = Field(default=None, description="Callback URL for status updates")
 
 
-
 class GenerateImageResponse(BaseModel):
     """Response with base64 encoded image."""
+
     base64: str | None = Field(default=None, description="Base64 encoded image data (if available)")
     model: str = Field(default="gemini-2.5-flash-image", description="Model used")
     task_id: str = Field(..., description="Internal task ID for polling")
@@ -109,9 +111,14 @@ class GenerateImageResponse(BaseModel):
 
 class GenerateVideoRequest(BaseModel):
     """Request to generate video using Kling."""
+
     image_url: str | None = Field(default=None, description="Source image URL")
-    base64_images: list[str] = Field(default=[], description="Optional base64 images (pure base64 preferred)")
-    reference_image_urls: list[str] = Field(default=[], description="Optional HTTP(S) image URLs to use as references")
+    base64_images: list[str] = Field(
+        default=[], description="Optional base64 images (pure base64 preferred)"
+    )
+    reference_image_urls: list[str] = Field(
+        default=[], description="Optional HTTP(S) image URLs to use as references"
+    )
     prompt: str = Field(..., description="Video generation prompt")
     duration: int = Field(default=5, description="Duration in seconds")
     cfg_scale: float = Field(default=0.5, description="CFG Scale")
@@ -121,6 +128,7 @@ class GenerateVideoRequest(BaseModel):
 
 class GenerateVideoResponse(BaseModel):
     """Response for video generation task."""
+
     url: str | None = Field(default=None, description="Video URL if ready")
     duration: int
     model: str
@@ -129,6 +137,7 @@ class GenerateVideoResponse(BaseModel):
 
 class WorkflowStatusResponse(BaseModel):
     """Response for workflow status."""
+
     project_id: str
     status: str
     progress: float
@@ -139,6 +148,7 @@ class WorkflowStatusResponse(BaseModel):
 
 class GenerateDescriptionRequest(BaseModel):
     """Request to generate description for an asset."""
+
     url: str = Field(..., description="Asset URL or Data URI")
     task_id: str = Field(..., description="Task ID for callback")
     callback_url: str | None = Field(default=None, description="Callback URL for status updates")
@@ -146,35 +156,45 @@ class GenerateDescriptionRequest(BaseModel):
 
 class GenerateSemanticIDRequest(BaseModel):
     """Request to generate semantic IDs."""
+
     project_id: str = Field(..., description="Project ID for scoping")
     count: int = Field(default=1, ge=1, le=100, description="Number of IDs to generate")
 
 
 class GenerateSemanticIDResponse(BaseModel):
     """Response with generated semantic IDs."""
+
     ids: list[str] = Field(..., description="List of generated semantic IDs")
     project_id: str = Field(..., description="Project ID")
 
 
 class GenerateDescriptionResponse(BaseModel):
     """Response with generated description."""
+
     task_id: str = Field(..., description="Task ID")
     status: str = Field(default="processing", description="Task status")
 
 
 class AnalyzeVideoRequest(BaseModel):
     """Request to analyze a video comprehensively."""
+
     video_path: str = Field(..., description="Path to video file")
-    output_dir: str | None = Field(default=None, description="Output directory for analysis results")
+    output_dir: str | None = Field(
+        default=None, description="Output directory for analysis results"
+    )
 
     # Analysis options
     enable_asr: bool = Field(default=True, description="Enable audio transcription")
     enable_subtitle_extraction: bool = Field(default=True, description="Extract embedded subtitles")
     enable_keyframe_detection: bool = Field(default=True, description="Detect key frames")
-    enable_gemini_analysis: bool = Field(default=True, description="Enable Gemini video understanding")
+    enable_gemini_analysis: bool = Field(
+        default=True, description="Enable Gemini video understanding"
+    )
 
     # ASR config
-    asr_language: str = Field(default="auto", description="Language for ASR (auto-detect or ISO code)")
+    asr_language: str = Field(
+        default="auto", description="Language for ASR (auto-detect or ISO code)"
+    )
 
     # Keyframe config
     keyframe_threshold: float = Field(default=0.3, description="Scene change threshold (0-1)")
@@ -189,6 +209,7 @@ class AnalyzeVideoRequest(BaseModel):
 
 class AnalyzeVideoResponse(BaseModel):
     """Response for video analysis task."""
+
     task_id: str = Field(..., description="Task ID for polling")
     status: str = Field(default="processing", description="Initial status")
     message: str = Field(default="Video analysis started", description="Status message")
@@ -197,10 +218,12 @@ class AnalyzeVideoResponse(BaseModel):
 def process_image_generation(internal_task_id: str, params: dict, callback_url: str = None):
     """Background task to run image generation and update frontend."""
     try:
-        logger.info(f"Starting background image generation for task {internal_task_id} with callback {callback_url}")
+        logger.info(
+            f"Starting background image generation for task {internal_task_id} with callback {callback_url}"
+        )
         # Call generation (blocking)
         base64_image = nano_banana_gen(**params)
-        
+
         # Convert to data URI if not already
         if not base64_image.startswith("data:"):
             image_url = f"data:image/png;base64,{base64_image}"
@@ -208,21 +231,28 @@ def process_image_generation(internal_task_id: str, params: dict, callback_url: 
             image_url = base64_image
 
         # Success
-        logger.info(f"Image generation successful")
-        
+        logger.info("Image generation successful")
+
         # Generate description
         description = None
         try:
-            logger.info(f"Generating description for image...")
+            logger.info("Generating description for image...")
             description = generate_description(image_url)
             logger.info(f"Description generated: {description[:50]}...")
         except Exception as e:
             logger.error(f"Failed to generate description: {e}")
 
-        update_asset_status(internal_task_id, "completed", url=image_url, description=description, callback_url=callback_url)
+        update_asset_status(
+            internal_task_id,
+            "completed",
+            url=image_url,
+            description=description,
+            callback_url=callback_url,
+        )
     except Exception as e:
         # Failure
         import traceback
+
         logger.error(f"Image generation failed: {e}")
         logger.debug(traceback.format_exc())
         update_asset_status(internal_task_id, "failed", error=str(e), callback_url=callback_url)
@@ -236,6 +266,7 @@ async def generate_image(request: GenerateImageRequest, background_tasks: Backgr
     """
     logger.info(f"Received image generation request: {request}")
     import uuid
+
     internal_task_id = str(uuid.uuid4())
 
     # base64_images should be base64; still allow data URLs for backward compatibility
@@ -253,25 +284,33 @@ async def generate_image(request: GenerateImageRequest, background_tasks: Backgr
             "base64_images": normalized_images,
             "aspect_ratio": request.aspect_ratio,
         },
-        request.callback_url
+        request.callback_url,
     )
 
     return GenerateImageResponse(
-        base64=None,
-        model="gemini-2.5-flash-image",
-        task_id=internal_task_id
+        base64=None, model="gemini-2.5-flash-image", task_id=internal_task_id
     )
 
 
-def update_asset_status(task_id: str, status: str, url: str = None, description: str = None, error: str = None, callback_url: str = None):
+def update_asset_status(
+    task_id: str,
+    status: str,
+    url: str = None,
+    description: str = None,
+    error: str = None,
+    callback_url: str = None,
+):
     """Call frontend API to update asset status."""
     # Use provided callback_url or fallback to env var / default
     if callback_url:
         frontend_url = callback_url
     else:
         import os
+
         # Fallback to env var (full URL) or default local URL
-        frontend_url = os.getenv("DEFAULT_CALLBACK_URL", "http://localhost:3000/api/internal/assets/update")
+        frontend_url = os.getenv(
+            "DEFAULT_CALLBACK_URL", "http://localhost:3000/api/internal/assets/update"
+        )
 
     try:
         logger.info(f"Updating asset {task_id} to {status} at {frontend_url}")
@@ -279,11 +318,11 @@ def update_asset_status(task_id: str, status: str, url: str = None, description:
             "taskId": task_id,
             "status": status,
             "url": url,
-            "metadata": {"error": error} if error else {}
+            "metadata": {"error": error} if error else {},
         }
         if description:
             payload["description"] = description
-            
+
         response = requests.post(frontend_url, json=payload)
         if not response.ok:
             logger.error(f"Failed to update asset status: {response.status_code} - {response.text}")
@@ -294,26 +333,35 @@ def update_asset_status(task_id: str, status: str, url: str = None, description:
 def process_video_generation(internal_task_id: str, params: dict, callback_url: str = None):
     """Background task to run video generation and update frontend."""
     try:
-        logger.info(f"Starting background video generation for task {internal_task_id} with callback {callback_url}")
+        logger.info(
+            f"Starting background video generation for task {internal_task_id} with callback {callback_url}"
+        )
         # Call generation (blocking)
         video_url = kling_video_gen(**params)
-        
+
         # Success
         logger.info(f"Video generation successful: {video_url}")
 
         # Generate description
         description = None
         try:
-            logger.info(f"Generating description for video...")
+            logger.info("Generating description for video...")
             description = generate_description(video_url)
             logger.info(f"Description generated: {description[:50]}...")
         except Exception as e:
             logger.error(f"Failed to generate description: {e}")
 
-        update_asset_status(internal_task_id, "completed", url=video_url, description=description, callback_url=callback_url)
+        update_asset_status(
+            internal_task_id,
+            "completed",
+            url=video_url,
+            description=description,
+            callback_url=callback_url,
+        )
     except Exception as e:
         # Failure
         import traceback
+
         logger.error(f"Video generation failed: {e}")
         logger.debug(traceback.format_exc())
         update_asset_status(internal_task_id, "failed", error=str(e), callback_url=callback_url)
@@ -326,6 +374,7 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
     Returns task_id immediately - frontend polls for status.
     """
     import uuid
+
     internal_task_id = str(uuid.uuid4())
 
     # Normalize all possible image inputs to base64
@@ -333,7 +382,9 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
     failed_reference_urls: list[str] = []
     if request.image_url:
         if request.image_url.startswith(("http://", "https://")):
-            fetched = fetch_urls_to_base64([request.image_url], failed_reference_urls, raise_on_fail=True)
+            fetched = fetch_urls_to_base64(
+                [request.image_url], failed_reference_urls, raise_on_fail=True
+            )
             if fetched:
                 primary_image_base64 = fetched[0]
         elif "base64," in request.image_url:
@@ -345,39 +396,42 @@ async def generate_video(request: GenerateVideoRequest, background_tasks: Backgr
                 logger.warning(f"Failed to read image_path {request.image_url}: {e}")
 
     base64_inputs = [strip_data_url(img) for img in request.base64_images or [] if img]
-    url_inputs = fetch_urls_to_base64(request.reference_image_urls, failed_reference_urls, raise_on_fail=True)
-    normalized_images = ([primary_image_base64] if primary_image_base64 else []) + base64_inputs + url_inputs
+    url_inputs = fetch_urls_to_base64(
+        request.reference_image_urls, failed_reference_urls, raise_on_fail=True
+    )
+    normalized_images = (
+        ([primary_image_base64] if primary_image_base64 else []) + base64_inputs + url_inputs
+    )
 
     # If we still don't have an image but we have reachable URLs, fall back to passing the URL to Kling (it can fetch URLs)
     if not normalized_images and failed_reference_urls:
-        logger.warning(f"No images could be fetched; falling back to passing URLs directly: {failed_reference_urls}")
+        logger.warning(
+            f"No images could be fetched; falling back to passing URLs directly: {failed_reference_urls}"
+        )
         normalized_images = failed_reference_urls
 
     if not normalized_images:
         raise HTTPException(
             status_code=400,
-            detail="An input image is required. Provide base64_images, reference_image_urls, or image_url."
+            detail="An input image is required. Provide base64_images, reference_image_urls, or image_url.",
         )
 
     # Start background task
     background_tasks.add_task(
-        process_video_generation, 
-        internal_task_id, 
+        process_video_generation,
+        internal_task_id,
         {
             "base64_images": normalized_images,
             "prompt": request.prompt,
             "duration": request.duration,
             "cfg_scale": request.cfg_scale,
-            "model": request.model
+            "model": request.model,
         },
-        request.callback_url
+        request.callback_url,
     )
 
     return GenerateVideoResponse(
-        url=None,
-        duration=request.duration,
-        model=request.model,
-        task_id=internal_task_id
+        url=None, duration=request.duration, model=request.model, task_id=internal_task_id
     )
 
 
@@ -397,30 +451,35 @@ async def get_workflow_status(project_id: str):
             progress=0.5,
             current_step="image_generation",
             result=None,
-            error=None
+            error=None,
         )
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Workflow not found: {project_id}")
+    except Exception as err:
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {project_id}") from err
 
 
 def process_description_generation(task_id: str, url: str, callback_url: str = None):
     """Background task to generate description and update frontend."""
     try:
-        logger.info(f"Starting background description generation for task {task_id} with callback {callback_url}")
+        logger.info(
+            f"Starting background description generation for task {task_id} with callback {callback_url}"
+        )
         description = generate_description(url)
-        
+
         if description:
             logger.info(f"Description generated successfully: {description[:50]}...")
-            update_asset_status(task_id, "completed", description=description, callback_url=callback_url)
+            update_asset_status(
+                task_id, "completed", description=description, callback_url=callback_url
+            )
         else:
             logger.warning("Description generation returned None")
             # Optionally update status to indicate failure or just leave it?
             # Let's update with empty description to stop polling if we want
             # But for now, maybe just log it.
-            
+
     except Exception as e:
         logger.error(f"Error in description generation task: {e}")
         import traceback
+
         logger.debug(traceback.format_exc())
 
 
@@ -429,11 +488,13 @@ async def describe_asset(request: GenerateDescriptionRequest, background_tasks: 
     """Generate description for an asset (async)."""
     try:
         logger.info(f"Received async description request for task: {request.task_id}")
-        background_tasks.add_task(process_description_generation, request.task_id, request.url, request.callback_url)
+        background_tasks.add_task(
+            process_description_generation, request.task_id, request.url, request.callback_url
+        )
         return GenerateDescriptionResponse(task_id=request.task_id, status="processing")
     except Exception as e:
         logger.error(f"Error in /api/describe: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/api/v1/workflow/{project_id}/cancel")
@@ -444,7 +505,7 @@ async def cancel_workflow(project_id: str):
 
         return {"project_id": project_id, "status": "cancelled"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 # --- Project Context Models ---
@@ -461,11 +522,11 @@ async def update_project_context(project_id: str, context: ProjectContext):
     logger.info(f"Nodes: {len(context.nodes)}, Edges: {len(context.edges)}")
     set_project_context(project_id, context)
     return {"status": "success", "message": "Context updated"}
-        
+
 
 class StreamEmitter:
     """Helper class to emit formatted SSE events."""
-    
+
     def format_event(self, event_type: str, data: dict) -> str:
         logger.info(f"Emitting event: {event_type} - {str(data)[:200]}...")
         return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
@@ -477,7 +538,9 @@ class StreamEmitter:
             payload["agent_id"] = agent_id
         return self.format_event("text", payload)
 
-    def thinking(self, content: str, agent: str = None, id: str = None, agent_id: str | None = None) -> str:
+    def thinking(
+        self, content: str, agent: str = None, id: str = None, agent_id: str | None = None
+    ) -> str:
         """Output thinking token/message."""
         data = {"content": content}
         if agent:
@@ -500,42 +563,87 @@ class StreamEmitter:
         """Output end token."""
         return self.format_event("end", {})
 
-    async def tool_create_node(self, agent: str, tool_name: str, args: dict, proposal_data: dict, result_text: str):
+    async def tool_create_node(
+        self, agent: str, tool_name: str, args: dict, proposal_data: dict, result_text: str
+    ):
         """Tool execution: Create Node."""
         tool_id = f"call_{uuid.uuid4().hex[:8]}"
         logger.info(f"Tool START: {agent} - {tool_name} ({tool_id})")
-        yield self.format_event("tool_start", {"agent": agent, "tool_name": tool_name, "args": args, "id": tool_id})
-        await asyncio.sleep(1) # Simulate work
+        yield self.format_event(
+            "tool_start", {"agent": agent, "tool_name": tool_name, "args": args, "id": tool_id}
+        )
+        await asyncio.sleep(1)  # Simulate work
         logger.info(f"Node Proposal: {proposal_data.get('id')}")
         yield self.format_event("node_proposal", proposal_data)
         logger.info(f"Tool END: {agent} - {result_text} ({tool_id})")
-        yield self.format_event("tool_end", {"agent": agent, "result": result_text, "status": "success", "id": tool_id, "tool": tool_name})
+        yield self.format_event(
+            "tool_end",
+            {
+                "agent": agent,
+                "result": result_text,
+                "status": "success",
+                "id": tool_id,
+                "tool": tool_name,
+            },
+        )
 
-    async def tool_poll_asset(self, agent: str, node_id: str, context: ProjectContext, get_asset_id_func):
+    async def tool_poll_asset(
+        self, agent: str, node_id: str, context: ProjectContext, get_asset_id_func
+    ):
         """Tool execution: Poll Asset Status."""
         tool_id = f"call_{uuid.uuid4().hex[:8]}"
         logger.info(f"Tool Poll START: {agent} - {node_id} ({tool_id})")
-        yield self.format_event("tool_start", {"agent": agent, "tool_name": "check_asset_status", "args": {"node_id": node_id}, "id": tool_id})
-        
+        yield self.format_event(
+            "tool_start",
+            {
+                "agent": agent,
+                "tool_name": "check_asset_status",
+                "args": {"node_id": node_id},
+                "id": tool_id,
+            },
+        )
+
         asset_id = get_asset_id_func(node_id, context)
         if not asset_id:
             logger.info(f"Tool Poll RETRY: {node_id}")
-            yield self.format_event("tool_end", {"agent": agent, "result": "Still generating...", "status": "success", "id": tool_id, "tool": "check_asset_status"})
+            yield self.format_event(
+                "tool_end",
+                {
+                    "agent": agent,
+                    "result": "Still generating...",
+                    "status": "success",
+                    "id": tool_id,
+                    "tool": "check_asset_status",
+                },
+            )
             yield self.format_event("retry", {})
-            yield None # Signal not found
+            yield None  # Signal not found
         else:
             logger.info(f"Tool Poll SUCCESS: {node_id} -> {asset_id}")
-            yield self.format_event("tool_end", {"agent": agent, "result": f"Asset generated: {asset_id}", "status": "success", "id": tool_id, "tool": "check_asset_status"})
-            yield asset_id # Signal found
+            yield self.format_event(
+                "tool_end",
+                {
+                    "agent": agent,
+                    "result": f"Asset generated: {asset_id}",
+                    "status": "success",
+                    "id": tool_id,
+                    "tool": "check_asset_status",
+                },
+            )
+            yield asset_id  # Signal found
 
 
 @app.get("/api/v1/stream/{project_id}")
-async def stream_workflow(project_id: str, thread_id: str, resume: bool = False, user_input: str = None):
+async def stream_workflow(
+    project_id: str, thread_id: str, resume: bool = False, user_input: str = None
+):
     """Stream LangGraph workflow events as SSE using LangGraph streaming modes."""
     emitter = StreamEmitter()
 
     if not resume and not user_input:
-        raise HTTPException(status_code=400, detail="user_input is required when starting a new run")
+        raise HTTPException(
+            status_code=400, detail="user_input is required when starting a new run"
+        )
 
     def _extract_text(content: Any) -> str:
         if content is None:
@@ -551,7 +659,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
             inputs = {
                 "messages": [HumanMessage(content=message)],
                 "project_id": project_id,
-                "next": "Supervisor"
+                "next": "Supervisor",
             }
 
         config = {"configurable": {"thread_id": thread_id}}
@@ -585,14 +693,18 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 cached = namespace_to_agent.get(ns_first)
                 if cached:
                     agent, agent_id = cached
-                    logger.info(f"[AGENT_NAME] Resolved from cache: {ns_first} -> {agent} ({agent_id})")
+                    logger.info(
+                        f"[AGENT_NAME] Resolved from cache: {ns_first} -> {agent} ({agent_id})"
+                    )
                 elif agent_id and not agent:
                     # 3) If we have an id but missing name, try mapping from tool_call_to_agent
                     mapped_agent = tool_call_to_agent.get(agent_id)
                     if mapped_agent:
                         agent = mapped_agent
                         namespace_to_agent[ns_first] = (mapped_agent, agent_id)
-                        logger.info(f"[AGENT_NAME] Mapped via tool_call_to_agent: {ns_first} -> {agent} ({agent_id})")
+                        logger.info(
+                            f"[AGENT_NAME] Mapped via tool_call_to_agent: {ns_first} -> {agent} ({agent_id})"
+                        )
 
             # 4) Fallback id for isolation
             if ns_first and not agent_id:
@@ -610,13 +722,16 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                 mode = None
                 payload = streamed
                 from langchain_core.load import dumps
+
                 logger.info(f"Stream: streamed={dumps(streamed)}")
                 # Format is [namespace, mode, data] where namespace is a list
                 if isinstance(streamed, (list, tuple)) and len(streamed) == 3:
                     namespace, mode, payload = streamed
                     logger.debug(f"Stream: namespace={namespace}, mode={mode}")
                 else:
-                    logger.warning(f"Unexpected stream format: type={type(streamed)}, len={len(streamed) if hasattr(streamed, '__len__') else 'N/A'}")
+                    logger.warning(
+                        f"Unexpected stream format: type={type(streamed)}, len={len(streamed) if hasattr(streamed, '__len__') else 'N/A'}"
+                    )
 
                 if mode == "messages":
                     # Payload is a list: [msg_chunk_dict, metadata_dict]
@@ -629,15 +744,23 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                     if namespace:
                         logger.info(f"[STREAM DEBUG] mode=messages, namespace={namespace}")
                         if isinstance(metadata, dict):
-                            logger.info(f"[STREAM DEBUG] langgraph_node={metadata.get('langgraph_node')}")
-                            logger.info(f"[STREAM DEBUG] langgraph_triggers={metadata.get('langgraph_triggers')}")
-                            logger.info(f"[STREAM DEBUG] langgraph_path={metadata.get('langgraph_path')}")
+                            logger.info(
+                                f"[STREAM DEBUG] langgraph_node={metadata.get('langgraph_node')}"
+                            )
+                            logger.info(
+                                f"[STREAM DEBUG] langgraph_triggers={metadata.get('langgraph_triggers')}"
+                            )
+                            logger.info(
+                                f"[STREAM DEBUG] langgraph_path={metadata.get('langgraph_path')}"
+                            )
 
-                    agent_name = metadata.get("langgraph_node") if isinstance(metadata, dict) else None
+                    agent_name = (
+                        metadata.get("langgraph_node") if isinstance(metadata, dict) else None
+                    )
 
                     # If this is the root graph (empty namespace) and node is 'agent', it's the Director
                     if not namespace and agent_name == "model":
-                        logger.info(f"[AGENT_NAME] Root graph agent -> Director")
+                        logger.info("[AGENT_NAME] Root graph agent -> Director")
                         agent_name = "Director"
                     # Handle sub-graph: resolve agent name/id from task_delegation mapping
                     agent_name, agent_id = resolve_agent(namespace, agent_name)
@@ -674,7 +797,9 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
 
                             if tool_name and tool_id and tool_id not in emitted_tool_ids:
                                 # Debug: Log tool_start
-                                logger.info(f"[TOOL_START DEBUG] tool={tool_name}, id={tool_id}, agent={agent_name}")
+                                logger.info(
+                                    f"[TOOL_START DEBUG] tool={tool_name}, id={tool_id}, agent={agent_name}"
+                                )
                                 logger.info(f"[TOOL_START DEBUG] namespace={namespace}")
 
                                 emitted_tool_ids.add(tool_id)
@@ -685,20 +810,35 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                                     target_agent = tool_args.get("agent")
                                     if target_agent:
                                         tool_call_to_agent[tool_id] = target_agent
-                                        namespace_to_agent[f"tools:{tool_id}"] = (target_agent, tool_id)
-                                        namespace_to_agent[f"calls:{tool_id}"] = (target_agent, tool_id)
+                                        namespace_to_agent[f"tools:{tool_id}"] = (
+                                            target_agent,
+                                            tool_id,
+                                        )
+                                        namespace_to_agent[f"calls:{tool_id}"] = (
+                                            target_agent,
+                                            tool_id,
+                                        )
                                         namespace_to_agent[tool_id] = (target_agent, tool_id)
-                                        logger.info(f"[MAPPING] Cached: {tool_id} -> {target_agent}")
-                                        logger.info(f"[TOOL_START DEBUG] task_delegation args: {tool_args}")
-                                        logger.info(f"[TOOL_START DEBUG] target_agent: {target_agent}")
+                                        logger.info(
+                                            f"[MAPPING] Cached: {tool_id} -> {target_agent}"
+                                        )
+                                        logger.info(
+                                            f"[TOOL_START DEBUG] task_delegation args: {tool_args}"
+                                        )
+                                        logger.info(
+                                            f"[TOOL_START DEBUG] target_agent: {target_agent}"
+                                        )
 
-                                yield emitter.format_event("tool_start", {
-                                    "id": tool_id,
-                                    "tool": tool_name,
-                                    "input": tool_args,
-                                    "agent": agent_name or "Agent",
-                                    "agent_id": agent_id
-                                })
+                                yield emitter.format_event(
+                                    "tool_start",
+                                    {
+                                        "id": tool_id,
+                                        "tool": tool_name,
+                                        "input": tool_args,
+                                        "agent": agent_name or "Agent",
+                                        "agent_id": agent_id,
+                                    },
+                                )
 
                     # Handle tool outputs (ToolMessage)
                     if isinstance(msg_chunk_dict, dict):
@@ -706,14 +846,20 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         tool_call_id = msg_chunk_dict.get("tool_call_id")
                         content = msg_chunk_dict.get("content", "")
                         # Debug: Log ToolMessage checking
-                        logger.info(f"[TOOL_END DEBUG] Checking dict - type={msg_type}, tool_call_id={tool_call_id}")
+                        logger.info(
+                            f"[TOOL_END DEBUG] Checking dict - type={msg_type}, tool_call_id={tool_call_id}"
+                        )
                     else:
                         msg_type = getattr(msg_chunk_dict, "type", None)
                         tool_call_id = getattr(msg_chunk_dict, "tool_call_id", None)
                         content = getattr(msg_chunk_dict, "content", "")
                         # Debug: Log ToolMessage checking
-                        logger.info(f"[TOOL_END DEBUG] Checking obj - type={msg_type}, tool_call_id={tool_call_id}")
-                        logger.info(f"[TOOL_END DEBUG] Object type: {type(msg_chunk_dict).__name__}")
+                        logger.info(
+                            f"[TOOL_END DEBUG] Checking obj - type={msg_type}, tool_call_id={tool_call_id}"
+                        )
+                        logger.info(
+                            f"[TOOL_END DEBUG] Object type: {type(msg_chunk_dict).__name__}"
+                        )
 
                     if msg_type == "tool" and tool_call_id:
                         # Get tool name from cache instead of from ToolMessage
@@ -727,48 +873,56 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                         if tool_name == "task_delegation":
                             # task_delegation is always called by Director
                             tool_end_agent = "Director"
-                            tool_end_agent_id = tool_call_id  # use delegation call id as the block id
+                            tool_end_agent_id = (
+                                tool_call_id  # use delegation call id as the block id
+                            )
                         elif not namespace:
                             # Root graph, should be Director
                             tool_end_agent = "Director"
                             tool_end_agent_id = None
                         # else: use the resolved agent_name from namespace (sub-agent)
 
-                        logger.info(f"[TOOL_END] Emitting tool_end: id={tool_call_id}, tool={tool_name}, agent={tool_end_agent}")
+                        logger.info(
+                            f"[TOOL_END] Emitting tool_end: id={tool_call_id}, tool={tool_name}, agent={tool_end_agent}"
+                        )
 
                         # Determine if the tool execution was successful or failed
                         # Check if content indicates an error
                         is_error = isinstance(content, str) and (
-                            content.lower().startswith("error") or
-                            "error invoking tool" in content.lower() or
-                            "field required" in content.lower() or
-                            "validation error" in content.lower()
+                            content.lower().startswith("error")
+                            or "error invoking tool" in content.lower()
+                            or "field required" in content.lower()
+                            or "validation error" in content.lower()
                         )
                         tool_status = "failed" if is_error else "success"
 
-                        yield emitter.format_event("tool_end", {
-                            "id": tool_call_id,
-                            "tool": tool_name,  # Use cached tool name
-                            "result": content,
-                            "status": tool_status,
-                            "agent": tool_end_agent or "Agent",
-                            "agent_id": tool_end_agent_id
-                        })
+                        yield emitter.format_event(
+                            "tool_end",
+                            {
+                                "id": tool_call_id,
+                                "tool": tool_name,  # Use cached tool name
+                                "result": content,
+                                "status": tool_status,
+                                "agent": tool_end_agent or "Agent",
+                                "agent_id": tool_end_agent_id,
+                            },
+                        )
                         continue
                     else:
                         # Debug: Log cases where tool_end is not emitted
                         if msg_type == "tool":
-                            logger.warning(f"[TOOL_END] ToolMessage without tool_call_id: {msg_chunk_dict}")
+                            logger.warning(
+                                f"[TOOL_END] ToolMessage without tool_call_id: {msg_chunk_dict}"
+                            )
                         if tool_call_id and msg_type != "tool":
-                            logger.warning(f"[TOOL_END] Has tool_call_id but type is not 'tool': type={msg_type}, id={tool_call_id}")
+                            logger.warning(
+                                f"[TOOL_END] Has tool_call_id but type is not 'tool': type={msg_type}, id={tool_call_id}"
+                            )
 
                     # Extract content from the message chunk dict
                     if isinstance(msg_chunk_dict, dict):
                         kwargs = msg_chunk_dict.get("kwargs", {})
-                        if isinstance(kwargs, dict):
-                            content = kwargs.get("content", [])
-                        else:
-                            content = []
+                        content = kwargs.get("content", []) if isinstance(kwargs, dict) else []
                     else:
                         content = getattr(msg_chunk_dict, "content", None)
 
@@ -789,19 +943,29 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             if part_type == "thinking":
                                 thinking_text = part.get("thinking", "")
                                 if thinking_text:
-                                    logger.info(f"[THINKING] Sending thinking with agent={agent_name}, namespace={namespace}")
-                                    yield emitter.thinking(thinking_text, agent=agent_name or "Agent", agent_id=agent_id)
+                                    logger.info(
+                                        f"[THINKING] Sending thinking with agent={agent_name}, namespace={namespace}"
+                                    )
+                                    yield emitter.thinking(
+                                        thinking_text,
+                                        agent=agent_name or "Agent",
+                                        agent_id=agent_id,
+                                    )
                             # Handle text blocks
                             elif part_type == "text":
                                 part_text = part.get("text", "")
                                 if part_text:
-                                    yield emitter.text(part_text, agent=agent_name or "Agent", agent_id=agent_id)
+                                    yield emitter.text(
+                                        part_text, agent=agent_name or "Agent", agent_id=agent_id
+                                    )
                         continue
 
                     # Fallback for non-list content
                     text_content = _extract_text(content)
                     if text_content:
-                        yield emitter.text(text_content, agent=agent_name or "Agent", agent_id=agent_id)
+                        yield emitter.text(
+                            text_content, agent=agent_name or "Agent", agent_id=agent_id
+                        )
 
                 elif mode == "custom":
                     data = payload
@@ -815,11 +979,14 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
                             continue
                         if action == "rerun_generation_node":
                             # Emit rerun_generation_node event with nodeId, assetId, and nodeData
-                            yield emitter.format_event("rerun_generation_node", {
-                                "nodeId": data.get("nodeId"),
-                                "assetId": data.get("assetId"),
-                                "nodeData": data.get("nodeData")
-                            })
+                            yield emitter.format_event(
+                                "rerun_generation_node",
+                                {
+                                    "nodeId": data.get("nodeId"),
+                                    "assetId": data.get("assetId"),
+                                    "nodeData": data.get("nodeData"),
+                                },
+                            )
                             continue
                         if action == "subagent_stream":
                             # Map subagent stream to thinking/text
@@ -844,6 +1011,7 @@ async def stream_workflow(project_id: str, thread_id: str, resume: bool = False,
         yield emitter.end()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 
 def process_video_analysis(task_id: str, request_data: dict, callback_url: str = None):
     """Background task to run comprehensive video analysis."""
@@ -939,6 +1107,7 @@ async def analyze_video(request: AnalyzeVideoRequest, background_tasks: Backgrou
 
     # Validate video file exists
     from pathlib import Path
+
     if not Path(request.video_path).exists():
         raise HTTPException(status_code=404, detail=f"Video file not found: {request.video_path}")
 
@@ -958,17 +1127,10 @@ async def analyze_video(request: AnalyzeVideoRequest, background_tasks: Backgrou
     }
 
     # Start background task
-    background_tasks.add_task(
-        process_video_analysis,
-        task_id,
-        request_data,
-        request.callback_url
-    )
+    background_tasks.add_task(process_video_analysis, task_id, request_data, request.callback_url)
 
     return AnalyzeVideoResponse(
-        task_id=task_id,
-        status="processing",
-        message="Video analysis started in background"
+        task_id=task_id, status="processing", message="Video analysis started in background"
     )
 
 
@@ -986,31 +1148,25 @@ async def generate_semantic_ids(request: GenerateSemanticIDRequest):
         checker = create_d1_checker()
 
         # Generate unique IDs
-        ids = generate_unique_ids_for_project(
-            request.project_id,
-            request.count,
-            checker
-        )
+        ids = generate_unique_ids_for_project(request.project_id, request.count, checker)
 
-        return GenerateSemanticIDResponse(
-            ids=ids,
-            project_id=request.project_id
-        )
+        return GenerateSemanticIDResponse(ids=ids, project_id=request.project_id)
 
     except Exception as e:
         logger.error(f"Error generating semantic IDs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler."""
     import traceback
+
     logger.error(f"Global exception: {exc}")
     logger.debug(traceback.format_exc())
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal Server Error: {str(exc)}", "type": type(exc).__name__}
+        content={"detail": f"Internal Server Error: {str(exc)}", "type": type(exc).__name__},
     )
 
 

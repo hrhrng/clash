@@ -5,7 +5,9 @@ Stores workflow checkpoint state in Cloudflare D1 database via HTTP API.
 """
 
 import json
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
+
 import httpx
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
@@ -45,7 +47,7 @@ class D1Checkpointer(BaseCheckpointSaver):
             f"/d1/database/{database_id}/query"
         )
 
-    def _execute_sql(self, sql: str, params: Optional[list] = None) -> dict[str, Any]:
+    def _execute_sql(self, sql: str, params: list | None = None) -> dict[str, Any]:
         """
         Execute SQL on D1 via HTTP API (synchronous).
 
@@ -74,7 +76,7 @@ class D1Checkpointer(BaseCheckpointSaver):
         return result
 
     async def _aexecute_sql(
-        self, sql: str, params: Optional[list] = None
+        self, sql: str, params: list | None = None
     ) -> dict[str, Any]:
         """
         Execute SQL on D1 via HTTP API (async).
@@ -215,7 +217,7 @@ class D1Checkpointer(BaseCheckpointSaver):
             }
         }
 
-    def get_tuple(self, config: dict) -> Optional[CheckpointTuple]:
+    def get_tuple(self, config: dict) -> CheckpointTuple | None:
         """
         Load checkpoint from D1 (sync).
 
@@ -284,7 +286,7 @@ class D1Checkpointer(BaseCheckpointSaver):
             ),
         )
 
-    async def aget_tuple(self, config: dict) -> Optional[CheckpointTuple]:
+    async def aget_tuple(self, config: dict) -> CheckpointTuple | None:
         """Load checkpoint from D1 (async)."""
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
@@ -344,14 +346,14 @@ class D1Checkpointer(BaseCheckpointSaver):
         )
 
     def list(
-        self, config: dict, *, filter: Optional[dict] = None, before: Optional[dict] = None, limit: Optional[int] = None
+        self, config: dict, *, filter: dict | None = None, before: dict | None = None, limit: int | None = None
     ) -> Sequence[CheckpointTuple]:
         """List checkpoints (sync)."""
         # Basic implementation - can be enhanced
         return []
 
     async def alist(
-        self, config: dict, *, filter: Optional[dict] = None, before: Optional[dict] = None, limit: Optional[int] = None
+        self, config: dict, *, filter: dict | None = None, before: dict | None = None, limit: int | None = None
     ) -> Sequence[CheckpointTuple]:
         """List checkpoints (async)."""
         return []

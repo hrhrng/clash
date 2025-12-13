@@ -12,7 +12,6 @@ from master_clash.tools.kling_video import (
     kling_video_tool,
     list_registered_videos,
     list_videos,
-    register_video,
 )
 
 
@@ -30,7 +29,7 @@ def example_1_simple_generation():
         mode="std",
     )
 
-    print(f"✅ Video generated!")
+    print("✅ Video generated!")
     print(f"   URL: {video_url}")
     print()
 

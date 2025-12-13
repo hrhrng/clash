@@ -7,7 +7,6 @@
 import asyncio
 import json
 import logging
-import subprocess
 from pathlib import Path
 
 from .models import SubtitleTrack, TranscriptionSegment
@@ -58,7 +57,7 @@ class SubtitleExtractor:
             return streams
 
         except FileNotFoundError:
-            raise RuntimeError("FFprobe not found. Please install FFmpeg.")
+            raise RuntimeError("FFprobe not found. Please install FFmpeg.") from None
         except Exception as e:
             logger.error(f"Failed to get subtitle streams: {e}")
             return []
@@ -121,7 +120,7 @@ class SubtitleExtractor:
         segments = []
 
         try:
-            with open(srt_path, "r", encoding="utf-8") as f:
+            with open(srt_path, encoding="utf-8") as f:
                 content = f.read()
 
             # 分割字幕块
@@ -188,7 +187,7 @@ class SubtitleExtractor:
         segments = []
 
         try:
-            with open(vtt_path, "r", encoding="utf-8") as f:
+            with open(vtt_path, encoding="utf-8") as f:
                 lines = f.readlines()
 
             # 跳过 WEBVTT 头

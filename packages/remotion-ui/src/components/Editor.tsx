@@ -1,5 +1,5 @@
 import React from 'react';
-import { EditorProvider, useEditor } from '@remotion-fast/core';
+import { EditorProvider, useEditor } from '@master-clash/remotion-core';
 import { CanvasPreview } from './CanvasPreview';
 import { Timeline } from './Timeline';
 import { AssetPanel } from './AssetPanel';

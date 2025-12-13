@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { useEditor } from "@remotion-fast/core";
+import { useEditor } from "@master-clash/remotion-core";
 import { InteractiveCanvas } from "./InteractiveCanvas";
 
 // Time formatting utilities

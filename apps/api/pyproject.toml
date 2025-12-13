@@ -88,11 +88,18 @@ Issues = "https://github.com/yourusername/master-clash/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/master_clash"]
+
 # Ruff configuration - Modern Python linter and formatter
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 src = ["src"]
+extend-exclude = [
+    "**/.history/**",
+    "../../apps/web/script/workflow.ipynb",
+]
 
 [tool.ruff.lint]
 select = [
@@ -168,4 +175,5 @@ dev = [
     "pytest>=9.0.1",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.6",
+    "types-requests",
 ]

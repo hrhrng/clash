@@ -6,11 +6,8 @@ Make sure to set KIE_API_KEY in your .env file before running.
 """
 
 import json
-from src.master_clash.tools.kling_kie import (
-    KlingKIEVideoGenerator,
-    image_to_video,
-    text_to_video
-)
+
+from src.master_clash.tools.kling_kie import KlingKIEVideoGenerator, image_to_video, text_to_video
 
 
 def example_1_simple_image_to_video():
@@ -25,7 +22,7 @@ def example_1_simple_image_to_video():
         duration="5"
     )
 
-    print(f"✅ Video generated!")
+    print("✅ Video generated!")
     print(f"   URL: {video_url}")
     print()
 
@@ -50,7 +47,7 @@ def example_2_advanced_image_to_video():
     result_json = json.loads(result["resultJson"])
     video_url = result_json["resultUrls"][0]
 
-    print(f"✅ Video generated!")
+    print("✅ Video generated!")
     print(f"   URL: {video_url}")
     print(f"   Task ID: {result['taskId']}")
     print(f"   Cost Time: {result.get('costTime', 0) / 1000:.1f}s")
@@ -70,7 +67,7 @@ def example_3_text_to_video():
         aspect_ratio="16:9"
     )
 
-    print(f"✅ Video generated!")
+    print("✅ Video generated!")
     print(f"   URL: {video_url}")
     print()
 

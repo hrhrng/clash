@@ -6,7 +6,6 @@ and delegates schema creation to the new migrations system (SQLite/Postgres).
 
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 from master_clash.config import get_settings
 from master_clash.database.di import get_database
@@ -44,7 +43,7 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
-def init_database(db_path: Optional[Path] = None) -> None:
+def init_database(db_path: Path | None = None) -> None:
     """Initialize schema via migrations (SQLite or Postgres).
 
     For backward compatibility, if `db_path` is passed we ensure the SQLite

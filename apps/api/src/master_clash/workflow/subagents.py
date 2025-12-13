@@ -4,20 +4,16 @@ Inspired by deepagents' SubAgentMiddleware, this allows agents to delegate
 tasks to specialized sub-agents with isolated context.
 """
 
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Sequence
-
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.tools import BaseTool, InjectedToolCallId
-from langgraph.prebuilt import InjectedState
+from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
 from langchain.tools import BaseTool, ToolRuntime
-from langchain_core.callbacks.manager import adispatch_custom_event
-
-import logging
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import Runnable, RunnableConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +26,7 @@ class SubAgent:
     description: str
     system_prompt: str
     tools: Sequence[BaseTool]
-    model: BaseChatModel | None = None
+    model: BaseChatModel
     middleware: Sequence[AgentMiddleware] | None = None
     workspace_aware: bool = False  # Whether this agent should work within a specific group
 
@@ -53,7 +49,7 @@ class SubAgentMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        subagents: Sequence[SubAgent | CompiledSubAgent],
+        subagents: Sequence[SubAgent],
         general_purpose_agent: bool = True,
     ):
         """Initialize sub-agent middleware.
@@ -64,7 +60,7 @@ class SubAgentMiddleware(AgentMiddleware):
         """
         self.subagents = subagents
         self.general_purpose_agent = general_purpose_agent
-        self._compiled_agents: dict[str, CompiledGraph] = {}
+        self._compiled_agents: dict[str, Runnable] = {}
         # Keep tools as a list so middleware_tools iteration doesn't treat
         # a single BaseTool as an iterable of key/value tuples (pydantic __iter__).
         self.tools = [self._create_task_tool()]
@@ -78,11 +74,9 @@ class SubAgentMiddleware(AgentMiddleware):
         # Generate task tool
 
         # Add delegation-specific system prompt
-        agent_names = [
-            agent.name for agent in self.subagents
-        ]
+        agent_names = [agent.name for agent in self.subagents]
         delegation_prompt = f"""
-You can delegate tasks to specialized sub-agents: {', '.join(agent_names)}
+You can delegate tasks to specialized sub-agents: {", ".join(agent_names)}
 
 Use the task_delegation tool to assign work:
 - agent: Name of the sub-agent
@@ -96,8 +90,8 @@ Sub-agents have isolated context and their own tools.
         else:
             system_prompt = delegation_prompt
 
-        return handler(request.override(system_prompt=system_prompt))
-    
+        return handler(request.override(system_message=SystemMessage(system_prompt)))
+
     async def awrap_model_call(
         self,
         request: ModelRequest,
@@ -107,11 +101,9 @@ Sub-agents have isolated context and their own tools.
         # Generate task tool
 
         # Add delegation-specific system prompt
-        agent_names = [
-            agent.name for agent in self.subagents
-        ]
+        agent_names = [agent.name for agent in self.subagents]
         delegation_prompt = f"""
-You can delegate tasks to specialized sub-agents: {', '.join(agent_names)}
+You can delegate tasks to specialized sub-agents: {", ".join(agent_names)}
 
 Use the task_delegation tool to assign work:
 - agent: Name of the sub-agent
@@ -125,9 +117,7 @@ Sub-agents have isolated context and their own tools.
         else:
             system_prompt = delegation_prompt
 
-        return await handler(request.override(system_prompt=system_prompt))
-    
-    
+        return await handler(request.override(system_message=SystemMessage(system_prompt)))  # type: ignore
 
     def _create_task_tool(self) -> BaseTool:
         """Create the task delegation tool."""
@@ -169,7 +159,7 @@ Sub-agents have isolated context and their own tools.
                 elif isinstance(runtime, dict):
                     logger.warning("Runtime passed as dict, attempting to extract state")
                     project_id = runtime.get("state", {}).get("project_id", "")
-                
+
                 logger.debug(f"Project ID: {project_id}")
 
                 # Find the target sub-agent
@@ -191,7 +181,7 @@ Sub-agents have isolated context and their own tools.
                 if context:
                     msg_content = f"{msg_content}\nContext: {context}"
 
-                sub_state: AgentState = {
+                sub_state: dict[str, Any] = {
                     "messages": [HumanMessage(content=msg_content)],
                     "project_id": project_id,
                 }
@@ -205,16 +195,18 @@ Sub-agents have isolated context and their own tools.
                     graph = target.graph
                 else:
                     # Compile SubAgent definition on first use
-                    
+
                     logger.info(f"Compiling sub-agent: {agent}")
                     graph = self._compile_subagent(target)
 
                 # Invoke sub-agent
                 logger.info(f"Invoking sub-agent: {agent}")
-                config:RunnableConfig = config.copy()
-                config["metadata"].update({"agent_id": runtime.tool_call_id})
-                result = await graph.ainvoke(sub_state, config)
+                run_config: RunnableConfig = config.copy()
+                if "metadata" in run_config:
+                    run_config["metadata"].update({"agent_id": runtime.tool_call_id})
+                result = await graph.ainvoke(sub_state, run_config)
                 from langchain_core.load import dumps
+
                 logger.info(dumps(result))
                 messages = result.get("messages", [])
 
@@ -283,12 +275,6 @@ def create_specialist_agents(
     Returns:
         List of sub-agent definitions
     """
-    from master_clash.workflow.tools import (
-        create_node,
-        list_node_info,
-        read_node,
-        wait_for_task,
-    )
 
     script_writer = SubAgent(
         name="ScriptWriter",

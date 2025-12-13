@@ -56,6 +56,10 @@ jobs:
       - name: Lint all Python packages
         run: uv run ruff check .
 
+      # 类型检查
+      - name: Type check (mypy)
+        run: uv run mypy apps/api/src/master_clash
+
       # 运行所有 Python 包的测试
       - name: Test all Python packages
         env:

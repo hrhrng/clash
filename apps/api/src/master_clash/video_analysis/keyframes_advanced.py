@@ -136,7 +136,7 @@ class AdvancedKeyframeDetector:
 
         # 加权平均（H 通道权重更高）
         weights = [0.5, 0.3, 0.2]  # H, S, V
-        return sum(d * w for d, w in zip(differences, weights))
+        return sum(d * w for d, w in zip(differences, weights, strict=False))
 
     def calculate_edge_difference(self, frame1: np.ndarray, frame2: np.ndarray) -> float:
         """
@@ -187,10 +187,7 @@ class AdvancedKeyframeDetector:
             color_diff = 0
 
         # 4. 可选：边缘信息
-        if self.use_edges:
-            edge_diff = self.calculate_edge_difference(frame1, frame2)
-        else:
-            edge_diff = 0
+        edge_diff = self.calculate_edge_difference(frame1, frame2) if self.use_edges else 0
 
         # 加权融合
         weights = {
