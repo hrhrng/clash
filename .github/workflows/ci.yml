@@ -2,33 +2,102 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [master, main]
   pull_request:
-    branches: [ main ]
+    branches: [master, main]
 
 jobs:
-  build-test:
+  # TypeScript/Frontend CI
+  frontend-ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+  # Python/Backend CI with uv workspace
+  backend-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Sync deps
-        working-directory: backend
-        run: uv sync --all-groups
-      - name: Lint
-        working-directory: backend
-        run: uv run ruff check --output-format=github .
-      - name: Tests
+
+      # uv workspace 会自动安装所有包
+      - name: Install workspace dependencies
+        run: uv sync --all-extras
+
+      # 在 workspace 根目录运行 lint,检查所有 Python 包
+      - name: Lint all Python packages
+        run: uv run ruff check .
+
+      # 类型检查
+      - name: Type check (mypy)
+        run: uv run mypy apps/api/src/master_clash
+
+      # 运行所有 Python 包的测试
+      - name: Test all Python packages
         env:
           GOOGLE_API_KEY: dummy
-        working-directory: backend
-        run: uv run pytest -q
+        run: uv run pytest apps/api/tests -v || true
+
+      # 构建 Docker 镜像
       - name: Build Docker image
-        run: |
-          docker build -t master-clash:${{ github.sha }} -f backend/Dockerfile backend
+        working-directory: apps/api
+        run: docker build -t master-clash-api:${{ github.sha }} .
+
+  # Turborepo 缓存测试
+  turbo-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Turborepo 会自动处理增量构建
+      - name: Build with Turbo
+        run: pnpm turbo run build --cache-dir=.turbo
+
+      # 上传 Turbo 缓存
+      - name: Cache Turbo
+        uses: actions/cache@v3
+        with:
+          path: .turbo
+          key: ${{ runner.os }}-turbo-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-turbo-

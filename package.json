@@ -4,23 +4,12 @@
   "private": true,
   "description": "AI-powered video production platform",
   "scripts": {
-    "setup": "node scripts/setup.js",
-    "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && make dev",
-    "dev": "node scripts/start.js",
-    "build:frontend": "cd frontend && npm run pages:build",
-    "build:backend": "cd backend && docker build -t master-clash-backend .",
-    "build": "npm run build:frontend && npm run build:backend",
-    "deploy:frontend": "cd frontend && wrangler pages deploy",
-    "deploy:backend": "echo 'See backend/README.md for Cloudflare Container deployment'",
-    "db:create": "cd frontend && wrangler d1 create clash-flow-db",
-    "db:migrate:local": "cd frontend && wrangler d1 migrations apply clash-flow-db --local",
-    "db:migrate:prod": "cd frontend && wrangler d1 migrations apply clash-flow-db",
-    "db:seed": "cd frontend && npm run db:seed",
-    "test:frontend": "cd frontend && npm test",
-    "test:backend": "cd backend && make test",
-    "test": "npm run test:frontend && npm run test:backend",
-    "clean": "rm -rf frontend/node_modules backend/.venv frontend/.next frontend/.wrangler"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "clean": "turbo run clean && rm -rf node_modules .turbo"
   },
   "keywords": [
     "ai",
@@ -32,6 +21,9 @@
   "author": "hrhrng <hrhrng@foxmail.com>",
   "license": "MIT",
   "devDependencies": {
-    "concurrently": "^9.1.0"
-  }
+    "turbo": "^2.0.0",
+    "@changesets/cli": "^2.27.0",
+    "prettier": "^3.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
 }
