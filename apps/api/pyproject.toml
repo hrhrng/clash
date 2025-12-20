@@ -58,6 +58,7 @@ dependencies = [
     "scipy>=1.10.0",
     "matplotlib>=3.7.0",
     "langchain-google-vertexai",
+    "loro>=1.10.3",
 ]
 
 # Optional dependency groups

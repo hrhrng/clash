@@ -108,7 +108,6 @@ async function baseNanoBananaGen(
     const llm = new ChatGoogleGenerativeAI({
         model: modelName,
         apiKey: apiKey,
-        platformType: 'gai',
         ...(baseURL && {
             // @ts-ignore - apiEndpoint is supported
             apiEndpoint: baseURL,
@@ -159,16 +158,23 @@ function getImageBase64FromResponse(response: AIMessage): string {
     // Look for image block
     const content = Array.isArray(response.content) ? response.content : [response.content];
 
-    const imageBlock = content.find(
-        (block: any) => typeof block === 'object' && block.image_url
-    );
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null;
+
+    const imageBlock = content.find((block: unknown) => {
+        if (!isRecord(block)) return false;
+        return 'image_url' in block;
+    });
 
     if (imageBlock) {
-        const url = imageBlock.image_url?.url || imageBlock.image_url;
-        if (typeof url === 'string') {
-            const parts = url.split(',');
-            return parts[parts.length - 1];
-        }
+        const imageUrlValue = (imageBlock as Record<string, unknown>)['image_url'];
+        const url =
+            typeof imageUrlValue === 'string'
+                ? imageUrlValue
+                : isRecord(imageUrlValue) && typeof imageUrlValue.url === 'string'
+                  ? imageUrlValue.url
+                  : undefined;
+        if (url) return url.split(',').pop() ?? url;
     }
 
     // Look for text block to give better error
@@ -328,7 +334,6 @@ Available images: ${listRegisteredImages().join(', ')}`;
             model: 'gemini-2.0-flash-exp',
             temperature: 0.7,
             apiKey: apiKey,
-            platformType: 'gai',
             ...(baseURL && {
                 // @ts-ignore - apiEndpoint is supported
                 apiEndpoint: baseURL,

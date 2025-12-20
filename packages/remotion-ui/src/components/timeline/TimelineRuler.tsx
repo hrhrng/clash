@@ -11,7 +11,6 @@ interface TimelineRulerProps {
   pixelsPerFrame: number;
   fps: number;
   onSeek: (frame: number) => void;
-  zoom: number;
   // Horizontal scroll sync from tracks viewport
   scrollLeft: number;
   // Visible content width to clamp ruler width
@@ -32,7 +31,6 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   pixelsPerFrame,
   fps,
   onSeek,
-  zoom,
   scrollLeft,
   viewportWidth,
   contentEndInFrames,

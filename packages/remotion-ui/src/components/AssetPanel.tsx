@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useEditor } from '@master-clash/remotion-core';
-import type { Asset, TextItem, ImageItem, VideoItem } from '@master-clash/remotion-core';
+import type { Asset, TextItem } from '@master-clash/remotion-core';
 import { loadAudioWaveform } from '@master-clash/remotion-core';
 
 // Export for TimelineTracksContainer to use

@@ -2,6 +2,7 @@ import { memo, useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
+import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
 import { getAsset } from '../../actions';
 
@@ -9,14 +10,25 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
     const { openViewer } = useMediaViewer();
     const { setNodes } = useReactFlow();
-    const [status, setStatus] = useState(data.status || (data.src ? 'completed' : 'pending'));
+    const [status, setStatus] = useState<AssetStatus>(normalizeStatus(data.status) || (data.src ? 'completed' : 'generating'));
     const [videoUrl, setVideoUrl] = useState(data.src);
     const [description, setDescription] = useState(data.description || '');
     const [showDescription, setShowDescription] = useState(false);
 
+    // Sync status and videoUrl from Loro data changes
     useEffect(() => {
-        // Poll if pending OR (completed but missing description)
-        const shouldPoll = (status === 'pending') || (status === 'completed' && !description);
+        const newStatus = normalizeStatus(data.status);
+        if (newStatus !== status) {
+            setStatus(newStatus);
+        }
+        if (data.src !== videoUrl) {
+            setVideoUrl(data.src);
+        }
+    }, [data.status, data.src]);
+
+    useEffect(() => {
+        // Poll if generating OR (completed but missing description)
+        const shouldPoll = isActiveStatus(status) || (status === 'completed' && !description);
 
         if (shouldPoll && data.assetId) {
             const interval = setInterval(async () => {
@@ -24,8 +36,9 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                     const asset = await getAsset(data.assetId);
                     if (asset) {
                         // Update status if changed
-                        if (asset.status !== status) {
-                            setStatus(asset.status);
+                        const newAssetStatus = normalizeStatus(asset.status || undefined);
+                        if (newAssetStatus !== status) {
+                            setStatus(newAssetStatus);
                         }
 
                         // Update URL if changed
@@ -146,7 +159,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             </div>
                         </div>
                     </div>
-                ) : status === 'pending' ? (
+                ) : isActiveStatus(status) ? (
                     <div className="flex h-32 items-center justify-center bg-slate-50 text-slate-400">
                         <div className="flex flex-col items-center gap-3">
                             <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />

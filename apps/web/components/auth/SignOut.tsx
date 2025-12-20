@@ -1,15 +1,17 @@
+"use client"
 
-import { signOut } from "@/auth"
+import betterAuthClient from "@/lib/betterAuthClient"
 
 export function SignOut() {
     return (
-        <form
-            action={async () => {
-                "use server"
-                await signOut()
+        <button
+            type="button"
+            onClick={async () => {
+                await betterAuthClient.signOut()
             }}
         >
-            <button type="submit">Sign Out</button>
-        </form>
+            Sign Out
+        </button>
     )
 }
+

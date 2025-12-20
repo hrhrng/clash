@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { formatTime } from './utils/timeFormatter';
 import { ZoomControl, SnapButton } from './TimelineControls';
 
@@ -24,13 +23,9 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   fps,
   zoom,
   snapEnabled,
-  autoFitEnabled = false,
   onZoomIn,
   onZoomOut,
-  onZoomToFit,
-  onZoomReset,
   onToggleSnap,
-  onToggleAutoFit,
   onZoomChange,
   zoomLimits,
 }) => {

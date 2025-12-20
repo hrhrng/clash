@@ -50,7 +50,7 @@ function MilkdownEditorInner({ value, onChange }: MilkdownEditorProps) {
                 ctx.set(rootCtx, root);
                 ctx.set(defaultValueCtx, value);
             })
-            .use(nord)
+            .config(nord)
             .use(commonmark)
             .use(listener)
             .use(prism)
@@ -58,7 +58,7 @@ function MilkdownEditorInner({ value, onChange }: MilkdownEditorProps) {
             .use(trailing)
             .use(ensureStartingParagraph)
             .config((ctx) => {
-                ctx.get(listenerCtx).markdownUpdated((ctx, markdown) => {
+                ctx.get(listenerCtx).markdownUpdated((_ctx, markdown) => {
                     onChange(markdown);
                 });
             })

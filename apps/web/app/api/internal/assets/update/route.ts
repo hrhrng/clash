@@ -3,28 +3,29 @@ import { eq } from 'drizzle-orm';
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
 import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/lib/db/schema';
-import { getRequestContext } from '@cloudflare/next-on-pages';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { uploadBufferToR2, uploadVideoFromUrlToR2 } from '@/lib/r2-upload';
 
 // Helper to get DB (duplicated from actions.ts for now)
 const getDb = async () => {
-    // 1. Try to get D1 from Cloudflare context
-    try {
-        const ctx = getRequestContext();
-        if (ctx.env.DB) {
-            return drizzleD1(ctx.env.DB, { schema });
-        }
-    } catch (e) {
-        // Ignore error
-    }
-
-    // 2. Fallback to local SQLite (Node.js only)
+    // Local dev should always use local SQLite.
     if (process.env.NODE_ENV === 'development') {
         const path = await import('path');
         const Database = (await import('better-sqlite3')).default;
         const dbPath = path.join(process.cwd(), 'local.db');
         const sqlite = new Database(dbPath);
         return drizzleSqlite(sqlite, { schema });
+    }
+
+    // 1. Try to get D1 from Cloudflare context
+    try {
+        const { env } = await getCloudflareContext({ async: true });
+        const bindings = env as unknown as { DB?: Parameters<typeof drizzleD1>[0] };
+        if (bindings.DB) {
+            return drizzleD1(bindings.DB, { schema });
+        }
+    } catch (e) {
+        // Ignore error
     }
 
     throw new Error('No database connection available');

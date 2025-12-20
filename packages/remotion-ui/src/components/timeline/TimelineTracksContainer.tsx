@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor } from '@master-clash/remotion-core';
-import type { Track, Asset, Item } from '@master-clash/remotion-core';
+import type { Asset, Item } from '@master-clash/remotion-core';
 import { secondsToFrames } from './utils/timeFormatter';
 import { TimelineItem } from './TimelineItem';
 import { currentDraggedAsset, currentAssetDragOffset } from '../AssetPanel';
@@ -120,7 +120,6 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
   const viewportRef = useRef<HTMLDivElement>(null);
   const handleInsertDropRef = useRef<((e: React.DragEvent, position: number) => void) | null>(null);
 
-  const [scrollSync, setScrollSync] = useState({ x: 0, y: 0 });
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [insertPosition, setInsertPosition] = useState<number | null>(null);
   // Show insert guideline only while a drag is actually active
@@ -164,11 +163,9 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
     if (viewportRef.current && labelsRef.current) {
       const scrollTop = viewportRef.current.scrollTop;
       labelsRef.current.scrollTop = scrollTop;
-      setScrollSync(prev => ({ ...prev, y: scrollTop }));
 
       // Sync horizontal scroll to consumers (ruler, playhead, etc.)
       const scrollLeft = viewportRef.current.scrollLeft;
-      setScrollSync(prev => ({ ...prev, x: scrollLeft }));
       onScrollXChange?.(scrollLeft);
       // Re-measure in case scrollbar visibility changed while scrolling
       measureScrollbars();
@@ -179,7 +176,6 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
     if (labelsRef.current && viewportRef.current) {
       const scrollTop = labelsRef.current.scrollTop;
       viewportRef.current.scrollTop = scrollTop;
-      setScrollSync(prev => ({ ...prev, y: scrollTop }));
     }
   }, []);
 
@@ -316,7 +312,6 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
 
     // Check if this is an existing item being moved
     const dragType = e.dataTransfer.getData('dragType');
-    const itemId = e.dataTransfer.getData('itemId');
     const sourceTrackId = e.dataTransfer.getData('trackId');
 
 
@@ -378,7 +373,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
 
     const isQuickAdd = (e.dataTransfer.getData('quickAdd') || globalDragData.quickAdd) === 'true';
     const quickAddType = e.dataTransfer.getData('quickAddType') || globalDragData.quickAddType;
-    const assetData = e.dataTransfer.getData('asset') || globalDragData.asset;
+    void (e.dataTransfer.getData('asset') || globalDragData.asset);
 
     // If we still don't have assetId, try to get it from currentDraggedAsset
     let finalIsQuickAdd = isQuickAdd;
@@ -610,7 +605,6 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
               handleInsertDrop(e, effectiveInsertPosition);
               setInsertPosition(null);
               setIsDraggingOver(false);
-            } else {
             }
           }}
           onDragOver={(e) => {
@@ -687,7 +681,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
                   }}
                 >
                   {/* 使用 TimelineItem 组件保留所有功能 */}
-                  {track.items.map((item, itemIndex) => {
+                  {track.items.map((item, _itemIndex) => {
                     // 检测相邻的 item（用于 Roll Edit）
                     const sortedItems = [...track.items].sort((a, b) => a.from - b.from);
                     const currentIndex = sortedItems.findIndex(i => i.id === item.id);

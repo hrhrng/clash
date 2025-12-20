@@ -10,7 +10,6 @@ import ReactMarkdown from 'react-markdown';
 
 export interface AgentLog {
     id: string;
-    id: string;
     type: 'text' | 'tool_call' | 'thinking';
     content?: React.ReactNode;
     toolProps?: ToolCallProps;

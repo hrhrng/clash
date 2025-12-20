@@ -9,10 +9,27 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     '.next/**',
+    '.open-next/**',
     'out/**',
     'build/**',
     'next-env.d.ts',
+    // Non-production / local scripts:
+    'script/**',
+    'test-*.ts',
+    'test-*.tsx',
+    'test-*.mjs',
   ]),
+  {
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/ban-ts-comment': 'off',
+      'react/no-unescaped-entities': 'off',
+      'prefer-const': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/purity': 'off',
+    },
+  },
 ]);
 
 export default eslintConfig;

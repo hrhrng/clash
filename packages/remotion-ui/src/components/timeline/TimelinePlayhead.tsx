@@ -6,7 +6,6 @@ interface TimelinePlayheadProps {
   currentFrame: number;
   pixelsPerFrame: number;
   fps: number;
-  timelineHeight: number;
   onSeek: (frame: number) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -23,7 +22,6 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
   currentFrame,
   pixelsPerFrame,
   fps,
-  timelineHeight,
   onSeek,
   onDragStart,
   onDragEnd,

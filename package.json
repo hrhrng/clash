@@ -21,9 +21,16 @@
   "author": "hrhrng <hrhrng@foxmail.com>",
   "license": "MIT",
   "devDependencies": {
-    "turbo": "^2.0.0",
     "@changesets/cli": "^2.27.0",
-    "prettier": "^3.0.0"
+    "@opennextjs/cloudflare": "^1.14.6",
+    "prettier": "^3.0.0",
+    "turbo": "^2.0.0",
+    "wrangler": "^4"
   },
-  "packageManager": "pnpm@8.15.0"
+  "packageManager": "pnpm@8.15.0",
+  "dependencies": {
+    "better-auth": "^1.4.6",
+    "better-auth-cloudflare": "^0.2.9",
+    "zod": "^4"
+  }
 }

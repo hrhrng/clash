@@ -6,12 +6,15 @@ import { ChatText, X } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import MilkdownEditor from '../MilkdownEditor';
+import { useLoroSyncContext } from '../LoroSyncContext';
 
 const PromptNode = ({ data, selected, id }: NodeProps) => {
     const [showModal, setShowModal] = useState(false);
     const [label, setLabel] = useState(data.label || 'Prompt');
     const [content, setContent] = useState(data.content || '# Prompt\nEnter your prompt here...');
     const { setNodes } = useReactFlow();
+    // Access Loro sync context
+    const { updateNode } = useLoroSyncContext();
 
     // Sync when data changes
     useEffect(() => {
@@ -27,7 +30,7 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
 
     const handleSave = useCallback(() => {
         setShowModal(false);
-        // Update the node data
+        // Update the node data locally
         setNodes((nds) =>
             nds.map((node) => {
                 if (node.id === id) {
@@ -43,7 +46,16 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
                 return node;
             })
         );
-    }, [id, label, content, setNodes]);
+        
+        // Sync to Loro
+        console.log(`[PromptNode] Syncing update to Loro: ${id}`);
+        updateNode(id, {
+            data: {
+                label,
+                content
+            }
+        });
+    }, [id, label, content, setNodes, updateNode]);
 
     const handleCancel = useCallback(() => {
         setShowModal(false);

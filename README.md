@@ -24,7 +24,7 @@ This is a full-stack application deployed on Cloudflare:
 - Cloudflare Pages + Workers
 - Cloudflare D1 (Database)
 - Drizzle ORM
-- NextAuth.js (Authentication)
+- Better Auth (Authentication)
 - TailwindCSS 4
 - React Flow (Workflow visualization)
 

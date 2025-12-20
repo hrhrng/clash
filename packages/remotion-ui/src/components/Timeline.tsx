@@ -23,12 +23,13 @@ import { TimelineItem } from './timeline/TimelineItem';
 import { useKeyboardShortcuts } from './timeline/hooks/useKeyboardShortcuts';
 
 import { getPixelsPerFrame, pixelsToFrame, frameToPixels, secondsToFrames } from './timeline/utils/timeFormatter';
-import { calculateSnap, calculateSnapForItemRange, getAllSnapTargets } from './timeline/utils/snapCalculator';
-import { buildPreview as buildItemDragPreview, finalizeDrop as finalizeItemDrop, computeVerticalLandmarks } from './timeline/dnd/itemDragLogic';
+import { calculateSnap } from './timeline/utils/snapCalculator';
+import { buildPreview as buildItemDragPreview, finalizeDrop as finalizeItemDrop } from './timeline/dnd/itemDragLogic';
 import { currentDraggedAsset, currentAssetDragOffset } from './AssetPanel';
 
 // 声明全局window属性
 declare global {
+  // eslint-disable-next-line no-unused-vars
   interface Window {
     currentDraggedItem: { item: Item; trackId: string } | null;
   }
@@ -50,10 +51,8 @@ export const Timeline: React.FC = () => {
 
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [draggedItem, setDraggedItem] = useState<{ trackId: string; item: Item } | null>(null);
-  const [dragOffset, setDragOffset] = useState<number>(0); // 鼠标相对于素材左边缘的偏移量（像素）
-  const [assetDragOffset, setAssetDragOffset] = useState<number>(0); // asset 拖动时的偏移量
+  const [, setDragOffset] = useState<number>(0); // 鼠标相对于素材左边缘的偏移量（像素）
   const lastDragTopRef = useRef<number | null>(null);
-  const previousContentEndRef = useRef<number>(0); // 记录上次的内容结束位置
 
   // 拖动预览状态：存储预期的落点位置（snap后的）
   const [dragPreview, setDragPreview] = useState<{
@@ -215,7 +214,7 @@ export const Timeline: React.FC = () => {
   }, [updatePreviewFromDnd]);
 
   // dnd-kit: item drag end -> commit move
-  const onDndItemEnd = useCallback((event: DragEndEvent) => {
+  const onDndItemEnd = useCallback((_event: DragEndEvent) => {
     if (!dragPreview) {
       setDraggedItem(null);
       setDragOffset(0);
@@ -426,16 +425,6 @@ export const Timeline: React.FC = () => {
     [dispatch, durationInFrames]
   );
 
-  // ==================== 轨道操作 ====================
-  const handleAddTrack = useCallback(() => {
-    const newTrack = {
-      id: `track-${Date.now()}`,
-      name: 'Track',
-      items: [],
-    };
-    dispatch({ type: 'ADD_TRACK', payload: newTrack });
-  }, [dispatch]);
-
   const handleSelectTrack = useCallback(
     (trackId: string) => {
       dispatch({ type: 'SELECT_TRACK', payload: trackId });
@@ -471,50 +460,6 @@ export const Timeline: React.FC = () => {
     },
     [dispatch]
   );
-
-  // ==================== Item拖动处理 ====================
-  const handleItemDragStart = useCallback((e: React.DragEvent, trackId: string, item: Item) => {
-
-    // 同时设置本地state和全局window对象（兼容TimelineTracksContainer的insertDrop）
-    setDraggedItem({ trackId, item });
-    window.currentDraggedItem = { trackId, item };
-
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('dragType', 'item');
-    e.dataTransfer.setData('itemId', item.id);
-    e.dataTransfer.setData('trackId', trackId);
-
-    // 创建一个透明的拖动图像（隐藏默认的地球图标）
-    const dragImage = document.createElement('div');
-    dragImage.style.position = 'absolute';
-    dragImage.style.top = '-1000px';
-    dragImage.style.width = '1px';
-    dragImage.style.height = '1px';
-    document.body.appendChild(dragImage);
-    e.dataTransfer.setDragImage(dragImage, 0, 0);
-
-    // 拖动结束后清理
-    setTimeout(() => {
-      document.body.removeChild(dragImage);
-    }, 0);
-
-    // 计算鼠标相对于素材左边缘的偏移量
-    const target = e.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
-    setDragOffset(offsetX);
-
-    // 初始化拖动预览状态
-    setDragPreview({
-      itemId: item.id,
-      item: item,
-      originalTrackId: trackId,
-      originalFrom: item.from,
-      previewTrackId: trackId,
-      previewFrame: item.from,
-    });
-
-  }, []);
 
   // ==================== 拖放处理（从 AssetPanel 拖入素材 + Timeline内移动）====================
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -837,98 +782,6 @@ export const Timeline: React.FC = () => {
     [assets, tracks, dispatch, createItemFromAsset]
   );
 
-  // 处理item在轨道上拖动（只更新预览，不修改真实state）
-  const handleItemDragOver = useCallback(
-    (e: React.DragEvent, trackId: string) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (!draggedItem || !dragPreview) {
-        return;
-      }
-
-      if (!containerRef.current) {
-        return;
-      }
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left - 200 - contentInsetLeftPx;
-
-      // 预览框左边缘位置 = 鼠标位置 - 拖动偏移量
-      const previewLeftX = mouseX - dragOffset;
-      const rawFrame = Math.max(0, Math.floor(previewLeftX / pixelsPerFrame));
-
-      // 计算吸附 - Shift键禁用吸附
-      const disableSnap = e.shiftKey || !snapEnabled;
-      // 拖动物料时，优先让左/右边缘都可吸附，选择移动量更小的方案
-      const snapResult = calculateSnapForItemRange(
-        rawFrame,
-        draggedItem.item.durationInFrames,
-        tracks,
-        draggedItem.item.id,
-        currentFrame,
-        !disableSnap,
-        10
-      );
-
-      // 只更新预览状态，不修改真实的state
-      setDragPreview({
-        ...dragPreview,
-        previewTrackId: trackId,
-        previewFrame: snapResult.snappedFrame,
-      });
-    },
-    [draggedItem, dragPreview, dragOffset, pixelsPerFrame, tracks, currentFrame, snapEnabled]
-  );
-
-  // 处理item拖动松手（真正更新位置）
-  const handleItemDrop = useCallback((e: React.DragEvent, trackId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!dragPreview) {
-      return;
-    }
-
-    // 如果位置或轨道发生了变化，才需要更新
-    const positionChanged = dragPreview.previewFrame !== dragPreview.originalFrom;
-    const trackChanged = dragPreview.previewTrackId !== dragPreview.originalTrackId;
-
-    if (trackChanged) {
-      // 跨轨道移动：先添加到新轨道，再从旧轨道删除
-      dispatch({
-        type: 'ADD_ITEM',
-        payload: {
-          trackId: dragPreview.previewTrackId,
-          item: { ...dragPreview.item, from: dragPreview.previewFrame },
-        },
-      });
-      dispatch({
-        type: 'REMOVE_ITEM',
-        payload: {
-          trackId: dragPreview.originalTrackId,
-          itemId: dragPreview.itemId,
-        },
-      });
-    } else if (positionChanged) {
-      // 同轨道内移动：只更新位置
-      dispatch({
-        type: 'UPDATE_ITEM',
-        payload: {
-          trackId: dragPreview.originalTrackId,
-          itemId: dragPreview.itemId,
-          updates: { from: dragPreview.previewFrame },
-        },
-      });
-    }
-
-    // 清除拖动状态
-    setDraggedItem(null);
-    setDragOffset(0);
-    setDragPreview(null);
-    window.currentDraggedItem = null;
-  }, [dragPreview, dispatch]);
-
   const handleItemDragEnd = useCallback(() => {
     setDraggedItem(null);
     setDragOffset(0);
@@ -1151,7 +1004,6 @@ export const Timeline: React.FC = () => {
               pixelsPerFrame={pixelsPerFrame}
               fps={fps}
               onSeek={handleSeek}
-              zoom={zoom}
               scrollLeft={scrollLeft}
               viewportWidth={viewportContentWidth}
               leftOffset={contentInsetLeftPx}
@@ -1197,8 +1049,6 @@ export const Timeline: React.FC = () => {
               onScrollXChange={setScrollLeft}
               viewportWidth={viewportContentWidth}
               labelsPortal={labelsPortalEl}
-              left={200 + contentInsetLeftPx}
-              width={`calc(100% - ${200 + contentInsetLeftPx}px)`}
               contentInsetLeftPx={contentInsetLeftPx}
               externalInsertPosition={insertPosition}
             />
@@ -1232,7 +1082,6 @@ export const Timeline: React.FC = () => {
               currentFrame={currentFrame}
               pixelsPerFrame={pixelsPerFrame}
               fps={fps}
-              timelineHeight={tracks.length * 80 + 30}
               onSeek={handleSeek}
               scrollLeft={scrollLeft}
               leftOffset={contentInsetLeftPx}

@@ -96,6 +96,9 @@ class Settings:
         self.cloudflare_d1_database_id: str | None = _env("CLOUDFLARE_D1_DATABASE_ID")
         self.cloudflare_api_token: str | None = _env("CLOUDFLARE_API_TOKEN")
 
+        # Loro Sync Server
+        self.loro_sync_url: str | None = _env("LORO_SYNC_URL", "ws://localhost:8787")
+
         # App behavior
         self.max_workers: int = _env_int("MAX_WORKERS", 4)
         self.log_level: str = _env("LOG_LEVEL", "INFO") or "INFO"
