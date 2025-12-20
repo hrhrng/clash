@@ -1,15 +1,20 @@
+"use client"
 
-import { signIn } from "@/auth"
+import betterAuthClient from "@/lib/betterAuthClient"
 
 export function SignIn() {
     return (
-        <form
-            action={async () => {
-                "use server"
-                await signIn("google")
+        <button
+            type="button"
+            onClick={async () => {
+                await betterAuthClient.signIn.social({
+                    provider: "google",
+                    callbackURL: "/",
+                })
             }}
         >
-            <button type="submit">Signin with Google</button>
-        </form>
+            Sign in with Google
+        </button>
     )
 }
+

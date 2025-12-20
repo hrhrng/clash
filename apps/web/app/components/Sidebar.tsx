@@ -8,7 +8,10 @@ import {
   FolderOpen,
   GearSix,
   SignOut,
+  SignIn,
+  User,
 } from '@phosphor-icons/react';
+import betterAuthClient from '@/lib/betterAuthClient';
 
 const navItems = [
   { name: 'Home', href: '/', icon: House },
@@ -17,6 +20,41 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const sessionQuery = betterAuthClient.useSession();
+  const session = sessionQuery.data;
+  const user = session?.user;
+
+  const handleSignOut = async () => {
+    try {
+      await betterAuthClient.signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            window.location.href = '/';
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Sign out error:', error);
+      window.location.href = '/';
+    }
+  };
+
+  const handleSignIn = async () => {
+    try {
+      await betterAuthClient.signIn.social({
+        provider: 'google',
+        callbackURL: '/',
+      });
+    } catch (error) {
+      console.error('Sign in error:', error);
+    }
+  };
+
+  // Get user initials for avatar
+  const getInitials = (name: string | null | undefined) => {
+    if (!name) return '?';
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
 
   return (
     <aside className="fixed top-0 left-0 flex h-screen w-72 flex-col border-r border-slate-200 bg-slate-50">
@@ -72,22 +110,52 @@ export default function Sidebar() {
           <span>Settings</span>
         </motion.button>
 
-        {/* User Profile */}
-        <motion.div
-          className="flex cursor-pointer items-center gap-3 rounded-lg bg-gray-100 px-4 py-2.5 transition-all hover:bg-gray-200"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-cyan-400 to-blue-500 text-xs font-bold text-white">
-            蛇
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-gray-900">蛇皮</p>
-            <p className="truncate text-xs text-gray-500">xiaoyang@clash.dev</p>
-          </div>
-          <SignOut className="h-4 w-4 text-gray-400" weight="bold" />
-        </motion.div>
+        {/* User Profile / Sign In */}
+        {user ? (
+          <motion.div
+            className="flex cursor-pointer items-center gap-3 rounded-lg bg-gray-100 px-4 py-2.5 transition-all hover:bg-gray-200"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            {user.image ? (
+              <img
+                src={user.image}
+                alt="Avatar"
+                className="h-8 w-8 rounded-md object-cover"
+              />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-gradient-to-br from-cyan-400 to-blue-500 text-xs font-bold text-white">
+                {getInitials(user.name)}
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-gray-900">
+                {user.name || 'User'}
+              </p>
+              <p className="truncate text-xs text-gray-500">{user.email}</p>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="rounded-md p-1 hover:bg-gray-300 transition-colors"
+              title="Sign Out"
+            >
+              <SignOut className="h-4 w-4 text-gray-400 hover:text-red-500" weight="bold" />
+            </button>
+          </motion.div>
+        ) : (
+          <motion.button
+            onClick={handleSignIn}
+            className="flex w-full items-center gap-3 rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-blue-600"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <SignIn className="h-5 w-5" weight="bold" />
+            <span>Sign In with Google</span>
+          </motion.button>
+        )}
       </div>
     </aside>
   );
 }
+
+

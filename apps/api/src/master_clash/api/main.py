@@ -25,6 +25,7 @@ from master_clash.context import ProjectContext, set_project_context
 from master_clash.tools.description import generate_description
 from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.nano_banana import nano_banana_gen
+from master_clash.tools.loro_sync_client import LoroSyncClient
 from master_clash.utils import image_to_base64
 from master_clash.workflow.multi_agent import graph
 
@@ -653,6 +654,19 @@ async def stream_workflow(
         return str(content)
 
     async def event_stream():
+        # Initialize Loro sync client
+        loro_client = LoroSyncClient(
+            project_id=project_id,
+            sync_server_url=settings.loro_sync_url or "ws://localhost:8787",
+        )
+
+        try:
+            await loro_client.connect()
+            logger.info(f"[LoroSync] Connected for project {project_id}")
+        except Exception as e:
+            logger.error(f"[LoroSync] Failed to connect: {e}")
+            # Continue anyway - degrade gracefully
+
         inputs = None
         if not resume:
             message = f"Project ID: {project_id}. {user_input}"
@@ -662,7 +676,12 @@ async def stream_workflow(
                 "next": "Supervisor",
             }
 
-        config = {"configurable": {"thread_id": thread_id}}
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "loro_client": loro_client,  # Inject Loro client into config
+            }
+        }
         stream_modes = ["messages", "custom"]  # Only messages and custom modes
         emitted_tool_ids = set()
         tool_id_to_name = {}  # Cache tool_call_id -> tool_name mapping
@@ -971,9 +990,11 @@ async def stream_workflow(
                     data = payload
                     if isinstance(data, dict):
                         action = data.get("action")
-                        if action == "create_node_proposal" and data.get("proposal"):
-                            yield emitter.format_event("node_proposal", data["proposal"])
-                            continue
+                        # REMOVED: node_proposal SSE event - now handled via Loro CRDT
+                        # Nodes are directly written to Loro document in middleware
+                        # if action == "create_node_proposal" and data.get("proposal"):
+                        #     yield emitter.format_event("node_proposal", data["proposal"])
+                        #     continue
                         if action == "timeline_edit":
                             yield emitter.format_event("timeline_edit", data)
                             continue
@@ -1006,6 +1027,13 @@ async def stream_workflow(
             logger.error("Stream workflow failed: %s", exc, exc_info=True)
             yield emitter.format_event("workflow_error", {"message": str(exc)})
             yield emitter.end()
+        finally:
+            # Cleanup: Disconnect Loro client
+            try:
+                await loro_client.disconnect()
+                logger.info(f"[LoroSync] Disconnected for project {project_id}")
+            except Exception as e:
+                logger.error(f"[LoroSync] Failed to disconnect: {e}")
 
         # Always end the stream
         yield emitter.end()

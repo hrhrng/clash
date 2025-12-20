@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import type { EditorState, EditorAction, Track, Item, Asset } from '../types';
+import type { EditorState, EditorAction, Item, Asset } from '../types';
 
 // Initial state
 const initialState: EditorState = {
@@ -218,8 +218,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
     case 'SET_ZOOM':
       return { ...state, zoom: action.payload };
 
-    case 'ADD_ASSET':
-      const existingIndex = state.assets.findIndex(a => a.id === action.payload.id);
+    case 'ADD_ASSET': {
+      const existingIndex = state.assets.findIndex((a) => a.id === action.payload.id);
       if (existingIndex !== -1) {
         // Update existing asset
         const newAssets = [...state.assets];
@@ -233,6 +233,7 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         ...state,
         assets: [...state.assets, action.payload],
       };
+    }
 
     case 'REMOVE_ASSET':
       return {

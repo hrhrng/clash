@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, Asset, VideoItem } from '@master-clash/remotion-core';
+import type { VideoItem } from '@master-clash/remotion-core';
 
 import type { ItemRenderProps } from '../registry';
 import { secondsToFrames } from '../../utils/timeFormatter';
@@ -26,7 +26,7 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
     if (!asset?.duration || !('src' in video)) return;
 
     const render = async () => {
-      const duration = asset.duration;
+      const duration = asset.duration!;
       const totalFrames = secondsToFrames(duration, 30); // sampling grid; not playback
 
       const displayWidth = Math.max(1, Math.floor(width));
@@ -136,4 +136,3 @@ const AudioWaveform: React.FC<{ waveform: number[]; width: number; height: numbe
     </svg>
   );
 };
-

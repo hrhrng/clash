@@ -2,6 +2,7 @@ import { memo, useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { Image as ImageIcon, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
+import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
 import { getAsset } from '../../actions';
 
@@ -9,17 +10,31 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Image Node');
     const { openViewer } = useMediaViewer();
     const { setNodes } = useReactFlow();
-    const [status, setStatus] = useState(data.status || (data.src ? 'completed' : 'pending'));
+    const [status, setStatus] = useState<AssetStatus>(normalizeStatus(data.status) || (data.src ? 'completed' : 'generating'));
     const [imageUrl, setImageUrl] = useState(data.src);
     const [description, setDescription] = useState(data.description || '');
     const [showDescription, setShowDescription] = useState(false);
 
     // Debug logging
-    console.log(`[ImageNode ${id}] Init:`, { assetId: data.assetId, src: data.src, status: data.status, currentStatus: status, imageUrl });
+    console.log(`[ImageNode ${id}] Render:`, { assetId: data.assetId, src: data.src, status: data.status, currentStatus: status, imageUrl });
+
+    // Sync state with props when they change (e.g. from Loro sync)
+    useEffect(() => {
+        if (data.src && data.src !== imageUrl) {
+            setImageUrl(data.src);
+        }
+        const newStatus = normalizeStatus(data.status);
+        if (newStatus !== status) {
+            setStatus(newStatus);
+        }
+        if (data.description && data.description !== description) {
+            setDescription(data.description);
+        }
+    }, [data.src, data.status, data.description, imageUrl, status, description]);
 
     useEffect(() => {
         // Poll until we have a completed asset with a URL (and optionally description)
-        const shouldPoll = !!data.assetId && (status !== 'failed') && (status !== 'completed' || !imageUrl);
+        const shouldPoll = !!data.assetId && isActiveStatus(status) || (status === 'completed' && !imageUrl);
 
         if (shouldPoll) {
             const interval = setInterval(async () => {
@@ -34,8 +49,10 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                     if (!asset) return;
 
                     // Apply remote updates
-                    if (asset.status && asset.status !== status) {
-                        setStatus(asset.status);
+                    // Apply remote updates
+                    const newAssetStatus = normalizeStatus(asset.status || undefined);
+                    if (newAssetStatus !== status) {
+                        setStatus(newAssetStatus);
                     }
 
                     if (asset.url && asset.url !== imageUrl) {
@@ -145,7 +162,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                             </button>
                         </div>
                     </div>
-                ) : status === 'pending' ? (
+                ) : isActiveStatus(status) ? (
                     <div className="flex h-32 items-center justify-center bg-slate-50 text-slate-400">
                         <div className="flex flex-col items-center gap-3">
                             <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />

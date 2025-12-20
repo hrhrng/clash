@@ -1,5 +1,4 @@
 import React from 'react';
-import type { Item } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 
 
@@ -12,4 +11,3 @@ export const StickerRenderer: React.FC<ItemRenderProps> = ({ width, height }) =>
     </div>
   );
 };
-

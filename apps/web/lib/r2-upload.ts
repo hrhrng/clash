@@ -45,6 +45,39 @@ export async function uploadBase64ImageToR2(params: {
 }) {
     const { base64Data, projectId, fileName, contentType = 'image/png' } = params;
 
+    const isDev = process.env.NODE_ENV !== 'production';
+    console.log('[R2 Upload] Environment:', process.env.NODE_ENV, 'isDev:', isDev);
+    
+    // In development, use local loro-sync-server API
+    if (isDev) {
+        console.log('[R2 Upload] Using local loro-sync-server API');
+        const normalizedBase64 = base64Data.includes('base64,')
+            ? base64Data.split('base64,')[1]
+            : base64Data;
+        
+        const buffer = Buffer.from(normalizedBase64, 'base64');
+        const blob = new Blob([buffer], { type: contentType });
+        const file = new File([blob], fileName, { type: contentType });
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projectId', projectId);
+        
+        const response = await fetch('http://localhost:8787/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.statusText}`);
+        }
+        
+        return await response.json() as { storageKey: string; url: string };
+    }
+
+    console.log('[R2 Upload] Using S3 API (production mode)');
+
+    // Production: use S3 API
     const bucketName = process.env.R2_BUCKET_NAME;
     const publicUrl = process.env.R2_PUBLIC_URL;
 
@@ -52,18 +85,13 @@ export async function uploadBase64ImageToR2(params: {
         throw new Error('R2 bucket not configured. Set R2_BUCKET_NAME and R2_PUBLIC_URL in .env');
     }
 
-    // Support data URL strings by stripping the prefix if present
     const normalizedBase64 = base64Data.includes('base64,')
         ? base64Data.split('base64,')[1]
         : base64Data;
 
-    // Decode base64 to buffer
     const buffer = Buffer.from(normalizedBase64, 'base64');
-
-    // Generate storage key
     const storageKey = buildStorageKey(projectId, fileName);
 
-    // Upload to R2
     const client = getR2Client();
     await client.send(
         new PutObjectCommand({
@@ -74,9 +102,7 @@ export async function uploadBase64ImageToR2(params: {
         })
     );
 
-    // Return public URL
     const url = `${publicUrl}/${storageKey}`;
-
     return { storageKey, url };
 }
 
@@ -120,8 +146,11 @@ export async function uploadVideoFromUrlToR2(params: {
         })
     );
 
-    // Return public URL
-    const url = `${publicUrl}/${storageKey}`;
+    // Return URL - use local assets endpoint in development
+    const isDev = process.env.NODE_ENV !== 'production';
+    const url = isDev 
+        ? `http://localhost:8787/assets/${storageKey}`
+        : `${publicUrl}/${storageKey}`;
 
     return { storageKey, url };
 }
@@ -137,6 +166,39 @@ export async function uploadBufferToR2(params: {
 }) {
     const { buffer, projectId, fileName, contentType = 'application/octet-stream' } = params;
 
+    const isDev = process.env.NODE_ENV !== 'production';
+    console.log('[R2 Upload Buffer] Environment:', process.env.NODE_ENV, 'isDev:', isDev);
+    
+    // In development, use local loro-sync-server API
+    if (isDev) {
+        console.log('[R2 Upload Buffer] Using local loro-sync-server API');
+        const normalizedBuffer = Buffer.isBuffer(buffer)
+            ? new Uint8Array(buffer)
+            : buffer instanceof ArrayBuffer
+                ? new Uint8Array(buffer)
+                : buffer;
+        const blob = new Blob([normalizedBuffer as BlobPart], { type: contentType });
+        const file = new File([blob], fileName, { type: contentType });
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projectId', projectId);
+        
+        const response = await fetch('http://localhost:8787/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.statusText}`);
+        }
+        
+        return await response.json() as { storageKey: string; url: string };
+    }
+
+    console.log('[R2 Upload Buffer] Using S3 API (production mode)');
+
+    // Production: use S3 API
     const bucketName = process.env.R2_BUCKET_NAME;
     const publicUrl = process.env.R2_PUBLIC_URL;
 

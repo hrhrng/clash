@@ -199,9 +199,11 @@ Sub-agents have isolated context and their own tools.
                     logger.info(f"Compiling sub-agent: {agent}")
                     graph = self._compile_subagent(target)
 
-                # Invoke sub-agent
+                # Invoke sub-agent with config (preserving loro_client in configurable)
                 logger.info(f"Invoking sub-agent: {agent}")
                 run_config: RunnableConfig = config.copy()
+                if "configurable" not in run_config:
+                    run_config["configurable"] = config.get("configurable", {})
                 if "metadata" in run_config:
                     run_config["metadata"].update({"agent_id": runtime.tool_call_id})
                 result = await graph.ainvoke(sub_state, run_config)
@@ -307,8 +309,11 @@ If you're working in a workspace (group), all your nodes will be automatically p
 Tasks:
 1. Read the script from the canvas.
 2. For each character or scene:
-   - Create a Prompt node with a detailed visual description.
-   - Create an Image Generation node (type='image_gen') connected to the prompt.
+   - Create a PromptActionNode (type='image_gen') with:
+     * label: Descriptive name (e.g., "Character: Alice")
+     * content: Detailed visual description in Markdown
+     * actionType: 'image-gen'
+   - The node contains both the prompt and generation capability.
 3. AFTER creating a generation node, you MUST wait for it to complete before using its result.
    - Use wait_for_generation to check status.
    - If status is 'generating', WAIT and then RETRY.
@@ -329,10 +334,13 @@ Your goal is to create a sequence of shots for the video.
 If you're working in a workspace (group), all your nodes will be automatically placed there.
 
 Tasks:
-1. Create Prompt nodes for each shot (Scene 1, Scene 2, etc.).
-2. Create Image Generation nodes for each shot.
-3. You can also create Video Generation nodes (type='video_gen') if needed.
-4. ALWAYS wait for generation nodes to complete using wait_for_generation before creating dependent nodes.
+1. For each shot (Scene 1, Scene 2, etc.):
+   - Create a PromptActionNode (type='image_gen' or 'video_gen') with:
+     * label: Shot name (e.g., "Scene 1: Opening")
+     * content: Detailed scene description in Markdown
+     * actionType: 'image-gen' for stills, 'video-gen' for motion
+   - The node combines prompt editing and generation.
+2. ALWAYS wait for generation nodes to complete using wait_for_generation before creating dependent nodes.
    - If 'generating', retry after a short delay.""",
         # tools=[list_node_info, read_node, create_node, wait for_task],
         tools=[],

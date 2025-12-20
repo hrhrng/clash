@@ -411,12 +411,12 @@ export default function ChatbotCopilot({
                                         ...item.props,
                                         agentId: item.props.agentId || resolvedAgentId,
                                         logs: (() => {
-                                            const existingLogs = item.props.logs || [];
+                                            const existingLogs = (item.props.logs || []) as AgentLog[];
                                             // Check if the last log is a thinking block
                                             const lastLog = existingLogs[existingLogs.length - 1];
                                                 if (lastLog && lastLog.type === 'thinking') {
                                                     // Merge with existing thinking block
-                                                    return existingLogs.map((log, i) =>
+                                                    return existingLogs.map((log: AgentLog, i: number) =>
                                                         i === existingLogs.length - 1
                                                             ? { ...log, content: log.content + '\n\n' + data.content }
                                                             : log
@@ -513,10 +513,10 @@ export default function ChatbotCopilot({
                                                 ...item.props,
                                                 agentId: item.props.agentId || resolvedAgentId,
                                                 logs: (() => {
-                                                    const existingLogs = item.props.logs || [];
+                                                    const existingLogs = (item.props.logs || []) as AgentLog[];
                                                     const lastLog = existingLogs[existingLogs.length - 1];
                                                     if (lastLog && lastLog.type === 'text') {
-                                                        return existingLogs.map((log, i) =>
+                                                        return existingLogs.map((log: AgentLog, i: number) =>
                                                             i === existingLogs.length - 1
                                                                 ? { ...log, content: log.content + data.content }
                                                                 : log
@@ -561,7 +561,7 @@ export default function ChatbotCopilot({
                     }
 
                     // No agent_id for sub-agent: ignore to avoid mis-append
-                    if (agentName !== 'Director' && agentName !== 'Agent' && !agentId) {
+                    if (agentName !== 'Director' && agentName !== 'Agent' && !resolvedAgentId) {
                         return;
                     }
 
@@ -1033,144 +1033,16 @@ export default function ChatbotCopilot({
             setIsProcessing(false);
         });
 
-        eventSource.addEventListener('node_proposal', (e: any) => {
-            hasReceivedData = true;
-            try {
-                const data = JSON.parse(e.data);
-                console.log('[ChatbotCopilot] Received node_proposal:', data);
-                const proposalId = generateId() + '-proposal';
-
-                // Resolve Names to IDs using local helper
-                let resolvedGroupId = data.groupId;
-                if (data.groupName) {
-                    const foundId = resolveName(data.groupName);
-                    if (foundId) {
-                        resolvedGroupId = foundId;
-                        console.log(`[ChatbotCopilot] Resolved groupName "${data.groupName}" to ID "${foundId}"`);
-                    } else {
-                        console.warn(`[ChatbotCopilot] Could not resolve groupName "${data.groupName}"`);
-                    }
-                }
-
-                // Normalize upstream links into a single list
-                const upstreamIds: string[] = Array.isArray(data.upstreamNodeIds) ? [...data.upstreamNodeIds] : [];
-
-                // Resolve any provided name hint to an ID and merge
-                if (data.upstreamNodeName) {
-                    const foundId = resolveName(data.upstreamNodeName);
-                    if (foundId) {
-                        upstreamIds.push(foundId);
-                        console.log(`[ChatbotCopilot] Resolved upstreamNodeName "${data.upstreamNodeName}" to ID "${foundId}"`);
-                    } else {
-                        console.warn(`[ChatbotCopilot] Could not resolve upstreamNodeName "${data.upstreamNodeName}"`);
-                    }
-                }
-
-                // Deduplicate while preserving order
-                const mergedUpstreamIds = Array.from(new Set(upstreamIds.filter(Boolean)));
-
-                // Define handlers
-                // Auto-Pilot Logic: ALWAYS Auto-Execute
-                console.log('[ChatbotCopilot] Auto-Pilot active. Executing proposal immediately:', proposalId);
-
-                // Use the ID provided by the backend if available, otherwise fallback to proposalId (or let addNode generate one)
-                // Actually, we want to pass the ID to onAddNode.
-                // The backend should send 'id' in 'nodeData' or top-level.
-                // Let's assume 'data.nodeData.id' or 'data.id' is the intended Node ID.
-                // Based on the plan, we want deterministic IDs.
-
-                // We'll modify handleAccept/handleAcceptAndRun to take an optional ID override
-
-                const executeProposal = () => {
-                    // Determine Node ID: Use data.nodeData.id if present (preferred), else data.id (proposal id? maybe not), else undefined
-                    const targetNodeId = data.nodeData?.id;
-                    // Strip backend-provided assetId; it's only a temporary pre-allocation and should not be persisted
-                    const { assetId: _assetId, ...nodeDataWithoutAssetId } = data.nodeData || {};
-                    // Extract pre-allocated assetId from proposal (if available)
-                    const preAllocatedAssetId = data.assetId || data.nodeData?.assetId;
-
-                    if (data.nodeType === 'action-badge-image' || data.nodeType === 'action-badge-video') {
-                        // Handle Accept and Run
-                        let createdNodeId: string | undefined;
-                        if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, {
-                                ...nodeDataWithoutAssetId,
-                                id: targetNodeId, // Pass custom ID
-                                parentId: resolvedGroupId,
-                                autoRun: true,
-                                upstreamNodeIds: mergedUpstreamIds,
-                                // Pass pre-allocated assetId to ActionBadge
-                                preAllocatedAssetId: preAllocatedAssetId
-                            });
-                        }
-
-                        // Add edges
-                        if (mergedUpstreamIds.length > 0 && onAddEdge && createdNodeId) {
-                            setTimeout(() => {
-                                mergedUpstreamIds.forEach((uId: string) => {
-                                    onAddEdge({
-                                        id: `e-${uId}-${createdNodeId}`,
-                                        source: uId,
-                                        target: createdNodeId,
-                                        type: 'default'
-                                    } as any);
-                                });
-                            }, 100);
-                        }
-
-                        // Resume stream - DISABLED per user request
-                        // setPendingResume({
-                        //     userInput: '',
-                        //     resume: true,
-                        //     inputData: { action: 'accept_and_run', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                        //     expectedNodeId: createdNodeId
-                        // });
-
-                    } else {
-                        // Handle Accept (Simple)
-                        let createdNodeId: string | undefined;
-                        if (onAddNode) {
-                            createdNodeId = onAddNode(data.nodeType, {
-                                ...data.nodeData,
-                                id: targetNodeId, // Pass custom ID
-                                parentId: resolvedGroupId,
-                                upstreamNodeIds: mergedUpstreamIds
-                            });
-                        }
-                        // Add edges
-                        if (mergedUpstreamIds.length > 0 && onAddEdge && createdNodeId) {
-                            setTimeout(() => {
-                                mergedUpstreamIds.forEach(uId => {
-                                    onAddEdge({
-                                        id: `e-${uId}-${createdNodeId}`,
-                                        source: uId,
-                                        target: createdNodeId,
-                                        type: 'default'
-                                    } as any);
-                                });
-                            }, 100);
-                        }
-
-                        // Resume stream - DISABLED per user request
-                        // setPendingResume({
-                        //     userInput: '',
-                        //     resume: true,
-                        //     inputData: { action: 'accept', proposalId: data.id, createdNodeId, groupId: resolvedGroupId },
-                        //     expectedNodeId: createdNodeId
-                        // });
-                    }
-                };
-
-                // Execute immediately
-                executeProposal();
-
-                // Do NOT add to displayItems
-
-
-            } catch (err) {
-                console.error('[ChatbotCopilot] Error parsing node_proposal event:', err);
-            }
-        });
+        // ========================================
+        // REMOVED: node_proposal SSE listener
+        // Node proposals are now handled via Loro CRDT sync
+        // Agent writes directly to Loro's 'nodes' and 'edges' maps
+        // Frontend listens to Loro document changes in ProjectEditor
+        // See: apps/web/app/hooks/useLoroSync.ts
+        // ========================================
+        /* eventSource.addEventListener('node_proposal', (e: any) => {
+            ... removed ~140 lines of node proposal handling code ...
+        }); */
 
         // Handle rerun_generation_node events
         eventSource.addEventListener('rerun_generation_node', (e: any) => {

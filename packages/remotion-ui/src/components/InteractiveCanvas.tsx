@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { VideoComposition } from '@master-clash/remotion-components';
 import type { Track, Item, ItemProperties } from '@master-clash/remotion-core';
-import { findTopItemAtPoint } from './canvas/hitTest';
 
 interface InteractiveCanvasProps {
   tracks: Track[];
@@ -12,12 +11,12 @@ interface InteractiveCanvasProps {
   compositionHeight: number;
   fps: number;
   durationInFrames: number;
-  onUpdateItem: (trackId: string, itemId: string, updates: Partial<Item>) => void;
+  onUpdateItem: (_trackId: string, _itemId: string, _updates: Partial<Item>) => void;
   onSelectItem?: (itemId: string | null) => void;
   playing?: boolean;
-  onSeek?: (frame: number) => void;
+  onSeek?: (_frame: number) => void;
   onFrameUpdate?: (frame: number) => void;
-  onPlayingChange?: (playing: boolean) => void;
+  onPlayingChange?: (_playing: boolean) => void;
 }
 
 type DragMode = 'move' | 'rotate' | 'scale-tl' | 'scale-tr' | 'scale-bl' | 'scale-br' | null;
@@ -42,7 +41,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   onUpdateItem,
   onSelectItem,
   playing = false,
-  onSeek,
+  onSeek: _onSeek,
   onFrameUpdate,
   onPlayingChange,
 }) => {
@@ -50,9 +49,8 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const selectionBoxRef = useRef<HTMLDivElement>(null);
   const itemsDomMapRef = useRef<Map<string, HTMLElement>>(new Map());
-  const itemBoundsCache = useRef<Map<string, DOMRect>>(new Map());
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [hoverHandle, setHoverHandle] = useState<DragMode>(null);
+  const [, setHoverHandle] = useState<DragMode>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -346,17 +344,21 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
         case 'scale-bl':
         case 'scale-br':
           // 缩放（简化版，等比缩放）
-          const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-          const direction = dragState.mode.includes('br') || dragState.mode.includes('tr') ? 1 : -1;
-          const scaleFactor = 1 + (direction * distance) / 200;
-          newProperties.width = Math.max(0.1, dragState.startProperties.width * scaleFactor);
-          newProperties.height = Math.max(0.1, dragState.startProperties.height * scaleFactor);
+          {
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            const direction = dragState.mode.includes('br') || dragState.mode.includes('tr') ? 1 : -1;
+            const scaleFactor = 1 + (direction * distance) / 200;
+            newProperties.width = Math.max(0.1, dragState.startProperties.width * scaleFactor);
+            newProperties.height = Math.max(0.1, dragState.startProperties.height * scaleFactor);
+          }
           break;
 
         case 'rotate':
           // 旋转
-          const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-          newProperties.rotation = angle;
+          {
+            const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
+            newProperties.rotation = angle;
+          }
           break;
       }
 
@@ -455,86 +457,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
 
   const bounds = getItemBounds();
 
-  // 统一的指针按下处理（同时处理选中和拖动）
-  const handlePointerDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (!onSelectItem) return;
-      
-      // 如果点击的是控制手柄或缩放按钮，跳过
-      const target = e.target as HTMLElement;
-      if (target.closest('.control-handle') || target.closest('.zoom-controls')) {
-        return;
-      }
-
-      // 只处理直接点击 Player 区域的事件
-      // 排除点击其他 UI 元素（如按钮等）
-      if (target.tagName === 'BUTTON' || target.closest('button')) {
-        return;
-      }
-
-      const { x, y } = screenToComposition(e.clientX, e.clientY);
-      
-      console.log('[InteractiveCanvas] Click at:', { x, y });
-      
-      // 查找点击位置最上层的元素
-      const hitTarget = findTopItemAtPoint(
-        x,
-        y,
-        tracks,
-        currentFrame,
-        compositionWidth,
-        compositionHeight
-      );
-
-      if (hitTarget) {
-        // 找到元素：选中并准备拖动
-        console.log('[InteractiveCanvas] Clicked item:', hitTarget.itemId);
-        if (selectedItemId !== hitTarget.itemId) {
-          onSelectItem(hitTarget.itemId);
-        }
-        
-        // 查找完整的 item 数据准备拖动
-        const itemData = tracks
-          .flatMap((t) => t.items.map((i) => ({ trackId: t.id, item: i })))
-          .find((x) => x.item.id === hitTarget.itemId);
-        
-        if (itemData) {
-          e.preventDefault();
-          e.stopPropagation();
-          
-          setDragState({
-            mode: 'move',
-            startX: x,
-            startY: y,
-            startProperties: {
-              x: itemData.item.properties?.x ?? 0,
-              y: itemData.item.properties?.y ?? 0,
-              width: itemData.item.properties?.width ?? 1,
-              height: itemData.item.properties?.height ?? 1,
-              rotation: itemData.item.properties?.rotation ?? 0,
-              opacity: itemData.item.properties?.opacity ?? 1,
-            },
-            item: itemData.item,
-            trackId: itemData.trackId,
-          });
-        }
-      } else {
-        // 没找到元素：取消选中
-        console.log('[InteractiveCanvas] Clicked empty area, deselecting');
-        onSelectItem(null);
-      }
-    },
-    [
-      tracks,
-      currentFrame,
-      compositionWidth,
-      compositionHeight,
-      selectedItemId,
-      onSelectItem,
-      screenToComposition,
-    ]
-  );
-
   // 计算画布的实际显示尺寸（保持宽高比）
   const aspectRatio = compositionWidth / compositionHeight;
 
@@ -626,7 +548,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
             height="100%"
             fill="transparent"
             style={{ pointerEvents: 'all' }}
-            onMouseDown={(e) => {
+            onMouseDown={(_e) => {
               console.log('[InteractiveCanvas] Clicked empty background, deselecting');
               onSelectItem?.(null);
             }}

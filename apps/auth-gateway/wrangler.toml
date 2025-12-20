@@ -1,0 +1,23 @@
+name = "auth-gateway"
+main = "src/index.ts"
+compatibility_date = "2024-11-20"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database binding (reuse existing database)
+[[d1_databases]]
+binding = "DB"
+database_name = "master-clash-frontend"
+database_id = "aab16eeb-a375-490b-ad1e-cd092cd9f4bb"
+
+# Service binding to the DO-based sync worker
+[[services]]
+binding = "LORO_SYNC"
+service = "loro-sync-server"
+
+[vars]
+# Better Auth is validated by calling `GET {origin}{BETTER_AUTH_BASE_PATH}/get-session`
+BETTER_AUTH_BASE_PATH = "/api/better-auth"
+
+# Python backend origin (Cloudflare Container public URL)
+# BACKEND_API_URL = "https://master-clash-backend.your-domain.workers.dev"
+

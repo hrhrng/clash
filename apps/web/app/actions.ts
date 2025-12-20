@@ -1,28 +1,20 @@
 'use server';
 
 import { projects, messages } from '@/lib/db/schema';
-import { eq, desc, asc } from 'drizzle-orm';
+import { and, eq, desc, asc } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
 import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
 import * as schema from '@/lib/db/schema';
-import { getRequestContext } from '@cloudflare/next-on-pages';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { headers } from 'next/headers';
+import { DEV_USER_ID, getUserIdFromHeaders, getUserIdOrDevFromHeaders } from '@/lib/auth/session';
 
 // Helper to get DB (D1 in production/preview, local SQLite in dev)
 const getDb = async () => {
-    // 1. Try to get D1 from Cloudflare context
-    try {
-        const ctx = getRequestContext();
-        if (ctx.env.DB) {
-            return drizzleD1(ctx.env.DB, { schema });
-        }
-    } catch (e) {
-        // Ignore error if getRequestContext fails (e.g. not in Pages environment)
-    }
-
-    // 2. Fallback to local SQLite (Node.js only)
+    // Local dev should always use local SQLite so you don't need a running D1/Wrangler/OpenNext context.
     if (process.env.NODE_ENV === 'development') {
         const path = await import('path');
         const Database = (await import('better-sqlite3')).default;
@@ -31,14 +23,50 @@ const getDb = async () => {
         return drizzleSqlite(sqlite, { schema });
     }
 
+    // 1. Try to get D1 from Cloudflare context
+    try {
+        const { env } = await getCloudflareContext({ async: true });
+        const bindings = env as unknown as { DB?: Parameters<typeof drizzleD1>[0] };
+        if (bindings.DB) {
+            return drizzleD1(bindings.DB, { schema });
+        }
+    } catch (e) {
+        // Ignore error if getRequestContext fails (e.g. not in Pages environment)
+    }
+
     throw new Error('No database connection available');
+}
+
+async function getUserId() {
+    const h = new Headers(await headers())
+    const userId = await getUserIdFromHeaders(h)
+    if (userId) return userId
+    if (process.env.NODE_ENV === 'development') return DEV_USER_ID
+    return null
+}
+
+async function requireUserId() {
+    const h = new Headers(await headers())
+    return getUserIdOrDevFromHeaders(h)
+}
+
+async function ensureDevUserExists(db: Awaited<ReturnType<typeof getDb>>) {
+    if (process.env.NODE_ENV !== 'development') return
+    await db.run(
+        sql`INSERT OR IGNORE INTO users (id, name, email, email_verified) VALUES (${DEV_USER_ID}, ${'Dev User'}, ${'dev@local'}, ${1})`
+    )
 }
 
 // Project Actions
 
 export async function createProject(prompt: string) {
     const db = await getDb();
+    const userId = await requireUserId();
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
     const [project] = await db.insert(projects).values({
+        ownerId: userId,
         name: prompt.length > 20 ? prompt.substring(0, 20) + '...' : prompt,
         description: prompt,
         nodes: [], // Start with empty canvas
@@ -52,7 +80,13 @@ export async function createProject(prompt: string) {
 
 export async function getProjects(limit = 10) {
     const db = await getDb();
+    const userId = await getUserId();
+    if (!userId) return [];
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
     return await db.query.projects.findMany({
+        where: eq(projects.ownerId, userId),
         orderBy: [desc(projects.createdAt)],
         limit: limit,
     });
@@ -60,8 +94,13 @@ export async function getProjects(limit = 10) {
 
 export async function getProject(id: string) {
     const db = await getDb();
+    const userId = await getUserId();
+    if (!userId) return null;
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
     return await db.query.projects.findFirst({
-        where: eq(projects.id, id),
+        where: and(eq(projects.id, id), eq(projects.ownerId, userId)),
         with: {
             messages: {
                 orderBy: [asc(messages.createdAt)],
@@ -72,22 +111,34 @@ export async function getProject(id: string) {
 
 export async function saveProjectState(id: string, nodes: any, edges: any) {
     const db = await getDb();
+    const userId = await requireUserId();
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
     await db.update(projects)
         .set({ nodes, edges })
-        .where(eq(projects.id, id));
+        .where(and(eq(projects.id, id), eq(projects.ownerId, userId)));
 }
 
 export async function updateProjectName(id: string, name: string) {
     const db = await getDb();
+    const userId = await requireUserId();
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
     await db.update(projects)
         .set({ name })
-        .where(eq(projects.id, id));
+        .where(and(eq(projects.id, id), eq(projects.ownerId, userId)));
     revalidatePath(`/projects/${id}`);
 }
 
 export async function deleteProject(id: string) {
     const db = await getDb();
-    await db.delete(projects).where(eq(projects.id, id));
+    const userId = await requireUserId();
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
+    await db.delete(projects).where(and(eq(projects.id, id), eq(projects.ownerId, userId)));
     revalidatePath('/projects');
 }
 
@@ -104,12 +155,24 @@ export interface Command {
 
 import { graph, AgentState } from './agent/graph';
 import { HumanMessage } from '@langchain/core/messages';
-import { generateSemanticId } from './utils/semanticId';
+import { generateSemanticId } from '@/lib/utils/semanticId';
 
 // const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
 
 export async function sendMessage(projectId: string, content: string) {
     const db = await getDb();
+    const userId = await requireUserId();
+    if (userId === DEV_USER_ID) {
+        await ensureDevUserExists(db)
+    }
+
+    const project = await db.query.projects.findFirst({
+        where: and(eq(projects.id, projectId), eq(projects.ownerId, userId)),
+        columns: { id: true },
+    });
+    if (!project) {
+        throw new Error('Project not found')
+    }
 
     // 1. Save user message
     await db.insert(messages).values({
@@ -165,6 +228,18 @@ export async function createAsset(data: {
     console.log('createAsset called with:', data);
     try {
         const db = await getDb();
+        const userId = await requireUserId();
+        if (userId === DEV_USER_ID) {
+            await ensureDevUserExists(db)
+        }
+
+        const project = await db.query.projects.findFirst({
+            where: and(eq(projects.id, data.projectId), eq(projects.ownerId, userId)),
+            columns: { id: true },
+        });
+        if (!project) {
+            throw new Error('Project not found')
+        }
 
         // Use pre-allocated ID if provided, otherwise generate semantic ID for asset
         let assetId = data.id || await generateSemanticId(data.projectId);

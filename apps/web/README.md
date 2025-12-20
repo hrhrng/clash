@@ -1,11 +1,11 @@
 # Frontend - Clash Flow
 
-Next.js application deployed to Cloudflare Pages.
+Next.js application deployed to Cloudflare Workers using OpenNextJS.
 
 ## Features
 
 - Project CRUD operations
-- User authentication (NextAuth.js)
+- User authentication (Better Auth on Cloudflare Workers/D1)
 - Workflow visualization (React Flow)
 - AI-powered chat interface
 - Cloudflare D1 database integration
@@ -17,7 +17,7 @@ Next.js application deployed to Cloudflare Pages.
 - TypeScript
 - Tailwind CSS 4
 - Drizzle ORM (D1 adapter)
-- NextAuth.js
+- Better Auth + better-auth-cloudflare
 - React Flow
 - Framer Motion
 
@@ -47,8 +47,8 @@ cp .env.example .env
 # Run with local D1 database
 npm run dev
 
-# Or use Wrangler for full Cloudflare environment
-wrangler pages dev
+# Or use OpenNextJS preview (Cloudflare Worker runtime)
+npm run cf:preview
 ```
 
 ### Database Management
@@ -87,8 +87,8 @@ npm run db:seed
 ### Build
 
 ```bash
-# Build for Cloudflare Pages
-npm run pages:build
+# Build for Cloudflare Workers (OpenNextJS)
+npm run cf:build
 
 # Regular Next.js build
 npm run build
@@ -99,29 +99,22 @@ npm run build
 ### Using Wrangler CLI
 
 ```bash
-# Deploy to Cloudflare Pages
-wrangler pages deploy
-
-# Or use the build command
-npm run pages:build
-wrangler pages publish out
+# Deploy to Cloudflare Workers (OpenNextJS)
+npm run cf:deploy
 ```
 
 ### Using GitHub Integration
 
-1. Connect your GitHub repository to Cloudflare Pages
-2. Configure build settings:
-   - Build command: `npm run pages:build`
-   - Build output directory: `out`
-   - Environment variables: Add from `.env.example`
+Use Wrangler/OpenNextJS in CI to run `npm run cf:deploy`.
 
 ### Environment Variables in Cloudflare
 
-Add these in Cloudflare Pages dashboard:
+Add these as Worker vars/secrets (Wrangler or Cloudflare dashboard):
 
-- `AUTH_SECRET`
-- `AUTH_GOOGLE_ID`
-- `AUTH_GOOGLE_SECRET`
+- `AUTH_SECRET` (fallback secret)
+- `BETTER_AUTH_SECRET` (recommended)
+- `BETTER_AUTH_URL` (your Worker URL, e.g. `https://your-app.your-account.workers.dev`)
+- `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` (optional, for Google OAuth)
 - `GOOGLE_AI_API_KEY`
 - `NEXT_PUBLIC_BACKEND_URL`
 
@@ -146,7 +139,7 @@ frontend/
 
 ## API Routes
 
-- `/api/auth/[...nextauth]` - NextAuth.js authentication
+- `/api/better-auth/[...all]` - Better Auth (better-auth-cloudflare) handler
 - `/api/ai/generate` - AI generation endpoint
 - `/api/google-ai` - Google AI integration
 
@@ -155,17 +148,18 @@ frontend/
 See [lib/db/schema.ts](lib/db/schema.ts) for the complete schema.
 
 Main tables:
-- `user` - User accounts
+- `users` - User accounts
 - `project` - Video projects
 - `message` - Chat messages
-- `session` - Auth sessions
-- `account` - OAuth accounts
+- `sessions` - Auth sessions
+- `accounts` - OAuth accounts
 
 ## Scripts
 
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
-- `npm run pages:build` - Build for Cloudflare Pages
+- `npm run cf:build` - Build for Cloudflare Workers (OpenNextJS)
+- `npm run cf:deploy` - Build + deploy to Cloudflare Workers (OpenNextJS)
 - `npm run lint` - Run ESLint
 - `npm run format` - Format with Prettier
 - `npm run db:generate` - Generate migrations
@@ -180,10 +174,10 @@ This app uses Cloudflare D1 (serverless SQLite) as the database.
 
 ```typescript
 import { drizzle } from 'drizzle-orm/d1';
-import { getRequestContext } from '@cloudflare/next-on-pages';
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 
 // In Server Components or API Routes
-const { env } = getRequestContext();
+const { env } = await getCloudflareContext({ async: true });
 const db = drizzle(env.DB);
 ```
 
@@ -202,9 +196,9 @@ If you encounter build errors:
 
 ```bash
 # Clean build artifacts
-rm -rf .next out node_modules
+rm -rf .next .open-next node_modules
 npm install
-npm run pages:build
+npm run cf:build
 ```
 
 ### Database Issues
@@ -231,7 +225,7 @@ wrangler d1 list
 ## Learn More
 
 - [Next.js Documentation](https://nextjs.org/docs)
-- [Cloudflare Pages](https://developers.cloudflare.com/pages/)
+- [OpenNextJS on Cloudflare](https://opennext.js.org/cloudflare)
 - [Cloudflare D1](https://developers.cloudflare.com/d1/)
 - [Drizzle ORM](https://orm.drizzle.team/)
-- [NextAuth.js](https://next-auth.js.org/)
+- [Better Auth](https://better-auth.com)

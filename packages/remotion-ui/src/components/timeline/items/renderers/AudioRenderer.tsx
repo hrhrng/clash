@@ -1,10 +1,10 @@
 import React from 'react';
-import type { Item, Asset, AudioItem } from '@master-clash/remotion-core';
+import type { AudioItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 
 
 export const AudioRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, height }) => {
-  const audio = item as AudioItem;
+  const _audio = item as AudioItem;
   const waveform = asset?.waveform;
 
   return (
@@ -33,4 +33,3 @@ const Waveform: React.FC<{ waveform: number[]; width: number; height: number }> 
     </svg>
   );
 };
-

@@ -146,15 +146,18 @@ def create_text_node(
     upstream_id: str | None = None
 ) -> dict:
     """
-    Create a text node on the canvas for storing script, notes, or other textual content.
+    Create a text node on the canvas for storing documentation, notes, or scripts.
+
+    NOTE: For prompts intended for image or video generation, do NOT use this tool.
+    Use create_image_generation_node or create_video_generation_node instead,
+    as they now contain embedded prompt and content fields (merged PromptActionNode).
 
     Args:
-        label: Short title for the node (e.g., "Script", "Director's Notes")
+        label: Short title for the node (e.g., "Director's Notes")
         content: The actual text content
-        node_id: Unique identifier for this node (e.g., "text-script", "text-notes-1")
+        node_id: Unique identifier for this node
         parent_id: Optional group ID this node belongs to
-        upstream_id: Optional node ID to connect from (creates an edge)
-
+        upstream_id: Optional node ID to connect from
     Returns:
         Dictionary with node information
     """
@@ -183,16 +186,17 @@ def create_image_generation_node(
     reference_images: list[str] | None = None
 ) -> dict:
     """
-    Create an image generation node that will generate a visual based on the prompt.
+    Create a unified PromptActionNode for image generation.
+    This node contains both the AI generation prompt and display content.
 
     Args:
-        label: Short description (e.g., "Hero Portrait", "Establishing Shot")
-        prompt: Detailed image generation prompt
-        node_id: Unique identifier (e.g., "img-hero", "img-scene1-shot1")
-        parent_id: Optional group ID this node belongs to
+        label: Short description (e.g., "Hero Portrait")
+        prompt: Detailed AI generation prompt (not visible in UI)
+        content: User-facing markdown notes or prompt description (visible in UI)
+        node_id: Unique identifier
+        parent_id: Optional group ID
         upstream_id: Optional node ID to connect from
-        reference_images: Optional list of reference image node IDs for style consistency
-
+        reference_images: Optional list of reference image node IDs
     Returns:
         Dictionary with node information
     """
@@ -229,17 +233,17 @@ def create_video_generation_node(
     duration: float = 5.0
 ) -> dict:
     """
-    Create a video generation node that animates a source image.
+    Create a unified PromptActionNode for video generation (animating an image).
 
     Args:
-        label: Short description (e.g., "Hero Walks", "Camera Pan")
-        prompt: Video generation/animation prompt
-        node_id: Unique identifier (e.g., "vid-hero-walk", "vid-scene1-shot1")
-        source_image_id: ID of the source image node to animate
-        parent_id: Optional group ID this node belongs to
-        upstream_id: Optional node ID to connect from (usually the source image)
+        label: Short description
+        prompt: Video animation prompt (for AI)
+        content: User-facing notes (for UI)
+        node_id: Unique identifier
+        source_image_id: ID of the source image node to animate (REQUIRED)
+        parent_id: Optional group ID
+        upstream_id: Optional node ID to connect from
         duration: Video duration in seconds
-
     Returns:
         Dictionary with node information
     """

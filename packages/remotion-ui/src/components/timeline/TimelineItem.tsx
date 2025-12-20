@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useEffect, useRef, CSSProperties } from 'react';
+import React, { useState, useCallback, useEffect, CSSProperties } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { motion } from 'framer-motion';
 import type { Item, Asset, Track } from '@master-clash/remotion-core';
 import { useEditor } from '@master-clash/remotion-core';
@@ -63,8 +62,6 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   onSelect,
   onDelete,
   onUpdate,
-  onDragStart: onDragStartProp,
-  onDragEnd: onDragEndProp,
   onResizeStart,
   onResize,
   onResizeEnd,
@@ -133,9 +130,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     : (hasWaveform ? Math.floor(availableHeight * 0.6) : 44);
 
   // Dynamic thumbnail generation based on zoom level
-  const [dynamicThumbnail, setDynamicThumbnail] = React.useState<string | null>(null);
   const [isGeneratingThumbnail, setIsGeneratingThumbnail] = React.useState(false);
-  const lastZoomRef = React.useRef<number>(pixelsPerFrame);
   const thumbnailCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const canvasPixelWidthRef = React.useRef<number>(0);
 
@@ -414,18 +409,8 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   }, [hasWaveform]);
 
 
-  // Revoke previously created object URLs to avoid memory leaks and reduce flicker
-  const prevThumbUrlRef = React.useRef<string | null>(null);
-  React.useEffect(() => {
-    if (prevThumbUrlRef.current && prevThumbUrlRef.current !== dynamicThumbnail) {
-      URL.revokeObjectURL(prevThumbUrlRef.current);
-    }
-    prevThumbUrlRef.current = dynamicThumbnail;
-  }, [dynamicThumbnail]);
-
-  // Use dynamic thumbnail if available, otherwise fallback to static one
-  const displayThumbnail = dynamicThumbnail || thumbnail;
-  const isDynamicReady = Boolean(dynamicThumbnail);
+  const displayThumbnail = thumbnail;
+  const isDynamicReady = false;
 
   // (removed) Previously used to stretch thumbnail to fit width.
   // Match 3:7 ratio when video has waveform; otherwise keep previous calculation
@@ -738,19 +723,6 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     [pixelsPerFrame, onResizeStart, onResize, onResizeEnd, onRollEdit]
   );
 
-  const handleDragStart = (e: React.DragEvent) => {
-    // Forward to parent; avoid debug logs in production
-    if (onDragStartProp) {
-      onDragStartProp(e);
-    }
-  };
-
-  const handleDragEnd = (e: React.DragEvent) => {
-    if (onDragEndProp) {
-      onDragEndProp(e);
-    }
-  };
-
   // dnd-kit draggable (overlay-only integration; does not alter static layout)
   // DragOverlay中的item不需要draggable
   const draggableHook = useDraggable({
@@ -764,8 +736,8 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     disabled: isDragOverlay, // DragOverlay中禁用draggable
   });
 
-  const { attributes, listeners, setNodeRef, isDragging, transform } = isDragOverlay
-    ? { attributes: {}, listeners: {}, setNodeRef: () => { }, isDragging: false, transform: null }
+  const { attributes, listeners, setNodeRef, isDragging } = isDragOverlay
+    ? { attributes: {}, listeners: {}, setNodeRef: () => { }, isDragging: false }
     : draggableHook;
 
   // Decoupled renderers: first enable for image/text, others keep existing path

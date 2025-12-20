@@ -7,7 +7,7 @@ import {
     getNodeSize,
     getAbsolutePosition,
     findNonOverlappingPosition,
-} from '../utils/layout';
+} from '@/lib/utils/layout';
 
 /**
  * Hook for automatic layout management

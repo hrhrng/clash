@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, Asset, ImageItem } from '@master-clash/remotion-core';
+import type { ImageItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 
 
@@ -16,4 +16,3 @@ export const ImageRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
     </div>
   );
 };
-
