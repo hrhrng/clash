@@ -29,6 +29,8 @@ build/
 *.db
 *.db-shm
 *.db-wal
+*.db.bak*
+*.db-*
 *.sqlite
 *.sqlite3
 
