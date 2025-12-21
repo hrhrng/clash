@@ -36,3 +36,21 @@ export {
   type SubmitTaskRequest,
   type SubmitTaskResponse,
 } from './tasks';
+
+// Pipeline types
+export {
+  AssetStatusSchema,
+  TaskStateSchema,
+  PipelineTaskDefSchema,
+  SuperstepDefSchema,
+  PipelineDefSchema,
+  TaskRuntimeStateSchema,
+  PipelineRuntimeStateSchema,
+  type AssetStatus,
+  type TaskState,
+  type PipelineTaskDef,
+  type SuperstepDef,
+  type PipelineDef,
+  type TaskRuntimeState,
+  type PipelineRuntimeState,
+} from './pipeline';

@@ -49,8 +49,9 @@ async def execute(sql: str, params: list = None) -> dict:
         )
         
         if response.status_code != 200:
-            logger.error(f"[D1] Query failed: {response.text}")
-            raise Exception(f"D1 query failed: {response.status_code}")
+            error_body = response.text
+            logger.error(f"[D1] Query failed with {response.status_code}: SQL={sql}, Params={params}, Response={error_body}")
+            raise Exception(f"D1 query failed: {response.status_code} - {error_body}")
         
         result = response.json()
         if not result.get("success"):

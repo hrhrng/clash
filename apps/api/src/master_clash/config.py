@@ -67,6 +67,10 @@ class Settings:
         self.replicate_api_key: str | None = _env("REPLICATE_API_KEY")
         self.stability_api_key: str | None = _env("STABILITY_API_KEY")
         self.kie_api_key: str | None = _env("KIE_API_KEY")
+        
+        # Kling Video AI
+        self.KLING_ACCESS_KEY: str | None = _env("KLING_ACCESS_KEY")
+        self.KLING_SECRET_KEY: str | None = _env("KLING_SECRET_KEY")
 
 
         # Google AI Studio

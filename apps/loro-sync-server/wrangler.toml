@@ -13,10 +13,6 @@ head_sampling_rate = 1  # 100% sampling for dev, reduce in production
 name = "LORO_ROOM"
 class_name = "LoroRoom"
 
-[[durable_objects.bindings]]
-name = "TASK_DO"
-class_name = "TaskDO"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "master-clash-frontend"
@@ -44,7 +40,3 @@ vars = { ENVIRONMENT = "production" }
 [[migrations]]
 tag = "v1"
 new_classes = ["LoroRoom"]
-
-[[migrations]]
-tag = "v2"
-new_classes = ["TaskDO"]

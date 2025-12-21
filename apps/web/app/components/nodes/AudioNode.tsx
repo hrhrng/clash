@@ -2,6 +2,7 @@ import { memo, useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { Play, Pause, X, SpeakerHigh, SkipBack, SkipForward } from '@phosphor-icons/react';
+import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const AudioNode = ({ data, selected }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Audio Node');
@@ -196,7 +197,7 @@ const AudioNode = ({ data, selected }: NodeProps) => {
                     </div>
 
                     {/* Hidden Audio Element - kept in DOM for persistence */}
-                    <audio ref={audioRef} src={data.src} />
+                    <audio ref={audioRef} src={resolveAssetUrl(data.src)} />
                 </div>
 
                 {/* Asset nodes only have output (source) */}

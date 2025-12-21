@@ -11,10 +11,14 @@
  */
 
 // Canonical status values used by both frontend and backend
-export type AssetStatus = 'uploading' | 'generating' | 'completed' | 'failed';
+export type AssetStatus = 'uploading' | 'generating' | 'completed' | 'fin' | 'failed';
 
 // Status descriptions for UI display
 export const StatusDisplay: Record<AssetStatus, { label: string; description: string }> = {
+  fin: {
+    label: 'Done',
+    description: 'All processing finished',
+  },
   uploading: {
     label: 'Uploading',
     description: 'Asset is being uploaded',
@@ -40,7 +44,7 @@ export function isActiveStatus(status: AssetStatus): boolean {
 
 // Helper to check if status represents a "final" state
 export function isFinalStatus(status: AssetStatus): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'fin';
 }
 
 // Normalize legacy/old status values to the new 4-state system
@@ -67,6 +71,11 @@ export function normalizeStatus(status: string | undefined): AssetStatus {
   // Completed state
   if (statusLower === 'completed') {
     return 'completed';
+  }
+
+  // Fin state
+  if (statusLower === 'fin') {
+    return 'fin';
   }
   
   // Default to generating for unknown statuses

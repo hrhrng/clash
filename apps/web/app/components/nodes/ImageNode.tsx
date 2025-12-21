@@ -4,7 +4,6 @@ import { Image as ImageIcon, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
-import { getAsset } from '../../actions';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const ImageNode = ({ data, selected, id }: NodeProps) => {
@@ -33,73 +32,11 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
         }
     }, [data.src, data.status, data.description, imageUrl, status, description]);
 
-    useEffect(() => {
-        // Poll until we have a completed asset with a URL (and optionally description)
-        const shouldPoll = !!data.assetId && isActiveStatus(status) || (status === 'completed' && !imageUrl);
-
-        if (shouldPoll) {
-            const interval = setInterval(async () => {
-                try {
-                    console.log(`[ImageNode] Polling asset ${data.assetId}...`);
-                    const res = await fetch(`/api/assets/${data.assetId}`);
-                    if (!res.ok) return;
-
-                    const asset = await res.json();
-                    console.log(`[ImageNode] Polling response for ${data.assetId}:`, { status: asset.status, url: asset.url });
-
-                    if (!asset) return;
-
-                    // Apply remote updates
-                    // Apply remote updates
-                    const newAssetStatus = normalizeStatus(asset.status || undefined);
-                    if (newAssetStatus !== status) {
-                        setStatus(newAssetStatus);
-                    }
-
-                    if (asset.url && asset.url !== imageUrl) {
-                        setImageUrl(asset.url);
-                    }
-
-                    if (asset.description && asset.description !== description) {
-                        setDescription(asset.description);
-                    }
-
-                    // Update node data for downstream consumers
-                    if ((asset.url && asset.url !== data.src) || (asset.status && asset.status !== data.status) || (asset.description && asset.description !== data.description)) {
-                        setNodes((nds) =>
-                            nds.map((node) => {
-                                if (node.id === id) {
-                                    return {
-                                        ...node,
-                                        data: {
-                                            ...node.data,
-                                            src: asset.url || node.data.src,
-                                            status: asset.status || node.data.status,
-                                            description: asset.description || node.data.description,
-                                        },
-                                    };
-                                }
-                                return node;
-                            })
-                        );
-                    }
-
-                    // Stop polling once we have a completed asset with a URL, or on failure
-                    if (asset.status === 'failed' || (asset.status === 'completed' && asset.url)) {
-                        clearInterval(interval);
-                    }
-                } catch (e) {
-                    console.error("Polling error:", e);
-                }
-            }, 3000);
-
-            return () => clearInterval(interval);
-        }
-    }, [status, description, data.assetId, id, setNodes, imageUrl, data.src, data.status, data.description]);
+    // Loro sync handles state updates - no polling needed
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (imageUrl && status === 'completed') {
+        if (imageUrl && (status === 'completed' || status === 'fin')) {
             openViewer('image', resolveAssetUrl(imageUrl), label);
         }
     };
@@ -143,7 +80,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                     }`}
                 onDoubleClick={handleDoubleClick}
             >
-                {status === 'completed' && imageUrl ? (
+                {(status === 'completed' || status === 'fin') && imageUrl ? (
                     <div className="relative">
                         <img
                             src={resolveAssetUrl(imageUrl)}
@@ -206,7 +143,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                     <div className="p-3 bg-slate-50 border-t border-slate-100" onDoubleClick={(e) => e.stopPropagation()}>
                         <textarea
                             className="w-full h-24 text-xs text-slate-600 bg-transparent resize-none focus:outline-none"
-                            value={description || (status === 'completed' ? 'Generating description...' : 'No description available.')}
+                            value={description || ((status === 'completed' || status === 'fin') ? 'Generating description...' : 'No description available.')}
                             readOnly
                         />
                     </div>

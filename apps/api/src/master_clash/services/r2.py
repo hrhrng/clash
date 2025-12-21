@@ -90,3 +90,18 @@ async def put_object(key: str, data: bytes, content_type: str = "application/oct
     
     logger.info(f"[R2] Uploaded: {key}")
     return key
+
+
+def get_public_base_url() -> str:
+    """Get public R2 base URL for Kling API."""
+    settings = get_settings()
+    return settings.r2_public_url or f"https://{settings.r2_bucket_name}.r2.dev"
+
+
+@asynccontextmanager
+async def get_http_client():
+    """Get async HTTP client for downloading files."""
+    import httpx
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        yield client
+

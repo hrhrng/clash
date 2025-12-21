@@ -4,11 +4,9 @@ import { authenticateRequest } from './auth';
 import { loadSnapshot, saveSnapshot } from './storage';
 import { processPendingNodes } from './processors/NodeProcessor';
 import { 
-  checkAndRecoverPendingTasks, 
-  pollPendingTasks,
-  pollDescriptionTasks,
+  pollNodeTasks,
   triggerTaskPolling as triggerPollingService,
-  findNodeIdByTaskId 
+  hasPendingTasks as checkHasPendingTasks
 } from './polling/TaskPolling';
 import { updateNodeData, updateNode, updateEdge } from './sync/NodeUpdater';
 
@@ -51,7 +49,7 @@ export class LoroRoom {
     }
 
     // Handle internal broadcast-task request
-    if (url.pathname === '/broadcast-task' && request.method === 'POST') {
+    if (url.pathname.endsWith('/broadcast-task') && request.method === 'POST') {
       try {
         const body = await request.json() as {
           task_id: string;
@@ -72,13 +70,54 @@ export class LoroRoom {
     }
 
     // Handle internal trigger-task-polling request
-    if (url.pathname === '/trigger-task-polling' && request.method === 'POST') {
+    if (url.pathname.endsWith('/trigger-task-polling') && request.method === 'POST') {
       try {
         await this.triggerTaskPolling();
         return new Response('Task polling triggered', { status: 200 });
       } catch (error) {
         console.error('Trigger task polling error:', error);
         return new Response('Failed to trigger task polling', { status: 500 });
+      }
+    }
+
+    // Handle internal update-node request (from ImageGenDO/VideoGenDO or Python API)
+    if (url.pathname.endsWith('/update-node') && request.method === 'POST') {
+      try {
+        const body = await request.json() as {
+          nodeId: string;
+          updates: Record<string, any>;
+        };
+        
+        console.log(`[LoroRoom] 📝 Updating node ${body.nodeId} via internal request`);
+        
+        // Ensure document is initialized
+        if (this.initPromise) {
+          await this.initPromise;
+        }
+        
+        
+        // Use existing updateNodeData
+        updateNodeData(this.doc, body.nodeId, body.updates, (data) => this.broadcast(data));
+        console.log(`[LoroRoom] ✅ Node ${body.nodeId} updated via callback`);
+        
+        // Check if this node now needs further processing (e.g., description)
+        await processPendingNodes(
+          this.doc,
+          this.env,
+          this.projectId || '',
+          (data: Uint8Array) => this.broadcast(data),
+          () => this.triggerTaskPolling()
+        );
+        
+        // Save snapshot
+        this.saveDocumentSnapshot().catch(err => 
+          console.error('[LoroRoom] ❌ Failed to save snapshot after node update:', err)
+        );
+        
+        return new Response('Node updated', { status: 200 });
+      } catch (error) {
+        console.error('[LoroRoom] ❌ Update node error:', error);
+        return new Response('Update failed', { status: 500 });
       }
     }
 
@@ -122,8 +161,9 @@ export class LoroRoom {
         await this.loadDocument(authResult.projectId);
         await this.startPeriodicSave();
         
-        // Check for pending tasks and recover polling if needed
-        await checkAndRecoverPendingTasks(authResult.projectId, this.env, this.state);
+        // Always trigger task polling on init to process any pending nodes
+        console.log(`[LoroRoom] 🔄 Triggering initial task processing for project: ${authResult.projectId}`);
+        await this.triggerTaskPolling();
         
         console.log(`[LoroRoom] ✅ Room initialized for project: ${authResult.projectId}`);
       })();
@@ -236,11 +276,11 @@ export class LoroRoom {
       console.log(`[LoroRoom] ✅ Update applied to document. Version: ${this.doc.version().toJSON()}`);
 
       // Check for pending nodes (using extracted module)
-      processPendingNodes(
+      await processPendingNodes(
         this.doc,
         this.env,
         this.projectId || '',
-        (data) => this.broadcast(data),
+        (data: Uint8Array) => this.broadcast(data),
         () => this.triggerTaskPolling()
       );
 
@@ -352,29 +392,29 @@ export class LoroRoom {
       } else if (alarmType === 'task_polling') {
         console.log('[LoroRoom] Task polling alarm triggered');
         
-        // Poll AIGC tasks (video generation, etc.)
-        const hasPendingAIGCTasks = await pollPendingTasks(
-          this.projectId || '',
-          this.env,
+        // Submit pending tasks (new nodes needing generation/description)
+        await processPendingNodes(
           this.doc,
-          (data) => this.broadcast(data)
+          this.env,
+          this.projectId || '',
+          (data: Uint8Array) => this.broadcast(data),
+          () => this.triggerTaskPolling()
         );
         
-        // Poll description tasks (from Python API)
-        const hasPendingDescriptionTasks = await pollDescriptionTasks(
-          this.projectId || '',
-          this.env,
+        // Poll tasks for nodes with pendingTask field
+        const hasPendingTasks = await pollNodeTasks(
           this.doc,
-          (data) => this.broadcast(data)
+          this.env,
+          this.projectId || '',
+          (data: Uint8Array) => this.broadcast(data)
         );
 
-        const hasPendingTasks = hasPendingAIGCTasks || hasPendingDescriptionTasks;
-
         if (hasPendingTasks) {
-          const nextAlarmTime = Date.now() + 2 * 1000;
+          // Polling is now just a fallback - 60 seconds is sufficient
+          const nextAlarmTime = Date.now() + 60 * 1000;
           await this.state.storage.put('alarm_type', 'task_polling');
           await this.state.storage.setAlarm(nextAlarmTime);
-          console.log('[LoroRoom] Scheduled next task poll in 2 seconds');
+          console.log('[LoroRoom] Scheduled fallback poll in 60 seconds');
         } else {
           console.log('[LoroRoom] No more pending tasks, switching to snapshot-only mode');
           const nextAlarmTime = Date.now() + 5 * 60 * 1000;

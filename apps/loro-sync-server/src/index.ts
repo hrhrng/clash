@@ -1,6 +1,5 @@
 import { app } from './app';
 import { LoroRoom } from './LoroRoom';
-import { TaskDO } from './TaskDO';
 import type { Env } from './types';
 
 /**
@@ -33,4 +32,4 @@ export default {
 };
 
 // Export Durable Object classes
-export { LoroRoom, TaskDO };
+export { LoroRoom };

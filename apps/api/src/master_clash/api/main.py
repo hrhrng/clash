@@ -51,8 +51,10 @@ app.add_middleware(
 # Register routers
 from master_clash.api.describe_router import router as describe_router
 from master_clash.api.tasks_router import router as tasks_router
+from master_clash.api.execute_router import router as execute_router
 app.include_router(describe_router)
 app.include_router(tasks_router)
+app.include_router(execute_router)
 
 
 def strip_data_url(base64_str: str) -> str:
@@ -642,7 +644,11 @@ class StreamEmitter:
 
 @app.get("/api/v1/stream/{project_id}")
 async def stream_workflow(
-    project_id: str, thread_id: str, resume: bool = False, user_input: str = None
+    project_id: str,
+    thread_id: str,
+    resume: bool = False,
+    user_input: str = None,
+    selected_node_ids: str = None,
 ):
     """Stream LangGraph workflow events as SSE using LangGraph streaming modes."""
     emitter = StreamEmitter()
@@ -676,6 +682,24 @@ async def stream_workflow(
         inputs = None
         if not resume:
             message = f"Project ID: {project_id}. {user_input}"
+
+            # Append selected node context if provided
+            if selected_node_ids:
+                from master_clash.context import get_project_context
+
+                context = get_project_context(project_id)
+                if context:
+                    ids = [i.strip() for i in selected_node_ids.split(",") if i.strip()]
+                    selected_nodes = [n for n in context.nodes if n.id in ids]
+                    if selected_nodes:
+                        context_pieces = [
+                            f"Selected Node: {n.id} ({n.type}) - {n.data.get('label', 'Untitled')}"
+                            + (f" Content: {n.data['content']}" if n.data.get("content") else "")
+                            + (f" Source: {n.data['src']}" if n.data.get("src") else "")
+                            for n in selected_nodes
+                        ]
+                        message += "\n\n[USER SELECTION CONTEXT]\n" + "\n".join(context_pieces)
+
             inputs = {
                 "messages": [HumanMessage(content=message)],
                 "project_id": project_id,

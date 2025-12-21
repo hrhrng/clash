@@ -2,8 +2,6 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env, HonoVariables } from './types';
 import { generateRoutes } from './routes/generate';
-import { taskRoutes } from './routes/tasks';
-import { webhookRoutes } from './routes/webhooks';
 import { assetRoutes } from './routes/assets';
 import { loggerMiddleware } from './middleware/logger';
 import { errorHandler } from './middleware/error-handler';
@@ -20,9 +18,9 @@ app.onError(errorHandler);
 app.get('/health', (c) => c.text('OK'));
 
 // Route mounting
+// Note: Task execution has been migrated to Python API
+// Tasks are submitted via NodeProcessor -> Python API /api/tasks/submit
 app.route('/api/generate', generateRoutes);
-app.route('/tasks', taskRoutes);
-app.route('/webhooks', webhookRoutes);
 app.route('/upload', assetRoutes);
 app.route('/assets', assetRoutes);
 

@@ -4,7 +4,6 @@ import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
-import { getAsset } from '../../actions';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const VideoNode = ({ data, selected, id }: NodeProps) => {
@@ -25,67 +24,16 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
         if (data.src !== videoUrl) {
             setVideoUrl(data.src);
         }
-    }, [data.status, data.src]);
-
-    useEffect(() => {
-        // Poll if generating OR (completed but missing description)
-        const shouldPoll = isActiveStatus(status) || (status === 'completed' && !description);
-
-        if (shouldPoll && data.assetId) {
-            const interval = setInterval(async () => {
-                try {
-                    const asset = await getAsset(data.assetId);
-                    if (asset) {
-                        // Update status if changed
-                        const newAssetStatus = normalizeStatus(asset.status || undefined);
-                        if (newAssetStatus !== status) {
-                            setStatus(newAssetStatus);
-                        }
-
-                        // Update URL if changed
-                        if (asset.url !== videoUrl) {
-                            setVideoUrl(asset.url);
-                        }
-
-                        // Update description if available
-                        if (asset.description && asset.description !== description) {
-                            setDescription(asset.description);
-                        }
-
-                        // Update node data
-                        setNodes((nds) =>
-                            nds.map((node) => {
-                                if (node.id === id) {
-                                    return {
-                                        ...node,
-                                        data: {
-                                            ...node.data,
-                                            src: asset.url,
-                                            status: asset.status,
-                                            description: asset.description,
-                                        },
-                                    };
-                                }
-                                return node;
-                            })
-                        );
-
-                        // Stop polling if completed and description exists (or failed)
-                        if (asset.status === 'failed' || (asset.status === 'completed' && asset.description)) {
-                            clearInterval(interval);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Polling error:", e);
-                }
-            }, 3000);
-            return () => clearInterval(interval);
+        if (data.description !== description) {
+            setDescription(data.description || '');
         }
-    }, [status, description, data.assetId, id, setNodes, videoUrl]);
+    }, [data.status, data.src, data.description]);
+
+    // Loro sync handles state updates - no polling needed
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
-        if (videoUrl && status === 'completed') {
+        if (videoUrl && (status === 'completed' || status === 'fin')) {
             openViewer('video', resolveAssetUrl(videoUrl), label);
         }
     };
@@ -129,7 +77,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                     }`}
                 onDoubleClick={handleDoubleClick}
             >
-                {status === 'completed' && videoUrl ? (
+                {(status === 'completed' || status === 'fin') && videoUrl ? (
                     <div className="relative">
                         <video
                             src={resolveAssetUrl(videoUrl)}
@@ -203,7 +151,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                     <div className="p-3 bg-slate-50 border-t border-slate-100" onDoubleClick={(e) => e.stopPropagation()}>
                         <textarea
                             className="w-full h-24 text-xs text-slate-600 bg-transparent resize-none focus:outline-none"
-                            value={description || (status === 'completed' ? 'Generating description...' : 'No description available.')}
+                            value={description || ((status === 'completed' || status === 'fin') ? 'Generating description...' : 'No description available.')}
                             readOnly
                         />
                     </div>

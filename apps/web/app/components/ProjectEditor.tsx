@@ -45,6 +45,7 @@ import { VideoEditorProvider } from './VideoEditorContext';
 import { findNonOverlappingPosition, getAbsolutePosition } from '@/lib/utils/layout';
 import { getLayoutedElements, getSmartLayoutedElements } from '@/lib/utils/elkLayout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
+import { resolveAssetUrl } from '@/lib/utils/assets';
 import { useLoroSync } from '../hooks/useLoroSync';
 import { LoroSyncProvider } from './LoroSyncContext';
 
@@ -534,7 +535,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             return {
                                 id: sourceNode.id,
                                 type: sourceNode.type,
-                                src: sourceNode.data.src,
+                                src: resolveAssetUrl(sourceNode.data.src),
                                 name: sourceNode.data.label || sourceNode.type,
                                 // Add other fields if needed
                             };

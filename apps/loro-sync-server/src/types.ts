@@ -4,7 +4,6 @@
 export interface Env {
   // Durable Object bindings
   LORO_ROOM: DurableObjectNamespace;
-  TASK_DO: DurableObjectNamespace;
 
   // D1 Database binding
   DB: D1Database;
@@ -41,6 +40,9 @@ export interface Env {
   
   // Python API URL for description generation
   BACKEND_API_URL?: string;
+  
+  // Loro Sync Server's own public URL for callbacks
+  LORO_SYNC_URL?: string;
   
   // R2 S3 API credentials (for S3-compatible access)
   R2_ACCOUNT_ID?: string;
