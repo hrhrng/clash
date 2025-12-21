@@ -1,8 +1,12 @@
 [tool.uv.workspace]
 members = [
     "apps/api",
-    "packages/py-*"
+    "packages/py-*",
+    "packages/shared-types/python",
 ]
+
+[tool.uv.sources]
+clash-types = { workspace = true }
 
 [tool.ruff]
 line-length = 100

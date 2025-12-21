@@ -5,6 +5,7 @@ import { useMediaViewer } from '../MediaViewerContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
 import { getAsset } from '../../actions';
+import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Image Node');
@@ -99,7 +100,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (imageUrl && status === 'completed') {
-            openViewer('image', imageUrl, label);
+            openViewer('image', resolveAssetUrl(imageUrl), label);
         }
     };
 
@@ -145,7 +146,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                 {status === 'completed' && imageUrl ? (
                     <div className="relative">
                         <img
-                            src={imageUrl}
+                            src={resolveAssetUrl(imageUrl)}
                             alt={label}
                             className="w-full h-auto object-cover max-h-[300px]"
                         />
@@ -160,6 +161,21 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                             >
                                 <TextT size={12} weight="bold" />
                             </button>
+                        </div>
+                    </div>
+                ) : status === 'uploading' && imageUrl ? (
+                    <div className="relative">
+                        <img
+                            src={resolveAssetUrl(imageUrl)}
+                            alt={label}
+                            className="w-full h-auto object-cover max-h-[300px] opacity-70"
+                        />
+                        {/* Loading Overlay */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                            <div className="flex flex-col items-center gap-2">
+                                <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+                                <span className="text-xs font-medium text-white animate-pulse">Uploading...</span>
+                            </div>
                         </div>
                     </div>
                 ) : isActiveStatus(status) ? (

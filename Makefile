@@ -1,4 +1,4 @@
-.PHONY: install dev dev-web dev-api dev-sync dev-gateway dev-collab dev-full db-web-local db-sync-local build test lint clean format setup
+.PHONY: install dev dev-web dev-api dev-sync dev-gateway dev-collab dev-full build test lint clean format setup db-web-local db-sync-local
 
 # 安装所有依赖
 install:
@@ -7,35 +7,35 @@ install:
 	@echo "Installing Python dependencies..."
 	uv sync
 
-# 启动前端开发服务器
-dev-web: db-web-local
+# 启动前端开发服务器 (with proxy for D1 network access)
+dev-web:
 	@echo "Starting frontend..."
-	cd apps/web && pnpm dev
+	cd apps/web && HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 pnpm dev
 
-# 启动后端开发服务器
+# 启动后端开发服务器 (with proxy for network access)
 dev-api:
 	@echo "Starting backend..."
-	PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8000
+	HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8000
 
-# 启动协作同步服务（Durable Object, 本地可直接跑，无需网关）
+# 启动协作同步服务（Durable Object, with proxy for D1/R2 network access）
 dev-sync: db-sync-local
 	@echo "Starting loro sync server..."
-	cd apps/loro-sync-server && pnpm dev
+	cd apps/loro-sync-server && HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 pnpm dev
 
-# 启动鉴权网关（生产建议用；本地一般不需要）
+# 启动鉴权网关（生产建议用；with proxy for D1 network access）
 dev-gateway:
 	@echo "Starting auth gateway..."
-	cd apps/auth-gateway && pnpm dev
+	cd apps/auth-gateway && HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 pnpm dev
 
-# 本地数据库迁移（Web: sqlite）
+
+
+# 数据库工具 (Local D1 for Web & Sync)
 db-web-local:
-	@echo "Migrating web local sqlite..."
-	cd apps/web && pnpm db:bootstrap:local
+	cd apps/web && pnpm db:migrate:local
 
-# 本地数据库迁移（Sync: D1 local）
 db-sync-local:
-	@echo "Migrating sync server local D1..."
 	cd apps/loro-sync-server && pnpm db:migrate:local
+
 
 # 同时启动前后端（使用并行执行）
 dev:
@@ -58,6 +58,21 @@ dev-full:
 	@echo "Backend:  http://localhost:8000"
 	@echo "Sync:     http://localhost:8787 (ws: /sync/:projectId)"
 	@$(MAKE) -j3 dev-web dev-api dev-sync
+
+# 最佳实践：通过 Auth Gateway 统一入口
+# Gateway: http://localhost:8788 -> Frontend/API/Sync
+dev-gateway-full:
+	@echo "Starting services (API Gateway pattern)..."
+	@echo ""
+	@echo "   ┌─────────────────────────────────────────────┐"
+	@echo "   │  Auth Gateway: http://localhost:8788        │"
+	@echo "   │  ├─ /          → Frontend (:3000)          │"
+	@echo "   │  ├─ /sync/*    → Loro Sync (:8787)         │"
+	@echo "   │  ├─ /api/chat  → Python API (:8000)        │"
+	@echo "   │  └─ /assets/*  → R2 Assets                 │"
+	@echo "   └─────────────────────────────────────────────┘"
+	@echo ""
+	@HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 $(MAKE) -j4 dev-sync dev-web dev-api dev-gateway
 
 # 构建所有包
 build:
@@ -92,6 +107,7 @@ clean:
 	@echo "Cleaning TypeScript..."
 	pnpm clean || true
 	rm -rf node_modules .turbo
+	rm -f apps/web/local.db*
 	@echo "Cleaning Python..."
 	rm -rf .venv uv.lock
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

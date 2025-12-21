@@ -8,15 +8,6 @@ import { uploadBufferToR2, uploadVideoFromUrlToR2 } from '@/lib/r2-upload';
 
 // Helper to get DB (duplicated from actions.ts for now)
 const getDb = async () => {
-    // Local dev should always use local SQLite.
-    if (process.env.NODE_ENV === 'development') {
-        const path = await import('path');
-        const Database = (await import('better-sqlite3')).default;
-        const dbPath = path.join(process.cwd(), 'local.db');
-        const sqlite = new Database(dbPath);
-        return drizzleSqlite(sqlite, { schema });
-    }
-
     // 1. Try to get D1 from Cloudflare context
     try {
         const { env } = await getCloudflareContext({ async: true });

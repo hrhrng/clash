@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clash-types"
+version = "0.1.0"
+description = "Shared type definitions for Master Clash (auto-generated from Zod schemas)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["clash_types"]

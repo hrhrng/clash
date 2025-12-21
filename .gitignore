@@ -48,6 +48,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 logs/
+backend.log
+frontend.log
+wrangler.log
+build.log
 
 # Testing
 coverage/

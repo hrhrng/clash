@@ -2,6 +2,8 @@
 
 Cloudflare Worker + Durable Objects implementation for real-time Loro CRDT synchronization and AIGC task management.
 
+📐 **[详细架构文档 →](./ARCHITECTURE.md)**
+
 ## Architecture
 
 - **Cloudflare Workers**: Serverless request routing
@@ -323,20 +325,35 @@ Client A                 LoroRoom (DO)            Client B
 ```
 apps/loro-sync-server/
 ├── src/
-│   ├── index.ts          # Worker entry + Task APIs + Cron handler
-│   ├── LoroRoom.ts       # Durable Object (WebSocket + Loro CRDT)
-│   ├── auth.ts           # JWT verification
-│   ├── storage.ts        # D1 snapshot persistence
-│   ├── tasks.ts          # Task CRUD operations
-│   ├── executors.ts      # Task executor abstraction (NEW)
-│   └── types.ts          # TypeScript types
-├── migrations/
-│   ├── 0001_create_loro_snapshots.sql
-│   └── 0002_create_aigc_tasks.sql
-├── wrangler.toml         # Cloudflare configuration
-├── package.json
-├── tsconfig.json
-└── README.md
+│   ├── index.ts              # Worker entry point
+│   ├── app.ts                # Hono app + routes
+│   ├── LoroRoom.ts           # Durable Object (orchestrator)
+│   ├── TaskDO.ts             # Task Durable Object
+│   ├── types.ts              # TypeScript types
+│   ├── utils.ts              # Utility functions
+│   ├── generators/           # AIGC generation modules
+│   │   ├── DescriptionGenerator.ts
+│   │   ├── ImageGeneration.ts
+│   │   └── VideoGeneration.ts
+│   ├── polling/              # Task polling
+│   │   └── TaskPolling.ts
+│   ├── processors/           # Node processing
+│   │   └── NodeProcessor.ts
+│   ├── sync/                 # Loro sync utilities
+│   │   └── NodeUpdater.ts
+│   ├── routes/               # API routes
+│   │   ├── assets.ts
+│   │   ├── generate.ts
+│   │   ├── tasks.ts
+│   │   └── webhooks.ts
+│   ├── middleware/           # Hono middleware
+│   │   ├── error-handler.ts
+│   │   └── logger.ts
+│   └── lib/                  # Shared libraries
+│       └── executor/         # Task executors (Kling, Gemini)
+├── migrations/               # D1 migrations
+├── wrangler.toml             # Cloudflare config
+└── .dev.vars                 # Local env vars
 ```
 
 ## Environment Variables

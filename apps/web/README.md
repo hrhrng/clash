@@ -44,7 +44,7 @@ cp .env.example .env
 ### Local Development
 
 ```bash
-# Run with local D1 database
+# Run the development server
 npm run dev
 
 # Or use OpenNextJS preview (Cloudflare Worker runtime)
@@ -68,14 +68,11 @@ wrangler d1 create clash-flow-db
 # Generate migration from schema changes
 npm run db:generate
 
-# Apply migrations locally
-npm run db:migrate:local
-
 # Apply migrations to production
 npm run db:migrate:prod
 
 # Open D1 console
-wrangler d1 console clash-flow-db --local
+wrangler d1 console clash-flow-db
 ```
 
 #### Seed Database
@@ -163,7 +160,6 @@ Main tables:
 - `npm run lint` - Run ESLint
 - `npm run format` - Format with Prettier
 - `npm run db:generate` - Generate migrations
-- `npm run db:migrate:local` - Run migrations locally
 - `npm run db:migrate:prod` - Run migrations in production
 
 ## Cloudflare D1 Integration
@@ -181,12 +177,7 @@ const { env } = await getCloudflareContext({ async: true });
 const db = drizzle(env.DB);
 ```
 
-### Local vs Production
-
-- **Local**: Uses SQLite file (`local.db`)
-- **Production**: Uses Cloudflare D1
-
-The Drizzle adapter automatically handles both environments.
+This app uses Cloudflare D1 (serverless SQLite) as the database.
 
 ## Troubleshooting
 
@@ -204,10 +195,6 @@ npm run cf:build
 ### Database Issues
 
 ```bash
-# Reset local database
-rm -f local.db local.db-shm local.db-wal
-wrangler d1 migrations apply clash-flow-db --local
-
 # Check database contents
 wrangler d1 execute clash-flow-db --command="SELECT * FROM project"
 ```

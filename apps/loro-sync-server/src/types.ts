@@ -13,8 +13,12 @@ export interface Env {
   ASSETS: R2Bucket;
 
   // R2 public URL prefix (e.g., 'https://pub-xxx.r2.dev')
-  // Required for Vertex AI to access uploaded assets
+  // DEPRECATED: Use WORKER_PUBLIC_URL instead for better performance
   R2_PUBLIC_URL?: string;
+  
+  // Worker's own public URL (e.g., 'https://loro-sync.your-domain.workers.dev')
+  // Used for /assets/* endpoint to serve R2 files without rate limiting
+  WORKER_PUBLIC_URL?: string;
 
   // Environment variables
   ENVIRONMENT?: string;
@@ -34,6 +38,15 @@ export interface Env {
   GCP_LOCATION?: string; // e.g., 'us-central1'
   GCP_CLIENT_EMAIL?: string; // Service account email
   GCP_PRIVATE_KEY?: string; // Service account private key
+  
+  // Python API URL for description generation
+  BACKEND_API_URL?: string;
+  
+  // R2 S3 API credentials (for S3-compatible access)
+  R2_ACCOUNT_ID?: string;
+  R2_ACCESS_KEY_ID?: string;
+  R2_SECRET_ACCESS_KEY?: string;
+  R2_BUCKET_NAME?: string;
 }
 
 /**

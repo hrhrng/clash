@@ -47,6 +47,7 @@ dependencies = [
     "boto3>=1.35.0",
     "requests>=2.32.5",
     "deepagents>=0.2.8",
+    "clash-types",
     # Video Analysis
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
@@ -59,6 +60,9 @@ dependencies = [
     "matplotlib>=3.7.0",
     "langchain-google-vertexai",
     "loro>=1.10.3",
+    "aioboto3>=15.5.0",
+    "google-cloud-storage>=3.7.0",
+    "gcloud-aio-storage>=9.6.1",
 ]
 
 # Optional dependency groups

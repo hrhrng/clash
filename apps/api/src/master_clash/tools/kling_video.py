@@ -1,6 +1,12 @@
 """
 Kling AI Video Generation Tool with LangChain Integration
 Provides video registry and tool wrappers similar to nano_banana pattern.
+
+⚠️ DEPRECATED: This module is no longer used in production.
+Video generation is now handled by Loro Sync Server (Cloudflare Durable Object):
+- apps/loro-sync-server/src/generators/VideoGeneration.ts
+
+This code is kept for reference and potential future use.
 """
 
 from pathlib import Path

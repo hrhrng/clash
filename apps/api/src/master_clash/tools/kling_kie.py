@@ -1,6 +1,12 @@
 """
 Kling KIE Text-to-Video and Image-to-Video API Wrapper
 Provides interface for generating videos from text or images using Kling AI's v2.5 Turbo Pro model via KIE.ai API.
+
+⚠️ DEPRECATED: This module is no longer used in production.
+Video generation is now handled by Loro Sync Server (Cloudflare Durable Object):
+- apps/loro-sync-server/src/generators/VideoGeneration.ts
+
+This code is kept for reference and potential future use.
 """
 
 import json

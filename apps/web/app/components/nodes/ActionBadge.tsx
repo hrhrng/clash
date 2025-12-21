@@ -9,6 +9,7 @@ import { createAsset } from '../../actions';
 import { useAutoLayout } from '../../hooks/useAutoLayout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import MilkdownEditor from '../MilkdownEditor';
+import { resolveAssetUrl, isR2Key } from '../../../lib/utils/assets';
 
 const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     const [isHovered, setIsHovered] = useState(false);
@@ -256,6 +257,10 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 sources.forEach((src) => {
                     if (!src) return;
                     if (src.startsWith('http://') || src.startsWith('https://')) {
+                        urls.push(src);
+                    } else if (isR2Key(src)) {
+                        // Pass R2 keys directly
+                        console.log('[ActionBadge] Including R2 key for backend processing');
                         urls.push(src);
                     } else if (src.includes('base64,')) {
                         // Also pass base64 images - backend will upload to R2
@@ -591,7 +596,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                                                 title={img.label}
                                             >
                                                 <img
-                                                    src={img.src}
+                                                    src={resolveAssetUrl(img.src)}
                                                     alt={img.label}
                                                     className={`w-8 h-8 object-cover rounded-md border-[1.5px] transition-all ${
                                                         actionType === 'video-gen' 

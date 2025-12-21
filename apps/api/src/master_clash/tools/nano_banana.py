@@ -116,7 +116,7 @@ def _save_image_to_file(
 
 def _base_nano_banana_gen(
     text: str,
-    system_prompt: str | None = "",
+    system_prompt: str | None = "Must generate an image",
     images: list[str] | None = None,
     aspect_ratio: str | None = "16:9",
     model_name: str | None = "gemini-2.5-flash-image",

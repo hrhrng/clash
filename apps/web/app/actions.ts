@@ -12,30 +12,29 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { headers } from 'next/headers';
 import { DEV_USER_ID, getUserIdFromHeaders, getUserIdOrDevFromHeaders } from '@/lib/auth/session';
 
-// Helper to get DB (D1 in production/preview, local SQLite in dev)
+// Helper to get DB (D1 binding via Cloudflare context)
+// Note: initOpenNextCloudflareForDev() in next.config.ts enables bindings during next dev
+// Proxy must be set via HTTP_PROXY env var in startup command for network access
 const getDb = async () => {
-    // Local dev should always use local SQLite so you don't need a running D1/Wrangler/OpenNext context.
-    if (process.env.NODE_ENV === 'development') {
-        const path = await import('path');
-        const Database = (await import('better-sqlite3')).default;
-        const dbPath = path.join(process.cwd(), 'local.db');
-        const sqlite = new Database(dbPath);
-        return drizzleSqlite(sqlite, { schema });
-    }
-
-    // 1. Try to get D1 from Cloudflare context
     try {
         const { env } = await getCloudflareContext({ async: true });
         const bindings = env as unknown as { DB?: Parameters<typeof drizzleD1>[0] };
+        
+        console.log('[getDb] Cloudflare env keys:', Object.keys(env || {}));
+        
         if (bindings.DB) {
+            console.log('[getDb] D1 binding found');
             return drizzleD1(bindings.DB, { schema });
+        } else {
+            console.warn('[getDb] D1 binding (DB) is missing from context');
         }
     } catch (e) {
-        // Ignore error if getRequestContext fails (e.g. not in Pages environment)
+        console.error('[getDb] Failed to get Cloudflare context:', e);
     }
 
     throw new Error('No database connection available');
 }
+
 
 async function getUserId() {
     const h = new Headers(await headers())
@@ -79,45 +78,54 @@ export async function createProject(prompt: string) {
 }
 
 export async function getProjects(limit = 10) {
-    const db = await getDb();
-    const userId = await getUserId();
-    if (!userId) return [];
-    if (userId === DEV_USER_ID) {
-        await ensureDevUserExists(db)
+    try {
+        const db = await getDb();
+        const userId = await getUserId();
+        if (!userId) return [];
+        if (userId === DEV_USER_ID) {
+            await ensureDevUserExists(db)
+        }
+        return await db.query.projects.findMany({
+            where: eq(projects.ownerId, userId),
+            orderBy: [desc(projects.createdAt)],
+            limit: limit,
+        });
+    } catch (error) {
+        console.error('[getProjects] Failed to fetch projects:', error);
+        return [];
     }
-    return await db.query.projects.findMany({
-        where: eq(projects.ownerId, userId),
-        orderBy: [desc(projects.createdAt)],
-        limit: limit,
-    });
 }
 
 export async function getProject(id: string) {
-    const db = await getDb();
-    const userId = await getUserId();
-    if (!userId) return null;
-    if (userId === DEV_USER_ID) {
-        await ensureDevUserExists(db)
-    }
-    return await db.query.projects.findFirst({
-        where: and(eq(projects.id, id), eq(projects.ownerId, userId)),
-        with: {
-            messages: {
-                orderBy: [asc(messages.createdAt)],
+    try {
+        const db = await getDb();
+        const userId = await getUserId();
+        if (!userId) return null;
+        if (userId === DEV_USER_ID) {
+            await ensureDevUserExists(db)
+        }
+        return await db.query.projects.findFirst({
+            where: and(eq(projects.id, id), eq(projects.ownerId, userId)),
+            with: {
+                messages: {
+                    orderBy: [asc(messages.createdAt)],
+                },
             },
-        },
-    });
+        });
+    } catch (error) {
+        console.error(`[getProject] Failed to fetch project ${id}:`, error);
+        return null;
+    }
 }
 
+/**
+ * @deprecated No-op: Loro is the single source of truth for nodes/edges.
+ * This function is kept for backward compatibility but does nothing.
+ * Canvas state is now managed entirely by Loro sync.
+ */
 export async function saveProjectState(id: string, nodes: any, edges: any) {
-    const db = await getDb();
-    const userId = await requireUserId();
-    if (userId === DEV_USER_ID) {
-        await ensureDevUserExists(db)
-    }
-    await db.update(projects)
-        .set({ nodes, edges })
-        .where(and(eq(projects.id, id), eq(projects.ownerId, userId)));
+    // No-op: Loro handles canvas state sync
+    console.log('[saveProjectState] No-op: Loro is the single source of truth');
 }
 
 export async function updateProjectName(id: string, name: string) {

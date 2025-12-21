@@ -8,15 +8,6 @@ import { DEV_USER_ID, getUserIdFromHeaders } from '@/lib/auth/session';
 
 // Shared DB helper (mirrors other internal routes)
 const getDb = async () => {
-    // Local dev should always use local SQLite.
-    if (process.env.NODE_ENV === 'development') {
-        const path = await import('path');
-        const Database = (await import('better-sqlite3')).default;
-        const dbPath = path.join(process.cwd(), 'local.db');
-        const sqlite = new Database(dbPath);
-        return drizzleSqlite(sqlite, { schema });
-    }
-
     try {
         const { env } = await getCloudflareContext({ async: true });
         const bindings = env as unknown as { DB?: Parameters<typeof drizzleD1>[0] };

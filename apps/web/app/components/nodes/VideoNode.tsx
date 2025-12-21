@@ -5,6 +5,7 @@ import { useMediaViewer } from '../MediaViewerContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
 import { getAsset } from '../../actions';
+import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
@@ -85,7 +86,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (videoUrl && status === 'completed') {
-            openViewer('video', videoUrl, label);
+            openViewer('video', resolveAssetUrl(videoUrl), label);
         }
     };
 
@@ -131,7 +132,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                 {status === 'completed' && videoUrl ? (
                     <div className="relative">
                         <video
-                            src={videoUrl}
+                            src={resolveAssetUrl(videoUrl)}
                             controls={false} // Disable default controls in node view to prevent conflict
                             className="w-full h-auto max-h-[300px] object-cover pointer-events-none" // Disable pointer events on video to allow double click on container
                         />
@@ -156,6 +157,21 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100 bg-black/10 pointer-events-none">
                             <div className="rounded-full bg-white/20 p-2 backdrop-blur-sm">
                                 <FilmSlate size={24} className="text-white" weight="fill" />
+                            </div>
+                        </div>
+                    </div>
+                ) : status === 'uploading' && videoUrl ? (
+                    <div className="relative">
+                        <video
+                            src={resolveAssetUrl(videoUrl)}
+                            controls={false}
+                            className="w-full h-auto max-h-[300px] object-cover pointer-events-none opacity-70"
+                        />
+                        {/* Loading Overlay */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                            <div className="flex flex-col items-center gap-2">
+                                <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+                                <span className="text-xs font-medium text-white animate-pulse">Uploading...</span>
                             </div>
                         </div>
                     </div>

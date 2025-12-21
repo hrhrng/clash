@@ -22,10 +22,11 @@ binding = "DB"
 database_name = "master-clash-frontend"
 database_id = "aab16eeb-a375-490b-ad1e-cd092cd9f4bb"
 
-# R2 bucket for generated assets
+# R2 bucket for generated assets (remote in local dev)
 [[r2_buckets]]
 binding = "ASSETS"
 bucket_name = "master-clash-assets"
+remote = true
 
 # Environment variables
 [vars]

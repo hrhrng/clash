@@ -25,7 +25,7 @@ from master_clash.context import ProjectContext, set_project_context
 from master_clash.tools.description import generate_description
 from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.nano_banana import nano_banana_gen
-from master_clash.tools.loro_sync_client import LoroSyncClient
+from master_clash.loro_sync import LoroSyncClient
 from master_clash.utils import image_to_base64
 from master_clash.workflow.multi_agent import graph
 
@@ -47,6 +47,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+from master_clash.api.describe_router import router as describe_router
+from master_clash.api.tasks_router import router as tasks_router
+app.include_router(describe_router)
+app.include_router(tasks_router)
 
 
 def strip_data_url(base64_str: str) -> str:

@@ -284,24 +284,41 @@ export async function generateDescription(
       const isVideo = mimeType.startsWith('video/');
       
       if (isVideo) {
-        // Check if URL is localhost (Vertex AI cannot access localhost)
-        if (assetUrl.includes('localhost') || assetUrl.includes('127.0.0.1')) {
-          console.warn('[Description] ⚠️ Video URL is localhost - Vertex AI cannot access. Skipping video description in local development.');
-          console.warn('[Description] 💡 Video descriptions will work in production with public URLs.');
-          return null; // Skip gracefully
+        // For videos: fetch the video data and upload to Google Files API
+        // This works even with localhost URLs since we fetch from the same Worker
+        console.log('[Description] Video detected, uploading to Google Files API...');
+        
+        try {
+          // Fetch video data from URL (works for localhost too since it's internal)
+          console.log(`[Description] Fetching video from: ${getSafeAssetPreview(assetUrl)}`);
+          const videoResponse = await fetch(assetUrl);
+          if (!videoResponse.ok) {
+            throw new Error(`Failed to fetch video: HTTP ${videoResponse.status}`);
+          }
+          
+          const videoData = await videoResponse.arrayBuffer();
+          console.log(`[Description] Video fetched: ${videoData.byteLength} bytes`);
+          
+          // Upload to Google Files API
+          const fileUri = await uploadVideoToGoogleFilesHTTP(
+            videoData,
+            mimeType,
+            credentials.client_email,
+            credentials.private_key
+          );
+          
+          // Use fileUri in content block
+          contentBlock.push({
+            type: 'media',
+            fileUri: fileUri,
+            mimeType: mimeType,
+          });
+          
+          console.log(`[Description] Video uploaded to Google Files API: ${fileUri}`);
+        } catch (fetchError) {
+          console.error('[Description] Failed to process video:', sanitizeError(fetchError));
+          throw fetchError;
         }
-        
-        // For videos, use URL directly (Vertex AI will fetch from public URL)
-        console.log('[Description] Video detected, using direct URL approach...');
-        
-        // Use URL in content block
-        contentBlock.push({
-          type: 'media',
-          fileUri: assetUrl,
-          mimeType: mimeType,
-        });
-        
-        console.log(`[Description] Video prepared with URL: ${getSafeAssetPreview(assetUrl)}`);
       } else {
         // For images, we can still use base64 (they're smaller)
         let base64Data: string;

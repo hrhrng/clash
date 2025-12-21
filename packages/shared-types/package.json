@@ -1,0 +1,28 @@
+{
+  "name": "@clash/shared-types",
+  "version": "0.1.0",
+  "description": "Shared type definitions for Master Clash (TypeScript + Python generation)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "generate:json-schema": "ts-node scripts/generate-json-schema.ts",
+    "generate:python": "ts-node scripts/generate-python.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0",
+    "zod-to-json-schema": "^3.23.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

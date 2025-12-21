@@ -21,42 +21,6 @@ type CloudflareBindings = {
 const basePath = "/api/better-auth"
 
 async function authBuilder() {
-  if (process.env.NODE_ENV === "development") {
-    const secret = process.env.BETTER_AUTH_SECRET ?? process.env.AUTH_SECRET ?? "dev-secret-change-me"
-    const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3000"
-
-    const Database = (await import("better-sqlite3")).default
-    const sqlite = new Database("local.db")
-    const db = drizzleSqlite(sqlite, { schema: betterAuthSchema })
-
-    const googleClientId = process.env.AUTH_GOOGLE_ID
-    const googleClientSecret = process.env.AUTH_GOOGLE_SECRET
-
-    return betterAuth({
-      basePath,
-      baseURL,
-      trustedProxyHeaders: true,
-      secret,
-      emailAndPassword: { enabled: true },
-      socialProviders:
-        googleClientId && googleClientSecret
-          ? {
-              google: {
-                enabled: true,
-                clientId: googleClientId,
-                clientSecret: googleClientSecret,
-              },
-            }
-          : undefined,
-      rateLimit: { enabled: false },
-      database: drizzleAdapter(db as unknown as any, {
-        provider: "sqlite",
-        usePlural: true,
-        debugLogs: true,
-      }),
-    })
-  }
-
   let cf: IncomingRequestCfProperties | undefined
   let typedEnv: Partial<CloudflareBindings> = {}
 
@@ -64,8 +28,8 @@ async function authBuilder() {
     const context = await getCloudflareContext({ async: true })
     cf = context.cf as IncomingRequestCfProperties
     typedEnv = (context.env ?? {}) as Partial<CloudflareBindings>
-  } catch {
-    // `next dev` (Node.js) has no Cloudflare context; fall back to local sqlite.
+  } catch (e) {
+    console.error('[Better Auth] Failed to get Cloudflare context:', e)
   }
 
   const secretFromEnv =
@@ -74,18 +38,12 @@ async function authBuilder() {
   const googleClientId = typedEnv.AUTH_GOOGLE_ID ?? process.env.AUTH_GOOGLE_ID
   const googleClientSecret = typedEnv.AUTH_GOOGLE_SECRET ?? process.env.AUTH_GOOGLE_SECRET
 
-  const secret = secretFromEnv
+  const secret = secretFromEnv || "dev-secret-change-me"
+  const baseURL = typedEnv.BETTER_AUTH_URL ?? process.env.BETTER_AUTH_URL ?? undefined
 
-  if (!secret) {
-    throw new Error("Missing BETTER_AUTH_SECRET (or AUTH_SECRET)")
-  }
-
-  const baseURL =
-    typedEnv.BETTER_AUTH_URL ??
-    process.env.BETTER_AUTH_URL ??
-    undefined
-
+  // Priority 1: Use D1 if binding is available (even in dev via open-next)
   if (typedEnv.DB && cf) {
+    console.log('[Better Auth] Using D1 Database binding')
     return betterAuth(
       withCloudflare(
         {

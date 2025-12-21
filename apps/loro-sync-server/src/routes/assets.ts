@@ -59,6 +59,8 @@ assetRoutes.get('/*', async (c) => {
     ? path.slice('/assets/'.length) 
     : path.slice(1);
 
+  console.log(`[Assets] GET path='${path}' resolvedKey='${objectKey}'`);
+
   if (!objectKey) {
     return c.text('Missing asset key', 400);
   }

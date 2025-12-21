@@ -3,21 +3,30 @@ main = "src/index.ts"
 compatibility_date = "2024-11-20"
 compatibility_flags = ["nodejs_compat"]
 
-# D1 Database binding (reuse existing database)
+# D1 Database binding (for project ownership checks)
 [[d1_databases]]
 binding = "DB"
 database_name = "master-clash-frontend"
 database_id = "aab16eeb-a375-490b-ad1e-cd092cd9f4bb"
 
-# Service binding to the DO-based sync worker
+# Service Bindings (production)
 [[services]]
 binding = "LORO_SYNC"
 service = "loro-sync-server"
 
+# Uncomment when frontend is deployed as Worker
+# [[services]]
+# binding = "FRONTEND"
+# service = "master-clash-web"
+
 [vars]
-# Better Auth is validated by calling `GET {origin}{BETTER_AUTH_BASE_PATH}/get-session`
+# Better Auth validation endpoint
 BETTER_AUTH_BASE_PATH = "/api/better-auth"
 
-# Python backend origin (Cloudflare Container public URL)
-# BACKEND_API_URL = "https://master-clash-backend.your-domain.workers.dev"
+# Development environment
+[env.development]
+vars = { ENVIRONMENT = "development" }
 
+# Production environment
+[env.production]
+vars = { ENVIRONMENT = "production" }

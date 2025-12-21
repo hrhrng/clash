@@ -3,6 +3,13 @@ Kling AI Image-to-Video API Wrapper
 Provides interface for generating videos from images using Kling AI's v1.6 Pro model.
 Supports both URL and base64-encoded image inputs.
 Uses JWT authentication with Access Key and Secret Key.
+
+⚠️ DEPRECATED: This module is no longer used in production.
+Image/video generation is now handled by Loro Sync Server (Cloudflare Durable Object):
+- apps/loro-sync-server/src/generators/ImageGeneration.ts
+- apps/loro-sync-server/src/generators/VideoGeneration.ts
+
+This code is kept for reference and potential future use.
 """
 
 import contextlib

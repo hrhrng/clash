@@ -108,12 +108,11 @@ const migrateOldNodes = (nodes: Node[]): Node[] => {
 };
 
 export default function ProjectEditor({ project, initialPrompt }: ProjectEditorProps) {
-    // Initialize with data from DB, or defaults if empty
-    // Sanitize initial nodes to prevent crashes if DB has bad data
-    const rawInitialNodes = (project.nodes as unknown as Node[]) || [];
-    const sanitizedNodes = sanitizeNodes(rawInitialNodes);
-    const initialNodes = migrateOldNodes(sanitizedNodes); // Apply migration
-    const initialEdges = (project.edges as unknown as Edge[]) || [];
+    // IMPORTANT: Start with empty canvas - Loro sync will populate from server
+    // This ensures Loro is the single source of truth for nodes/edges
+    // Legacy: project.nodes/edges from DB are now ignored
+    const initialNodes: Node[] = [];
+    const initialEdges: Edge[] = [];
 
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -574,38 +573,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     // React Flow's setNodes with callback is safe, but the effect triggering is the issue.
     // Let's add 'nodes' to dependency but rely on the strict check.
 
-    // Auto-save on change (debounced in a real app, but simple here)
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            // Sanitize nodes and edges to remove non-serializable properties (like 'internals' symbol in React Flow nodes)
-            // that cause "Only plain objects can be passed to Server Functions" error.
-            const sanitizedNodes = nodes.map(node => {
-                // Destructure to pick only serializable properties we want to persist
-                const {
-                    id, type, position, data, style, className,
-                    width, height, parentId, extent
-                } = node;
-                return {
-                    id, type, position, data, style, className,
-                    width, height, parentId, extent
-                };
-            });
-
-            const sanitizedEdges = edges.map(edge => {
-                const {
-                    id, source, target, sourceHandle, targetHandle,
-                    type, animated, style, data, className
-                } = edge;
-                return {
-                    id, source, target, sourceHandle, targetHandle,
-                    type, animated, style, data, className
-                };
-            });
-
-            saveProjectState(project.id, sanitizedNodes, sanitizedEdges);
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, [nodes, edges, project.id]);
+    // Auto-save logic removed: Loro is the single source of truth.
 
 
     // Custom handleEdgesChange to sync edge deletions to Loro
@@ -1040,6 +1008,20 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file && pendingNodeType) {
+            // Generate a unique ID for tracking the placeholder node
+            const placeholderId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+            
+            // Create local preview URL for immediate display
+            const localPreviewUrl = URL.createObjectURL(file);
+            
+            // Create placeholder node with 'uploading' status and local preview
+            addNode(pendingNodeType, { 
+                id: placeholderId,
+                label: file.name, 
+                status: 'uploading',
+                src: localPreviewUrl  // Show local preview during upload
+            });
+            
             try {
                 const formData = new FormData();
                 formData.append('file', file);
@@ -1057,9 +1039,50 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
 
                 const { url, storageKey } = await res.json();
-                addNode(pendingNodeType, { src: url, label: file.name, status: 'completed', storageKey });
+                
+                // Update the placeholder node with the uploaded URL
+                setNodes((nds) =>
+                    nds.map((node) =>
+                        node.id === placeholderId
+                            ? {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    src: storageKey || url,
+                                    storageKey,
+                                    status: 'completed',
+                                },
+                            }
+                            : node
+                    )
+                );
+                
+                // Sync to Loro
+                if (loroSync.connected) {
+                    loroSync.updateNode(placeholderId, {
+                        data: {
+                            src: storageKey || url,
+                            storageKey,
+                            status: 'completed',
+                        }
+                    });
+                }
             } catch (err) {
                 console.error('Failed to upload file to R2', err);
+                // Update node to show failed status
+                setNodes((nds) =>
+                    nds.map((node) =>
+                        node.id === placeholderId
+                            ? {
+                                ...node,
+                                data: {
+                                    ...node.data,
+                                    status: 'failed',
+                                },
+                            }
+                            : node
+                    )
+                );
             } finally {
                 setPendingNodeType(null);
                 if (event.target) {
@@ -1068,6 +1091,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             }
         }
     };
+
 
     const handleCommand = useCallback(async (command: any) => {
         console.log('Executing command:', command);

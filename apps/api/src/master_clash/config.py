@@ -68,6 +68,7 @@ class Settings:
         self.stability_api_key: str | None = _env("STABILITY_API_KEY")
         self.kie_api_key: str | None = _env("KIE_API_KEY")
 
+
         # Google AI Studio
         self.google_ai_studio_base_url: str | None = _env("GOOGLE_AI_STUDIO_BASE_URL")
 
@@ -109,6 +110,8 @@ class Settings:
         self.enable_cache: bool = _env_bool("ENABLE_CACHE", True)
         self.enable_telemetry: bool = _env_bool("ENABLE_TELEMETRY", False)
 
+
+        self.gcs_bucket_name: str | None = _env("GCP_BUCKET_NAME")
     # Derived helpers
     @property
     def r2_endpoint(self) -> str | None:
@@ -139,6 +142,7 @@ class Settings:
     def ensure_directories(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.assets_dir.mkdir(parents=True, exist_ok=True)
+        # Google Cloud Storage
 
 
 def get_settings() -> Settings:

@@ -89,38 +89,35 @@ export class KlingExecutor implements TaskExecutor {
     return 'kling';
   }
 
-  async submit(params: Record<string, any>): Promise<ExecutionResult> {
+    async submit(params: Record<string, any>): Promise<ExecutionResult> {
     try {
       // In production, this would call actual Kling API
       const jwt = await this.generateJWT();
       
-      // Convert image URL to base64 if needed (Kling API requires base64)
-      let imageBase64 = params.image_path;
-      if (params.image_path && params.image_path.startsWith('http')) {
-        console.log('[KlingExecutor] Downloading image to convert to base64...');
-        try {
-          const imageResponse = await fetch(params.image_path);
-          if (!imageResponse.ok) {
-            return {
-              completed: true,
-              error: `Failed to download image: ${imageResponse.status}`,
-            };
+      // Use provided base64 or fallback to image_path (legacy)
+      let imageBase64 = params.image_base64;
+      
+      if (!imageBase64 && params.image_path) {
+          // Fallback legacy support
+          console.log('[KlingExecutor] ⚠️ Using legacy image_path support');
+          if (params.image_path.startsWith('http')) {
+             // ... minimal fallback implementation or just error? 
+             // Let's safe-keep the simple download for now but log warning
+             try {
+                const imgRes = await fetch(params.image_path);
+                const buf = await imgRes.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                imageBase64 = btoa(binary);
+             } catch(e) { console.error('Fallback download failed', e); }
+          } else {
+             imageBase64 = params.image_path; 
           }
-          const imageBuffer = await imageResponse.arrayBuffer();
-          const bytes = new Uint8Array(imageBuffer);
-          let binary = '';
-          for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          imageBase64 = btoa(binary);
-          console.log(`[KlingExecutor] Converted image to base64 (${imageBase64.length} chars)`);
-        } catch (e) {
-          console.error('[KlingExecutor] Failed to convert image:', e);
-          return {
-            completed: true,
-            error: `Failed to convert image to base64: ${e instanceof Error ? e.message : 'Unknown error'}`,
-          };
-        }
+      }
+
+      if (!imageBase64) {
+          return { completed: true, error: "No image data provided (image_base64 required)" };
       }
       
       const requestBody = {
@@ -133,7 +130,7 @@ export class KlingExecutor implements TaskExecutor {
         mode: params.mode || 'std',
       };
       
-      console.log('[KlingExecutor] Submitting request (image base64 length:', imageBase64?.length || 0, ')');
+      console.log('[KlingExecutor] Submitting request (image base64 length:', imageBase64.length, ')');
       
       const response = await fetch('https://api-beijing.klingai.com/v1/videos/image2video', {
         method: 'POST',
