@@ -2,17 +2,30 @@ import { memo, useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
+import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
 import { resolveAssetUrl } from '../../../lib/utils/assets';
+import { thumbnailCache } from '../../../lib/utils/thumbnailCache';
 
 const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
     const { openViewer } = useMediaViewer();
     const { setNodes } = useReactFlow();
+    const loroSync = useOptionalLoroSyncContext();
     const [status, setStatus] = useState<AssetStatus>(normalizeStatus(data.status) || (data.src ? 'completed' : 'generating'));
     const [videoUrl, setVideoUrl] = useState(data.src);
     const [description, setDescription] = useState(data.description || '');
+    const [localThumbnail, setLocalThumbnail] = useState<string | null>(thumbnailCache.get(videoUrl));
+    const posterUrl = data.referenceImageUrls?.[0] ? resolveAssetUrl(data.referenceImageUrls[0]) : undefined;
+
+    // Load from cache if src changes
+    useEffect(() => {
+        if (videoUrl) {
+            const cached = thumbnailCache.get(videoUrl);
+            if (cached) setLocalThumbnail(cached);
+        }
+    }, [videoUrl]);
     const [showDescription, setShowDescription] = useState(false);
 
     // Sync status and videoUrl from Loro data changes
@@ -81,8 +94,54 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                     <div className="relative">
                         <video
                             src={resolveAssetUrl(videoUrl)}
-                            controls={false} // Disable default controls in node view to prevent conflict
-                            className="w-full h-auto max-h-[300px] object-cover pointer-events-none" // Disable pointer events on video to allow double click on container
+                            poster={posterUrl}
+                            controls={false}
+                            className="w-full h-auto max-h-[300px] object-cover pointer-events-none"
+                            crossOrigin="anonymous"
+                            onLoadedMetadata={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (!localThumbnail) {
+                                    video.currentTime = 1.0; 
+                                }
+                            }}
+                            onSeeked={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (video.videoWidth > 0) {
+                                    try {
+                                        const canvas = document.createElement('canvas');
+                                        const size = 160;
+                                        const ratio = video.videoWidth / video.videoHeight;
+                                        canvas.width = size;
+                                        canvas.height = size / ratio;
+                                        const ctx = canvas.getContext('2d');
+                                        if (ctx) {
+                                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                            
+                                            // Quick pixel check for "blackness"
+                                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                                            const data = imageData.data;
+                                            let totalBrightness = 0;
+                                            for (let i = 0; i < data.length; i += 40) {
+                                                totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
+                                            }
+                                            const avgBrightness = totalBrightness / (data.length / 40);
+                                            
+                                            if (avgBrightness < 15 && video.currentTime < 5 && video.currentTime < video.duration) {
+                                                video.currentTime += 1.0;
+                                                return;
+                                            }
+
+                                            const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+                                            if (!localThumbnail || avgBrightness > 20) {
+                                                thumbnailCache.set(videoUrl, thumbnail);
+                                                setLocalThumbnail(thumbnail);
+                                            }
+                                        }
+                                    } catch (err) {
+                                        console.warn('[VideoNode] Thumbnail capture failed:', err);
+                                    }
+                                }
+                            }}
                         />
 
                         {/* Top Right Controls */}
@@ -95,6 +154,19 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 }}
                             >
                                 <TextT size={12} weight="bold" />
+                            </button>
+                            <button
+                                className="rounded-full bg-black/50 p-1 text-white backdrop-blur-sm hover:bg-black/70 transition-colors"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setLocalThumbnail(null);
+                                    // The video element is already rendered, we need to trigger a seek to re-capture
+                                    const video = document.querySelector(`video[src*="${videoUrl}"]`) as HTMLVideoElement;
+                                    if (video) video.currentTime = Math.random() * Math.min(video.duration, 5);
+                                }}
+                                title="Refresh Thumbnail"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
                             </button>
                             <div className="rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm">
                                 Video
@@ -124,10 +196,13 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                         </div>
                     </div>
                 ) : isActiveStatus(status) ? (
-                    <div className="flex h-32 items-center justify-center bg-slate-50 text-slate-400">
-                        <div className="flex flex-col items-center gap-3">
+                    <div className="relative flex h-32 items-center justify-center bg-slate-50 text-slate-400">
+                        {posterUrl && (
+                            <img src={posterUrl} alt="" className="absolute inset-0 w-full h-full object-cover opacity-50" />
+                        )}
+                        <div className="relative z-10 flex flex-col items-center gap-3">
                             <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />
-                            <span className="text-xs font-medium animate-pulse">Generating Video...</span>
+                            <span className="text-xs font-medium animate-pulse text-slate-600 bg-white/50 px-2 py-0.5 rounded-full backdrop-blur-sm">Generating Video...</span>
                         </div>
                     </div>
                 ) : status === 'failed' ? (

@@ -59,15 +59,49 @@ async def main():
         print(f"Error: Video file not found at {video_path}")
         return
 
-    # 1. Sync upload to GCS (reliable for large files)
+    # 1. Sync upload to GCS with progress reporting
     print_banner("STEP 1: Uploading video to GCS")
     client = storage.Client()
     bucket = client.bucket(settings.gcs_bucket_name)
     blob_name = f"temp/gemini_analysis/{uuid.uuid4()}/shenzhen.mp4"
     blob = bucket.blob(blob_name)
     
-    print(f"Uploading {video_path} to gs://{settings.gcs_bucket_name}/{blob_name}...")
-    blob.upload_from_filename(video_path, timeout=600)
+    file_size = os.path.getsize(video_path)
+    print(f"Uploading {video_path} ({file_size / 1024 / 1024:.2f} MB) to gs://{settings.gcs_bucket_name}/{blob_name}...")
+    
+    class ProgressFileWrapper:
+        def __init__(self, filename):
+            self.file = open(filename, 'rb')
+            self.total = os.path.getsize(filename)
+            self.current = 0
+            self.last_pct = -1
+
+        def read(self, n=-1):
+            chunk = self.file.read(n)
+            self.current += len(chunk)
+            pct = int(self.current / self.total * 100)
+            if pct != self.last_pct:
+                print(f"Upload PROGRESS: {pct}% ({self.current / 1024 / 1024:.1f}/{self.total / 1024 / 1024:.1f} MB)", flush=True)
+                self.last_pct = pct
+            return chunk
+
+        def __len__(self):
+            return self.total
+
+        def close(self):
+            self.file.close()
+
+        def tell(self):
+            return self.file.tell()
+
+        def seek(self, offset, whence=0):
+            return self.file.seek(offset, whence)
+
+    pw = ProgressFileWrapper(video_path)
+    try:
+        blob.upload_from_file(pw, content_type='video/mp4', timeout=1200)
+    finally:
+        pw.close()
     
     gcs_uri = f"gs://{settings.gcs_bucket_name}/{blob_name}"
     print(f"Upload complete: {gcs_uri}")
@@ -76,12 +110,11 @@ async def main():
     print_banner("STEP 2: Calling Gemini 3 Pro Preview")
     
     # Configure model as requested by user
-    # Note: include_thoughts and thinking_budget might be model-dependent
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3-pro-preview",
+        model="gemini-2.5-pro",
         vertexai=True,
-        # include_thoughts=True,
-        # thinking_budget=1000,
+        include_thoughts=True,
+        thinking_budget=1000,
         streaming=True,
     )
     
@@ -99,8 +132,21 @@ async def main():
         full_response = ""
         async for chunk in llm.astream([message]):
             content = chunk.content
-            print(content, end="", flush=True)
-            full_response += content
+            
+            # Handle list-type content (thinking process)
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get('type') == 'thinking':
+                            print(f"\033[90m[Thinking: {item.get('thinking')}]\033[0m", flush=True)
+                        elif item.get('type') == 'text':
+                            text = item.get('text', '')
+                            print(text, end="", flush=True)
+                            full_response += text
+            else:
+                # Standard string content
+                print(content, end="", flush=True)
+                full_response += str(content)
         
         print("\n\n" + "-"*30)
         print("Analysis finished successfully.")

@@ -17,6 +17,7 @@ import { ThinkingIndicator } from './copilot/ThinkingIndicator';
 import { Node, Edge, Connection } from 'reactflow';
 import ReactMarkdown from 'react-markdown';
 import { resolveAssetUrl } from '@/lib/utils/assets';
+import { thumbnailCache } from '@/lib/utils/thumbnailCache';
 
 
 interface Message {
@@ -1392,22 +1393,36 @@ export default function ChatbotCopilot({
                                     >
                                         <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
                                             <div className="flex -space-x-2">
-                                                {selectedNodes.filter(n => n.data?.src).slice(0, 3).map((node) => (
-                                                    <div key={node.id} className="w-6 h-6 rounded-md ring-2 ring-white overflow-hidden bg-slate-100 flex items-center justify-center">
-                                                        {node.type === 'video' ? (
-                                                            <video
-                                                                src={resolveAssetUrl(node.data.src)}
-                                                                className="w-full h-full object-cover"
-                                                                onLoadedData={(e) => {
-                                                                    // Show first frame as thumbnail
-                                                                    (e.target as HTMLVideoElement).currentTime = 0;
-                                                                }}
-                                                            />
-                                                        ) : (
-                                                            <img src={resolveAssetUrl(node.data.src)} alt="" className="w-full h-full object-cover" />
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                {selectedNodes.filter(n => n.data?.src).slice(0, 3).map((node) => {
+                                                    const src = resolveAssetUrl(node.data.src);
+                                                    // Choice 1: Reference images (for generated videos, this is the most reliable start frame)
+                                                    // Choice 2: Legacy thumbnail in node data
+                                                    // Choice 3: Local storage cache (canvas capture)
+                                                    const thumbnail = (node.data.referenceImageUrls && node.data.referenceImageUrls[0]) || 
+                                                                    node.data.thumbnail || 
+                                                                    thumbnailCache.get(node.data.src);
+                                                    
+                                                    const isVideo = node.type === 'video' || 
+                                                                   node.data?.actionType === 'video-gen' || 
+                                                                   /\.(mp4|mov|webm)$/i.test(node.data?.src || '');
+                                                    return (
+                                                        <div key={node.id} className="w-6 h-6 rounded-md ring-2 ring-white overflow-hidden bg-slate-100 flex items-center justify-center">
+                                                            {thumbnail ? (
+                                                                <img src={resolveAssetUrl(thumbnail)} alt="" className="w-full h-full object-cover" />
+                                                            ) : isVideo ? (
+                                                                <video
+                                                                    src={`${src}#t=0.1`}
+                                                                    className="w-full h-full object-cover"
+                                                                    preload="metadata"
+                                                                    muted
+                                                                    playsInline
+                                                                />
+                                                            ) : (
+                                                                <img src={src} alt="" className="w-full h-full object-cover" />
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                             <span>{selectedNodes.length} Selected</span>
                                             {selectedNodes.length === 1 && (
