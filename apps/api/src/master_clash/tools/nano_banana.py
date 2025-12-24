@@ -124,11 +124,17 @@ def _base_nano_banana_gen(
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langchain_google_genai import ChatGoogleGenerativeAI, Modality
 
+    # llm = ChatGoogleGenerativeAI(
+    #     model=model_name,
+    #     response_modalities=[Modality.TEXT, Modality.IMAGE],
+    #     base_url=settings.google_ai_studio_base_url,
+    #     transport="rest",
+    # )
     llm = ChatGoogleGenerativeAI(
         model=model_name,
         response_modalities=[Modality.TEXT, Modality.IMAGE],
         base_url=settings.google_ai_studio_base_url,
-        transport="rest",
+        vertexai=True,
     )
 
     # 构建消息内容

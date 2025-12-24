@@ -24,6 +24,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from master_clash.services import r2, d1, genai
+from master_clash.tools.nano_banana import nano_banana_gen, nano_banana_pro_gen
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ async def process_image_generation(task_id: str, params: dict) -> None:
         
         try:
             # Generate image (sync function, run in thread pool)
-            result_base64 = await asyncio.to_thread(nano_banana_gen, prompt)
+            result_base64 = await asyncio.to_thread(nano_banana_pro_gen, prompt)
             
             if result_base64:
                 # Upload to R2 (async)
