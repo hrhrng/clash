@@ -11,6 +11,12 @@
 import { LoroDoc } from 'loro-crdt';
 import type { Env } from '../types';
 import { updateNodeData } from '../sync/NodeUpdater';
+import { MODEL_CARDS } from '@clash/shared-types';
+
+const defaultImageModel = MODEL_CARDS.find((card) => card.kind === 'image')?.id ?? 'nano-banana-pro';
+const defaultVideoModel = MODEL_CARDS.find((card) => card.kind === 'video')?.id ?? 'kling-image2video';
+
+const getModelCard = (modelId?: string) => MODEL_CARDS.find((card) => card.id === modelId);
 
 type AssetStatus = 'uploading' | 'generating' | 'completed' | 'fin' | 'failed';
 type NodeType = 'image' | 'video';
@@ -49,18 +55,45 @@ export async function processPendingNodes(
         console.log(`[NodeProcessor] 🚀 Submitting ${nodeType}_gen for ${nodeId.slice(0, 8)}`);
         
         const taskType = nodeType === 'image' ? 'image_gen' : 'video_gen';
+        const selectedModelId = (innerData.modelId || innerData.model) ?? (nodeType === 'video' ? defaultVideoModel : defaultImageModel);
+        const modelParams = (innerData.modelParams || {}) as Record<string, any>;
+        const referenceImages: string[] = Array.isArray(innerData.referenceImageUrls) ? innerData.referenceImageUrls : [];
+        const modelCard = getModelCard(selectedModelId);
+        const referenceMode = modelCard?.input.referenceMode || 'single';
+
+        if (nodeType === 'video' && modelCard?.input.referenceImage === 'required') {
+          const requiredCount = referenceMode === 'start_end' ? 2 : 1;
+          if (referenceImages.length < requiredCount) {
+            const msg = referenceMode === 'start_end'
+              ? 'Two reference images (start/end) required for selected model'
+              : 'Reference image required for selected model';
+            updateNodeData(doc, nodeId, { status: 'failed', error: msg }, broadcast);
+            continue;
+          }
+        }
+
         const params: Record<string, any> = {
           prompt: innerData.prompt || innerData.label || '',
+          model: selectedModelId,
+          model_params: modelParams,
+          reference_images: referenceImages,
+          reference_mode: referenceMode,
         };
 
         if (nodeType === 'video') {
-          const imageR2Key = innerData.referenceImageUrls?.[0];
-          if (!imageR2Key) {
-            updateNodeData(doc, nodeId, { status: 'failed', error: 'No source image' }, broadcast);
-            continue;
+          if (referenceImages[0]) {
+            params.image_r2_key = referenceImages[0];
           }
-          params.image_r2_key = imageR2Key;
-          params.duration = innerData.duration || 5;
+          const duration = modelParams.duration ?? innerData.duration ?? 5;
+          params.duration = duration;
+          if (modelParams.aspect_ratio) params.aspect_ratio = modelParams.aspect_ratio;
+          if (modelParams.negative_prompt) params.negative_prompt = modelParams.negative_prompt;
+          if (modelParams.cfg_scale) params.cfg_scale = modelParams.cfg_scale;
+          if (referenceMode === 'start_end' && referenceImages[1]) {
+            params.tail_image_url = referenceImages[1];
+          }
+        } else if (modelParams.aspect_ratio) {
+          params.aspect_ratio = modelParams.aspect_ratio;
         }
 
         const result = await submitTask(env, taskType, projectId, nodeId, params);
@@ -144,4 +177,3 @@ async function submitTask(
     return { error: String(e) };
   }
 }
-

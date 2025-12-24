@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useCallback } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo } from 'react';
 import { Handle, Position, NodeProps, useReactFlow, useEdges } from 'reactflow';
 import { VideoCamera, Image as ImageIcon, CaretDown, X, Play, Spinner, ArrowsInLineVertical } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -10,6 +10,9 @@ import { useAutoLayout } from '../../hooks/useAutoLayout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import MilkdownEditor from '../MilkdownEditor';
 import { resolveAssetUrl, isR2Key } from '../../../lib/utils/assets';
+import { MODEL_CARDS, type ModelCard, type ModelParameter } from '@clash/shared-types';
+
+type ModelParams = Record<string, string | number | boolean>;
 
 const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     const [isHovered, setIsHovered] = useState(false);
@@ -20,7 +23,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
 
     // React Flow hooks
     const { projectId } = useProject();
-    const { getNodes, getNode, getEdges, addEdges, setNodes } = useReactFlow();
+    const { getNodes, getEdges, addEdges, setNodes } = useReactFlow();
     const { addNodeWithAutoLayout } = useAutoLayout();
     const loroSync = useOptionalLoroSyncContext();
     const edges = useEdges();
@@ -29,20 +32,102 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Prompt');
     const [content, setContent] = useState(data.content || '# Prompt\nEnter your prompt here...');
 
-    // Initialize state from data or defaults
-    const [stylization, setStylization] = useState(data.params?.stylization || 100);
-    const [weirdness, setWeirdness] = useState(data.params?.weirdness || 0);
-    const [diversity, setDiversity] = useState(data.params?.diversity || 0);
-    const [count, setCount] = useState(data.params?.count || 1);
-    const [model, setModel] = useState(data.modelName || (data.actionType === 'video-gen' ? 'Kling' : 'Nano Banana'));
+    const mapLegacyModelId = (
+        type: 'image-gen' | 'video-gen',
+        explicitId?: string,
+        legacyName?: string
+    ): string | undefined => {
+        if (explicitId) return explicitId;
+        if (!legacyName) return undefined;
+        const lower = legacyName.toLowerCase();
+        if (type === 'video-gen') return 'kling-image2video';
+        if (lower.includes('pro')) return 'nano-banana-pro';
+        return 'nano-banana';
+    };
+
     const [actionType, setActionType] = useState<'image-gen' | 'video-gen'>(data.actionType || 'image-gen');
+    const initialModelId =
+        mapLegacyModelId(actionType, data.modelId as string | undefined, data.modelName) ||
+        (MODEL_CARDS.find((card) => card.kind === (actionType === 'video-gen' ? 'video' : 'image'))?.id ??
+            (actionType === 'video-gen' ? 'kling-image2video' : 'nano-banana-pro'));
+
+    const [modelId, setModelId] = useState<string>(initialModelId);
+    const [modelParams, setModelParams] = useState<ModelParams>({
+        ...(MODEL_CARDS.find((card) => card.id === initialModelId)?.defaultParams ?? {}),
+        ...(data.modelParams ?? {}),
+    });
 
     const Icon = actionType === 'video-gen' ? VideoCamera : ImageIcon;
     const colorClass = actionType === 'video-gen' ? 'text-red-500' : 'text-blue-500';
     const bgClass = actionType === 'video-gen' ? 'bg-red-50' : 'bg-blue-50';
     const ringClass = actionType === 'video-gen' ? 'ring-red-500' : 'ring-blue-500';
 
-    const models = actionType === 'video-gen' ? ['Kling'] : ['Nano Banana'];
+    const availableModels = useMemo(
+        () => MODEL_CARDS.filter((card) => card.kind === (actionType === 'video-gen' ? 'video' : 'image')),
+        [actionType]
+    );
+    const selectedModel = useMemo<ModelCard | undefined>(
+        () => availableModels.find((card) => card.id === modelId) ?? availableModels[0],
+        [availableModels, modelId]
+    );
+
+    const modelDisplay = selectedModel?.name || modelId;
+    const providerDisplay = selectedModel?.provider || '';
+    const referenceMode = selectedModel?.input.referenceMode || 'single';
+    const referenceRequirement = selectedModel?.input.referenceImage || 'optional';
+    const countValue = Number(modelParams.count ?? 1);
+
+    const syncModelState = useCallback(
+        (nextModelId: string, nextParams: ModelParams, nextReferenceMode?: string) => {
+            const refMode = nextReferenceMode || referenceMode;
+            setNodes((nds) =>
+                nds.map((node) => {
+                    if (node.id === id) {
+                        return {
+                            ...node,
+                            data: {
+                                ...node.data,
+                                modelId: nextModelId,
+                                model: nextModelId,
+                                modelParams: nextParams,
+                                referenceMode: refMode,
+                            },
+                        };
+                    }
+                    return node;
+                })
+            );
+            if (loroSync?.connected) {
+                loroSync.updateNode(id, {
+                    data: {
+                        modelId: nextModelId,
+                        model: nextModelId,
+                        modelParams: nextParams,
+                        referenceMode: refMode,
+                    }
+                });
+            }
+        },
+        [id, referenceMode, loroSync, setNodes]
+    );
+
+    const handleModelChange = useCallback((nextId: string) => {
+        const nextModel = MODEL_CARDS.find((card) => card.id === nextId) || availableModels[0];
+        const nextParams = { ...(nextModel?.defaultParams ?? {}) } as ModelParams;
+        const resolvedId = nextModel?.id ?? nextId;
+        setModelId(resolvedId);
+        setModelParams(nextParams);
+        const nextRefMode = nextModel?.input.referenceMode || 'single';
+        syncModelState(resolvedId, nextParams, nextRefMode);
+    }, [availableModels, syncModelState]);
+
+    const updateModelParam = useCallback((paramId: string, value: string | number | boolean) => {
+        setModelParams((prev) => {
+            const next = { ...prev, [paramId]: value };
+            syncModelState(modelId, next);
+            return next;
+        });
+    }, [modelId, syncModelState]);
 
     // Sync content and label when data changes (from Loro or other sources)
     useEffect(() => {
@@ -54,11 +139,38 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
         }
     }, [data.label, data.content]);
 
-    // Update params helper
-    const updateParams = (key: string, value: any) => {
-        if (!data.params) data.params = {};
-        data.params[key] = value;
-    };
+    useEffect(() => {
+        const incomingType = data.actionType || 'image-gen';
+        if (incomingType !== actionType) {
+            setActionType(incomingType);
+        }
+    }, [data.actionType, actionType]);
+
+    useEffect(() => {
+        const incomingModelId = mapLegacyModelId(actionType, data.modelId as string | undefined, data.modelName);
+        if (incomingModelId && incomingModelId !== modelId) {
+            const nextModel = MODEL_CARDS.find((card) => card.id === incomingModelId) || selectedModel;
+            const nextParams = { ...(nextModel?.defaultParams ?? {}), ...(data.modelParams ?? {}) } as ModelParams;
+            setModelId(nextModel?.id ?? incomingModelId);
+            setModelParams(nextParams);
+        } else if (data.modelParams) {
+            setModelParams((prev) => ({
+                ...(selectedModel?.defaultParams ?? {}),
+                ...prev,
+                ...data.modelParams,
+            }));
+        }
+    }, [actionType, data.modelId, data.modelName, data.modelParams, modelId, selectedModel]);
+
+    useEffect(() => {
+        if (!selectedModel && availableModels[0]) {
+            const fallback = availableModels[0];
+            const nextParams = { ...(fallback.defaultParams ?? {}) } as ModelParams;
+            setModelId(fallback.id);
+            setModelParams(nextParams);
+            syncModelState(fallback.id, nextParams);
+        }
+    }, [availableModels, selectedModel, syncModelState]);
 
     // Prompt editing handlers (from PromptNode)
     const handleDoubleClick = useCallback(() => {
@@ -113,9 +225,12 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
         const newType = actionType === 'image-gen' ? 'video-gen' : 'image-gen';
         setActionType(newType);
         
-        // Update model to match new type
-        const defaultModel = newType === 'video-gen' ? 'Kling' : 'Nano Banana';
-        setModel(defaultModel);
+        const nextCandidates = MODEL_CARDS.filter((card) => card.kind === (newType === 'video-gen' ? 'video' : 'image'));
+        const nextModel = nextCandidates[0];
+        const nextModelId = nextModel?.id ?? modelId;
+        const nextParams = { ...(nextModel?.defaultParams ?? {}) } as ModelParams;
+        setModelId(nextModelId);
+        setModelParams(nextParams);
         
         // Sync to node data
         setNodes((nds) =>
@@ -126,7 +241,9 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                         data: {
                             ...node.data,
                             actionType: newType,
-                            modelName: defaultModel,
+                            modelId: nextModelId,
+                            model: nextModelId,
+                            modelParams: nextParams,
                         },
                     };
                 }
@@ -139,7 +256,9 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
             loroSync.updateNode(id, {
                 data: {
                     actionType: newType,
-                    modelName: defaultModel,
+                    modelId: nextModelId,
+                    model: nextModelId,
+                    modelParams: nextParams,
                 }
             });
         }
@@ -194,10 +313,6 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 nodes.find(n => n.id === e.source)
             ).filter(Boolean);
 
-            // Get current node to find parent group
-            const currentNode = getNode(id);
-            const parentId = currentNode?.parentId;
-
             // PRIORITY 1: Use embedded content if available
             let prompt = content && content.trim() !== '# Prompt\nEnter your prompt here...' ? content : '';
             
@@ -235,23 +350,6 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
             // Generate unique asset name (prefer pre-allocated assetId once; otherwise request semantic ID)
             const assetName = preAllocatedAssetId || await generateSemanticId(projectId);
 
-            // Helper for safe fetching with timeout
-            const safeFetch = async (url: string, options: RequestInit, timeout = 60000) => {
-                const controller = new AbortController();
-                const id = setTimeout(() => controller.abort(), timeout);
-                try {
-                    const response = await fetch(url, { ...options, signal: controller.signal });
-                    clearTimeout(id);
-                    return response;
-                } catch (err: any) {
-                    clearTimeout(id);
-                    if (err.name === 'AbortError') {
-                        throw new Error('Request timed out. The server took too long to respond.');
-                    }
-                    throw new Error(`Network error: ${err.message}`);
-                }
-            };
-
             const getReferenceImageUrls = (sources: string[]) => {
                 const urls: string[] = [];
                 sources.forEach((src) => {
@@ -270,11 +368,18 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 });
                 return urls;
             };
+            const requiresReferenceImage = referenceRequirement === 'required';
+            const forbidReferenceImage = referenceRequirement === 'forbidden';
 
             if (actionType === 'image-gen') {
                 // Collect connected images for reference
                 const imageNodes = connectedNodes.filter(n => n?.type === 'image');
-                const referenceImageUrls = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
+                const rawReferenceImages = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
+                const referenceImageUrls = forbidReferenceImage ? [] : rawReferenceImages;
+
+                if (requiresReferenceImage && referenceImageUrls.length === 0) {
+                    throw new Error('Selected model requires at least one reference image.');
+                }
 
                 // ============================================
                 // Create pending node - Loro will handle generation
@@ -294,7 +399,12 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                             status: 'generating',
                             prompt: prompt, // Loro uses this for generation
                             referenceImageUrls, // Pass reference images
-                            aspectRatio: '16:9',
+                            aspectRatio: modelParams.aspect_ratio || '16:9',
+                            model: modelId,
+                            modelId,
+                            modelParams,
+                            referenceMode,
+                            count: modelParams.count,
                         },
                     },
                     id
@@ -365,11 +475,17 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                     status: n?.data?.status,
                 })));
 
-                if (imageNodes.length === 0) {
-                    throw new Error('Video generation requires at least one connected image node');
-                }
+                const rawReferenceImages = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
+                const referenceImageUrls = forbidReferenceImage ? [] : rawReferenceImages;
 
-                const referenceImageUrls = getReferenceImageUrls(imageNodes.map(n => n?.data?.src));
+                if (requiresReferenceImage) {
+                    const requiredCount = referenceMode === 'start_end' ? 2 : 1;
+                    if (referenceImageUrls.length < requiredCount) {
+                        throw new Error(referenceMode === 'start_end'
+                            ? 'Selected video model needs start and end frames (connect two images).'
+                            : 'Selected video model requires at least one reference image node');
+                    }
+                }
                 
                 // Debug: log image sources
                 console.log('[ActionBadge] Image nodes found:', imageNodes.length);
@@ -384,6 +500,8 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 console.log('[ActionBadge] Creating pending video node:', pendingNodeId);
                 console.log('[ActionBadge] Prompt:', prompt);
                 console.log('[ActionBadge] Reference images:', referenceImageUrls);
+                const durationValue = modelParams.duration ?? 5;
+                const durationNumber = typeof durationValue === 'string' ? parseInt(durationValue, 10) : Number(durationValue) || 5;
 
                 // Create the pending video node in React state
                 const newNode = addNodeWithAutoLayout(
@@ -396,8 +514,12 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                             status: 'generating',
                             prompt: prompt, // Loro uses this for generation
                             referenceImageUrls, // Pass reference images
-                            duration: 5, // Default duration
-                            model: model === 'Kling' ? 'kling-v1' : model.toLowerCase().replace(' ', '-'),
+                            duration: durationNumber,
+                            model: modelId,
+                            modelId,
+                            modelParams,
+                            referenceMode,
+                            aspectRatio: modelParams.aspect_ratio,
                         },
                     },
                     id
@@ -459,6 +581,130 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
         } finally {
             setIsExecuting(false);
         }
+    };
+
+    const renderParamControl = (param: ModelParameter) => {
+        const currentValue = modelParams[param.id] ?? param.defaultValue ?? (param.type === 'boolean' ? false : '');
+
+        if (param.type === 'slider') {
+            const numericValue = typeof currentValue === 'number' ? currentValue : Number(currentValue ?? 0);
+            return (
+                <div key={param.id} className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-medium text-white/70">
+                        <span>{param.label}</span>
+                        <span>{numericValue}</span>
+                    </div>
+                    <input
+                        type="range"
+                        min={param.min ?? 0}
+                        max={param.max ?? 1}
+                        step={param.step ?? 1}
+                        value={numericValue}
+                        onChange={(e) => updateModelParam(param.id, Number(e.target.value))}
+                        className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-400"
+                    />
+                    {param.description && (
+                        <p className="text-[10px] text-white/50 leading-snug">{param.description}</p>
+                    )}
+                </div>
+            );
+        }
+
+        if (param.type === 'select') {
+            const options = param.options ?? [];
+            const selected = options.find((opt) => String(opt.value) === String(currentValue))?.value ?? options[0]?.value ?? '';
+            return (
+                <div key={param.id} className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-medium text-white/70">
+                        <span>{param.label}</span>
+                    </div>
+                    <select
+                        className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-xs font-semibold text-white focus:outline-none"
+                        value={String(selected)}
+                        onChange={(e) => {
+                            const next = options.find((opt) => String(opt.value) === e.target.value);
+                            updateModelParam(param.id, next ? next.value : e.target.value);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                    >
+                        {options.map((opt) => (
+                            <option key={`${param.id}-${opt.label}`} value={String(opt.value)} className="bg-[#1a1a1a] text-white">
+                                {opt.label}
+                            </option>
+                        ))}
+                    </select>
+                    {param.description && (
+                        <p className="text-[10px] text-white/50 leading-snug">{param.description}</p>
+                    )}
+                </div>
+            );
+        }
+
+        if (param.type === 'number') {
+            return (
+                <div key={param.id} className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-medium text-white/70">
+                        <span>{param.label}</span>
+                    </div>
+                    <input
+                        type="number"
+                        min={param.min}
+                        max={param.max}
+                        step={param.step}
+                        value={currentValue as number | string}
+                        onChange={(e) => updateModelParam(param.id, Number(e.target.value))}
+                        className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-xs font-semibold text-white focus:outline-none"
+                        onMouseDown={(e) => e.stopPropagation()}
+                    />
+                    {param.description && (
+                        <p className="text-[10px] text-white/50 leading-snug">{param.description}</p>
+                    )}
+                </div>
+            );
+        }
+
+        if (param.type === 'text') {
+            return (
+                <div key={param.id} className="space-y-1">
+                    <div className="flex justify-between text-[10px] font-medium text-white/70">
+                        <span>{param.label}</span>
+                    </div>
+                    <textarea
+                        rows={2}
+                        value={String(currentValue)}
+                        onChange={(e) => updateModelParam(param.id, e.target.value)}
+                        placeholder={param.placeholder}
+                        className="w-full rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-xs font-semibold text-white focus:outline-none resize-none"
+                        onMouseDown={(e) => e.stopPropagation()}
+                    />
+                    {param.description && (
+                        <p className="text-[10px] text-white/50 leading-snug">{param.description}</p>
+                    )}
+                </div>
+            );
+        }
+
+        if (param.type === 'boolean') {
+            return (
+                <label key={param.id} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 border border-white/10 cursor-pointer">
+                    <div className="flex flex-col">
+                        <span className="text-xs font-semibold">{param.label}</span>
+                        {param.description && (
+                            <span className="text-[10px] text-white/50">{param.description}</span>
+                        )}
+                    </div>
+                    <input
+                        type="checkbox"
+                        checked={Boolean(currentValue)}
+                        onChange={(e) => updateModelParam(param.id, e.target.checked)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="h-4 w-4 accent-blue-400"
+                    />
+                </label>
+            );
+        }
+
+        return null;
     };
 
     // Modal content (from PromptNode)
@@ -631,13 +877,16 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                         {/* Model Display */}
                         <div className="flex flex-col min-w-0 flex-1">
                             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Model</span>
-                            <span className="text-xs font-bold text-slate-900 truncate">{model}</span>
+                            <span className="text-xs font-bold text-slate-900 truncate">{modelDisplay}</span>
+                            {providerDisplay && (
+                                <span className="text-[10px] text-slate-500 truncate">{providerDisplay}</span>
+                            )}
                         </div>
 
                         {/* Count Display */}
                         <div className="flex flex-col items-center min-w-[32px]">
                             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none">Count</span>
-                            <span className="text-xs font-bold text-slate-900">{count}</span>
+                            <span className="text-xs font-bold text-slate-900">{countValue}</span>
                         </div>
 
                         {/* Execution Button */}
@@ -670,138 +919,75 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
 
                 {/* Dark Hover Configuration Panel */}
                 <div className={`
-                    absolute top-full mt-3 w-64 rounded-2xl bg-[#1a1a1a] p-4 shadow-2xl border border-[#333] z-30 origin-top transition-all duration-200 nodrag
+                    absolute top-full mt-3 w-72 rounded-2xl bg-[#1a1a1a] p-4 shadow-2xl border border-[#333] z-30 origin-top transition-all duration-200 nodrag
                     ${isHovered ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 -translate-y-2 pointer-events-none'}
                 `}>
-                    {/* Invisible bridge to prevent hover loss */}
                     <div className="absolute -top-4 left-0 w-full h-4 bg-transparent" />
-
-                    {/* Arrow pointing up */}
                     <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-[#1a1a1a] rotate-45 border-t border-l border-[#333]" />
 
-                    <div className="flex flex-col gap-4 text-white">
-                        {/* Header */}
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <div className={`h-6 w-6 rounded bg-white/10 flex items-center justify-center ${colorClass}`}>
-                                    <Icon size={14} weight="fill" />
+                    <div className="flex flex-col gap-4 text-white" onMouseDown={(e) => e.stopPropagation()}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                                <div className={`h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center ${colorClass}`}>
+                                    <Icon size={18} weight="fill" />
                                 </div>
-                                <span className="text-sm font-bold">Configuration</span>
-                            </div>
-                        </div>
-
-                        {/* Sliders Section */}
-                        <div className="space-y-3" onMouseDown={(e) => e.stopPropagation()}>
-                            {/* Stylization Slider */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-[10px] font-medium text-white/60">
-                                    <span>Stylization</span>
-                                    <span>{stylization}</span>
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-sm font-bold leading-tight">{modelDisplay}</span>
+                                    <span className="text-[11px] text-white/60">{providerDisplay || 'Model card'}</span>
+                                    {selectedModel?.description && (
+                                        <p className="text-[11px] text-white/70 leading-snug">{selectedModel.description}</p>
+                                    )}
+                                    <div className="flex flex-wrap gap-1">
+                                        <span className="px-2 py-0.5 rounded-full bg-white/5 text-[10px] uppercase tracking-widest">
+                                            {selectedModel?.kind === 'video' ? 'Video' : 'Image'}
+                                        </span>
+                                        {selectedModel?.input.referenceImage === 'required' && (
+                                            <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-[10px] text-red-100">
+                                                Needs reference image
+                                            </span>
+                                        )}
+                                        {selectedModel?.input.referenceImage === 'forbidden' && (
+                                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[10px] text-emerald-100">
+                                                No reference needed
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
-                                <input
-                                    type="range" min="0" max="1000"
-                                    value={stylization}
-                                    onChange={(e) => {
-                                        const val = parseInt(e.target.value);
-                                        setStylization(val);
-                                        updateParams('stylization', val);
-                                    }}
-                                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                />
                             </div>
-
-                            {/* Weirdness Slider */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-[10px] font-medium text-white/60">
-                                    <span>Weirdness</span>
-                                    <span>{weirdness}</span>
-                                </div>
-                                <input
-                                    type="range" min="0" max="1000"
-                                    value={weirdness}
-                                    onChange={(e) => {
-                                        const val = parseInt(e.target.value);
-                                        setWeirdness(val);
-                                        updateParams('weirdness', val);
-                                    }}
-                                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                />
-                            </div>
-
-                            {/* Diversity Slider */}
-                            <div className="space-y-1">
-                                <div className="flex justify-between text-[10px] font-medium text-white/60">
-                                    <span>Diversity</span>
-                                    <span>{diversity}</span>
-                                </div>
-                                <input
-                                    type="range" min="0" max="1000"
-                                    value={diversity}
-                                    onChange={(e) => {
-                                        const val = parseInt(e.target.value);
-                                        setDiversity(val);
-                                        updateParams('diversity', val);
-                                    }}
-                                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Params */}
-                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
-                            {/* Model Selector (Custom Dropdown) */}
-                            <div className="relative">
-                                <div
-                                    className="bg-white/5 rounded-lg p-2 flex flex-col gap-1 hover:bg-white/10 transition-colors cursor-pointer"
+                            <div className="relative w-40">
+                                <button
+                                    className="w-full bg-white/5 rounded-lg p-2 flex flex-col gap-1 hover:bg-white/10 transition-colors cursor-pointer border border-white/10"
                                     onClick={() => setShowModelDropdown(!showModelDropdown)}
                                 >
                                     <span className="text-[10px] text-white/40 font-medium">Model</span>
                                     <div className="flex items-center justify-between">
-                                        <span className="text-xs font-bold truncate">{model}</span>
+                                        <span className="text-xs font-bold truncate">{modelDisplay}</span>
                                         <CaretDown size={10} className="text-white/40" />
                                     </div>
-                                </div>
-
-                                {/* Dropdown Menu */}
+                                </button>
                                 {showModelDropdown && (
-                                    <div className="absolute bottom-full left-0 w-full mb-1 bg-[#2a2a2a] border border-[#333] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
-                                        {models.map(m => (
+                                    <div className="absolute right-0 top-full mt-1 w-full bg-[#2a2a2a] border border-[#333] rounded-lg shadow-xl overflow-hidden z-50 flex flex-col">
+                                        {availableModels.map((card) => (
                                             <div
-                                                key={m}
-                                                className={`px-3 py-2 text-xs font-medium cursor-pointer transition-colors ${model === m ? 'bg-blue-500 text-white' : 'text-white/80 hover:bg-white/10'}`}
+                                                key={card.id}
+                                                className={`px-3 py-2 text-xs cursor-pointer transition-colors ${card.id === modelId ? 'bg-blue-500 text-white' : 'text-white/80 hover:bg-white/10'}`}
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    setModel(m);
-                                                    data.modelName = m;
+                                                    handleModelChange(card.id);
                                                     setShowModelDropdown(false);
                                                 }}
                                             >
-                                                {m}
+                                                <div className="font-bold leading-tight">{card.name}</div>
+                                                <div className="text-[10px] text-white/60">{card.provider}</div>
                                             </div>
                                         ))}
                                     </div>
                                 )}
                             </div>
+                        </div>
 
-                            {/* Count Input */}
-                            <div className="bg-white/5 rounded-lg p-2 flex flex-col gap-1 hover:bg-white/10 transition-colors cursor-pointer">
-                                <span className="text-[10px] text-white/40 font-medium">Count</span>
-                                <div className="flex items-center justify-between gap-2">
-                                    <input
-                                        type="number" min="1" max="10"
-                                        className="w-full bg-transparent text-xs font-bold text-white focus:outline-none p-0 border-none"
-                                        value={count}
-                                        onChange={(e) => {
-                                            const val = parseInt(e.target.value);
-                                            setCount(val);
-                                            updateParams('count', val);
-                                        }}
-                                        onKeyDown={(e) => e.stopPropagation()}
-                                        onMouseDown={(e) => e.stopPropagation()}
-                                    />
-                                    <span className="text-[10px] text-white/40">Images</span>
-                                </div>
-                            </div>
+                        <div className="space-y-3 pt-1">
+                            {selectedModel?.parameters.map(renderParamControl)}
                         </div>
                     </div>
                 </div>

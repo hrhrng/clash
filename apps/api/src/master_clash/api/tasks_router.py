@@ -23,7 +23,11 @@ from typing import Literal
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
-from master_clash.services import r2, d1, genai
+from master_clash.services import d1, genai, generation_models, r2
+from master_clash.services.generation_models import (
+    ImageGenerationRequest,
+    VideoGenerationRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +193,6 @@ async def callback_to_loro(
 
 async def process_image_generation(task_id: str, params: dict) -> None:
     """Generate image using Gemini."""
-    from master_clash.tools.nano_banana import nano_banana_gen
-    
     callback_url = params.get("callback_url")
     node_id = params.get("node_id")
     
@@ -199,33 +201,46 @@ async def process_image_generation(task_id: str, params: dict) -> None:
         logger.info(f"[Tasks] Processing image_gen: {task_id}")
         
         prompt = params.get("prompt", "")
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        reference_images = params.get("reference_images") or params.get("referenceImageUrls") or []
+
+        # Support legacy aspect_ratio field
+        if params.get("aspect_ratio") and "aspect_ratio" not in model_params:
+            model_params["aspect_ratio"] = params.get("aspect_ratio")
         
         # Start heartbeat
         heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
         
         try:
-            # Generate image (sync function, run in thread pool)
-            result_base64 = await asyncio.to_thread(nano_banana_gen, prompt)
-            
-            if result_base64:
-                # Upload to R2 (async)
-                image_data = base64.b64decode(result_base64)
+            generation_result = await generation_models.generate_image(
+                ImageGenerationRequest(
+                    prompt=prompt,
+                    model_id=model_id or generation_models.DEFAULT_IMAGE_MODEL,
+                    params=model_params,
+                    reference_images=reference_images,
+                )
+            )
+
+            if generation_result.success and generation_result.base64_data:
+                image_data = base64.b64decode(generation_result.base64_data)
                 r2_key = f"projects/{params.get('project_id')}/generated/{task_id}.png"
                 await r2.put_object(r2_key, image_data, "image/png")
-                
+
                 await complete_task(task_id, result_url=r2_key)
-                
-                # Callback to Loro
+
                 await callback_to_loro(callback_url, node_id, {
                     "src": r2_key,
                     "status": "completed",
-                    "pendingTask": None
+                    "pendingTask": None,
+                    "model": model_id or generation_models.DEFAULT_IMAGE_MODEL,
                 })
             else:
-                await fail_task(task_id, "No image generated")
+                error_message = generation_result.error or "No image generated"
+                await fail_task(task_id, error_message)
                 await callback_to_loro(callback_url, node_id, {
                     "status": "failed",
-                    "error": "No image generated",
+                    "error": error_message,
                     "pendingTask": None
                 })
         finally:
@@ -324,8 +339,6 @@ async def process_video_description(task_id: str, params: dict) -> None:
 
 async def process_video_generation(task_id: str, params: dict) -> None:
     """Generate video using Kling API."""
-    from master_clash.services import kling
-    
     callback_url = params.get("callback_url")
     node_id = params.get("node_id")
     
@@ -333,61 +346,80 @@ async def process_video_generation(task_id: str, params: dict) -> None:
         await claim_task(task_id)
         logger.info(f"[Tasks] Processing video_gen: {task_id}")
         
-        image_r2_key = params.get("image_r2_key")
         prompt = params.get("prompt", "")
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        reference_images = params.get("reference_images") or params.get("referenceImageUrls") or []
+        image_r2_key = params.get("image_r2_key") or (reference_images[0] if reference_images else None)
         duration = params.get("duration", 5)
         
-        if not image_r2_key:
-            await fail_task(task_id, "image_r2_key is required for video generation")
-            await callback_to_loro(callback_url, node_id, {
-                "status": "failed",
-                "error": "No source image",
-                "pendingTask": None
-            })
-            return
+        if image_r2_key and "image_r2_key" not in model_params:
+            model_params["image_r2_key"] = image_r2_key
+        if duration and "duration" not in model_params:
+            model_params["duration"] = duration
         
         heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
         
         try:
-            logger.info(f"[Tasks] Submitting to Kling with image: {image_r2_key}")
-            
-            # Submit to Kling API (it will fetch from R2 internally)
-            result = await kling.submit_video(
-                image_r2_key=image_r2_key,
-                prompt=prompt,
-                duration=duration,
+            logger.info(f"[Tasks] Submitting video task with model: {model_id or generation_models.DEFAULT_VIDEO_MODEL}")
+            submission = await generation_models.submit_video_job(
+                VideoGenerationRequest(
+                    prompt=prompt,
+                    project_id=params.get("project_id", "unknown"),
+                    model_id=model_id or generation_models.DEFAULT_VIDEO_MODEL,
+                    params=model_params,
+                    reference_images=reference_images,
+                    callback_url=callback_url,
+                )
             )
-            
-            if not result.get("success"):
-                await fail_task(task_id, result.get("error", "Kling submit failed"))
+
+            if not submission.success:
+                await fail_task(task_id, submission.error or "Video submit failed")
                 await callback_to_loro(callback_url, node_id, {
                     "status": "failed",
-                    "error": result.get("error"),
+                    "error": submission.error,
                     "pendingTask": None
                 })
                 return
+
+            if submission.r2_key:
+                await complete_task(task_id, result_url=submission.r2_key)
+                await callback_to_loro(callback_url, node_id, {
+                    "src": submission.r2_key,
+                    "status": "completed",
+                    "pendingTask": None
+                })
+                return
+
+            external_task_id = submission.external_task_id
+            if not external_task_id:
+                await fail_task(task_id, "No external task id returned from provider")
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": "Video provider did not return task id",
+                    "pendingTask": None
+                })
+                return
+            logger.info(f"[Tasks] Video task submitted: {external_task_id} via {submission.provider}")
             
-            external_task_id = result.get("external_task_id")
-            logger.info(f"[Tasks] Kling task submitted: {external_task_id}")
-            
-            # Store external_task_id for polling
             await d1.execute(
                 "UPDATE aigc_tasks SET external_task_id = ?, external_service = ? WHERE task_id = ?",
-                [external_task_id, "kling", task_id]
+                [external_task_id, submission.provider, task_id]
             )
             
-            # Poll until complete
-            max_polls = 60  # 5 minutes at 5s intervals
+            max_polls = 60  # 60 * 30s = 30 minutes
             for i in range(max_polls):
                 await asyncio.sleep(30)
                 
-                poll_result = await kling.poll_video(external_task_id, params.get("project_id", "unknown"))
-                poll_status = poll_result.get("status")
-                logger.info(f"[Tasks] Kling poll {i+1}: status={poll_status}")
+                poll_result = await generation_models.poll_video_job(
+                    model_id or generation_models.DEFAULT_VIDEO_MODEL,
+                    external_task_id,
+                    params.get("project_id", "unknown"),
+                )
+                logger.info(f"[Tasks] Video poll {i+1}: status={poll_result.status}")
                 
-                if poll_status == "completed":
-                    # kling.py already uploaded to R2 and returns r2_key
-                    r2_key = poll_result.get("r2_key")
+                if poll_result.status == "completed":
+                    r2_key = poll_result.r2_key
                     await complete_task(task_id, result_url=r2_key)
                     await callback_to_loro(callback_url, node_id, {
                         "src": r2_key,
@@ -395,17 +427,16 @@ async def process_video_generation(task_id: str, params: dict) -> None:
                         "pendingTask": None
                     })
                     return
-                elif poll_status == "failed":
-                    await fail_task(task_id, poll_result.get("error", "Video generation failed"))
+                elif poll_result.status == "failed":
+                    await fail_task(task_id, poll_result.error or "Video generation failed")
                     await callback_to_loro(callback_url, node_id, {
                         "status": "failed",
-                        "error": poll_result.get("error"),
+                        "error": poll_result.error,
                         "pendingTask": None
                     })
                     return
                 # else: still pending, continue polling
             
-            # Timeout
             await fail_task(task_id, "Video generation timed out")
             await callback_to_loro(callback_url, node_id, {
                 "status": "failed",

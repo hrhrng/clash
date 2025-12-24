@@ -37,6 +37,21 @@ export {
   type SubmitTaskResponse,
 } from './tasks';
 
+// Model metadata
+export {
+  ModelKindSchema,
+  ModelParameterTypeSchema,
+  ModelParameterSchema,
+  ModelInputRuleSchema,
+  ModelCardSchema,
+  MODEL_CARDS,
+  type ModelInputRule,
+  type ModelKind,
+  type ModelParameterType,
+  type ModelParameter,
+  type ModelCard,
+} from './models';
+
 // Pipeline types
 export {
   AssetStatusSchema,

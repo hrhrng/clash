@@ -48,6 +48,7 @@ import { generateSemanticId } from '@/lib/utils/semanticId';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { useLoroSync } from '../hooks/useLoroSync';
 import { LoroSyncProvider } from './LoroSyncContext';
+import { MODEL_CARDS } from '@clash/shared-types';
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -65,6 +66,9 @@ const nodeTypes = {
     group: GroupNode,
     'video-editor': VideoEditorNode,
 };
+
+const defaultImageModel = MODEL_CARDS.find((card) => card.kind === 'image');
+const defaultVideoModel = MODEL_CARDS.find((card) => card.kind === 'video');
 
 const sanitizeNodes = (nodes: Node[]): Node[] => {
     const nodeIds = new Set(nodes.map(n => n.id));
@@ -85,6 +89,9 @@ const migrateOldNodes = (nodes: Node[]): Node[] => {
     return nodes.map(node => {
         if (node.type === 'prompt') {
             console.log(`[Migration] Converting old PromptNode ${node.id} to PromptActionNode`);
+            const targetDefaults = (node.data.actionType || 'image-gen') === 'video-gen'
+                ? defaultVideoModel
+                : defaultImageModel;
             return {
                 ...node,
                 type: 'action-badge',
@@ -92,7 +99,10 @@ const migrateOldNodes = (nodes: Node[]): Node[] => {
                     ...node.data,
                     actionType: node.data.actionType || 'image-gen', // Default to image generation
                     content: node.data.content || '# Prompt\nEnter your prompt here...',
-                    modelName: node.data.modelName || 'Nano Banana',
+                    modelId: node.data.modelId || targetDefaults?.id || 'nano-banana-pro',
+                    model: node.data.modelId || targetDefaults?.id || 'nano-banana-pro',
+                    modelParams: { ...(targetDefaults?.defaultParams ?? {}), ...(node.data.modelParams ?? {}) },
+                    referenceMode: node.data.referenceMode || targetDefaults?.input.referenceMode || 'single',
                 },
                 // Update dimensions for new layout
                 width: 320,
@@ -657,12 +667,24 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     const addNode = (type: string, extraData: any = {}) => {
         let nodeType = type;
         let nodeData: any = { label: `New ${type}`, ...extraData };
+        const imageModelDefaults = {
+            modelId: defaultImageModel?.id ?? 'nano-banana-pro',
+            model: defaultImageModel?.id ?? 'nano-banana-pro',
+            modelParams: { ...(defaultImageModel?.defaultParams ?? {}) },
+            referenceMode: defaultImageModel?.input.referenceMode ?? 'single',
+        };
+        const videoModelDefaults = {
+            modelId: defaultVideoModel?.id ?? 'kling-image2video',
+            model: defaultVideoModel?.id ?? 'kling-image2video',
+            modelParams: { ...(defaultVideoModel?.defaultParams ?? {}) },
+            referenceMode: defaultVideoModel?.input.referenceMode ?? 'single',
+        };
 
         if (type === 'action-badge-image' || type === 'image-gen') {
             nodeType = 'action-badge';
             nodeData = { 
                 actionType: 'image-gen', 
-                modelName: 'Nano Banana', 
+                ...imageModelDefaults,
                 content: '# Prompt\nEnter your prompt here...',
                 ...nodeData 
             };
@@ -670,7 +692,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             nodeType = 'action-badge';
             nodeData = { 
                 actionType: 'video-gen', 
-                modelName: 'Kling',
+                ...videoModelDefaults,
                 content: '# Prompt\nEnter your prompt here...',
                 ...nodeData 
             };
@@ -1103,12 +1125,12 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 // Map legacy/agent types to action-badge
                 if (type === 'image-gen') {
                     type = 'action-badge';
-                    data = { actionType: 'image-gen', modelName: 'Nano Banana', ...data };
+                    data = { actionType: 'image-gen', modelId: defaultImageModel?.id ?? 'nano-banana-pro', model: defaultImageModel?.id ?? 'nano-banana-pro', modelParams: { ...(defaultImageModel?.defaultParams ?? {}) }, ...data };
                     if (!rest.width) rest.width = 200;
                     if (!rest.height) rest.height = 60;
                 } else if (type === 'video-gen') {
                     type = 'action-badge';
-                    data = { actionType: 'video-gen', modelName: 'Kling', ...data };
+                    data = { actionType: 'video-gen', modelId: defaultVideoModel?.id ?? 'kling-image2video', model: defaultVideoModel?.id ?? 'kling-image2video', modelParams: { ...(defaultVideoModel?.defaultParams ?? {}) }, ...data };
                     if (!rest.width) rest.width = 200;
                     if (!rest.height) rest.height = 60;
                 }
