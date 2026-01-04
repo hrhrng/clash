@@ -25,7 +25,7 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
         )
         prompt: str | None = Field(
             default=None,
-            description="Generation prompt sent to image/video AI models (e.g., detailed scene description for Imagen/Veo)"
+            description="DETAILED generation prompt for AI models. MUST be highly descriptive with: subject details, environment, lighting, camera angle, style, mood. Example: 'A weathered samurai in dark blue robes stands atop a cliff at sunset, golden hour lighting casting long shadows, wide establishing shot, cinematic epic style, moody atmosphere, mist rolling in from the valley below'. NEVER use vague prompts like 'a hero' or 'nice scene'."
         )
         content: str | None = Field(
             default=None,
@@ -91,6 +91,9 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             workspace_group_id = runtime.state.get("workspace_group_id")
             if workspace_group_id:
                 parent_id = workspace_group_id
+                logger.info(f"[create_generation_node] Auto-set parent_id from workspace: {parent_id}")
+        
+        logger.info(f"[create_generation_node] Creating {node_type} node with parent_id={parent_id}")
 
         resolved_backend = backend(runtime) if callable(backend) else backend
 
@@ -133,17 +136,34 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         elif parent_id_from_proposal:
                             node_position = {"x": 50.0, "y": 50.0}
                         else:
+                            # Calculate rightmost position for root-level nodes
                             existing_nodes = loro_client.get_all_nodes() or {}
-                            max_x = 0.0
-                            max_y = 0.0
+                            max_right_edge = 0.0
+                            rightmost_y = 100.0  # Default Y position
+
                             for existing in existing_nodes.values():
-                                existing_pos = (existing or {}).get("position") or {}
+                                if not existing:
+                                    continue
+                                # Only consider root-level nodes (no parentId)
+                                if existing.get("parentId"):
+                                    continue
+
+                                existing_pos = existing.get("position") or {}
+                                existing_width = existing.get("width", 300)
                                 try:
-                                    max_x = max(max_x, float(existing_pos.get("x", 0.0)))
-                                    max_y = max(max_y, float(existing_pos.get("y", 0.0)))
+                                    right_edge = float(existing_pos.get("x", 0.0)) + float(existing_width)
+                                    if right_edge > max_right_edge:
+                                        max_right_edge = right_edge
+                                        rightmost_y = float(existing_pos.get("y", 100.0))
                                 except (TypeError, ValueError):
                                     continue
-                            node_position = {"x": max_x + 120.0, "y": max_y + 80.0}
+
+                            # Place to the right of the rightmost node, aligned with its Y
+                            node_position = {"x": max_right_edge + 100.0, "y": rightmost_y}
+
+                        # Set default dimensions for action-badge nodes (matching frontend ProjectEditor.tsx)
+                        default_width = 320
+                        default_height = 220
 
                         loro_node = {
                             "id": result.node_id,
@@ -153,6 +173,13 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                                 **node_data,
                                 "upstreamNodeIds": list(final_upstream_ids),
                                 "actionType": "image-gen" if node_type == "image_gen" else ("video-gen" if node_type == "video_gen" else node_data.get("actionType")),
+                            },
+                            # ReactFlow node dimensions - critical for proper rendering
+                            "width": default_width,
+                            "height": default_height,
+                            "style": {
+                                "width": default_width,
+                                "height": default_height,
                             },
                             **(
                                 {"parentId": parent_id_from_proposal}

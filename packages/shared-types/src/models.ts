@@ -315,4 +315,4 @@ export const MODEL_CARDS: ModelCard[] = [
     },
     input: { requiresPrompt: true, referenceImage: 'required', referenceMode: 'start_end' },
   },
-];
+] as unknown as ModelCard[];

@@ -23,7 +23,8 @@ def _sqlite_path_from_url(url: str) -> Path:
 
 def get_database() -> Database:
     settings = get_settings()
-    url = settings.database_url or "sqlite:///./data/checkpoints.db"
+    # Use absolute path to avoid ambiguity between API and CLI
+    url = settings.database_url or "sqlite:////Users/xiaoyang/Proj/clash/apps/api/data/checkpoints.db"
 
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()

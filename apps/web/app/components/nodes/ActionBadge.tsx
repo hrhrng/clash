@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { useProject } from '../ProjectContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { createAsset } from '../../actions';
-import { useAutoLayout } from '../../hooks/useAutoLayout';
+import { useLayoutManager } from '@/lib/layout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import MilkdownEditor from '../MilkdownEditor';
 import { resolveAssetUrl, isR2Key } from '../../../lib/utils/assets';
@@ -24,7 +24,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     // React Flow hooks
     const { projectId } = useProject();
     const { getNodes, getEdges, addEdges, setNodes } = useReactFlow();
-    const { addNodeWithAutoLayout } = useAutoLayout();
+    const { addNodeWithAutoLayout } = useLayoutManager();
     const loroSync = useOptionalLoroSyncContext();
     const edges = useEdges();
 

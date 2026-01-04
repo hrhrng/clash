@@ -143,6 +143,12 @@ task_delegation(
 )
 
 All the agent's work (prompts, images) will be organized inside that group!
+
+## Using Selected Nodes
+
+When you see [SELECTED NODE IDS] in the message, these are node IDs the user has selected on the canvas.
+Use `read_canvas_node` tool to get the full details (type, src, label, etc.) of these nodes.
+The user wants you to work with these specific nodes - always read them first to understand the context.
 """
 
     # Create supervisor with SubAgentMiddleware + CanvasMiddleware

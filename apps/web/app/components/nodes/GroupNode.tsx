@@ -11,7 +11,15 @@ const controlStyle = {
     height: 10,
 };
 
-const GroupNode = ({ selected, data, id }: NodeProps) => {
+interface GroupNodeData {
+    label?: string;
+    isReceiving?: boolean;   // Node is being dragged over this group
+    isReleasing?: boolean;   // Node is being dragged out of this group
+    justReceived?: boolean;  // Flash animation after receiving a node
+    justReleased?: boolean;  // Flash animation after releasing a node
+}
+
+const GroupNode = ({ selected, data, id }: NodeProps<GroupNodeData>) => {
     const [label, setLabel] = useState(data.label || 'Group');
     const { getNodes } = useReactFlow();
 
@@ -41,6 +49,16 @@ const GroupNode = ({ selected, data, id }: NodeProps) => {
         return `bg-slate-100/${opacity}`;
     }, [depth, selected]);
 
+    // Build CSS classes for visual feedback states
+    const feedbackClasses = useMemo(() => {
+        const classes: string[] = [];
+        if (data.isReceiving) classes.push('group-receiving');
+        if (data.isReleasing) classes.push('group-releasing');
+        if (data.justReceived) classes.push('group-just-received');
+        if (data.justReleased) classes.push('group-just-released');
+        return classes.join(' ');
+    }, [data.isReceiving, data.isReleasing, data.justReceived, data.justReleased]);
+
     return (
         <>
             {selected && (
@@ -53,7 +71,7 @@ const GroupNode = ({ selected, data, id }: NodeProps) => {
             )}
 
             <div
-                className={`h-full w-full border-2 transition-all duration-300 ${selected ? 'border-[#FF9900]' : 'border-slate-300'} ${backgroundColor}`}
+                className={`h-full w-full border-2 transition-all duration-300 ${selected ? 'border-[#FF9900]' : 'border-slate-300'} ${backgroundColor} ${feedbackClasses}`}
             >
                 {/* Floating Title Input */}
                 <div

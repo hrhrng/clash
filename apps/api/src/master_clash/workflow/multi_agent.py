@@ -68,9 +68,10 @@ def create_multi_agent_workflow(llm: ChatGoogleGenerativeAI | None = None):
     )
 
     # Create supervisor agent with delegation capability
-    from langgraph.checkpoint.memory import MemorySaver
+    # Use persistent checkpointer for cross-request state persistence
+    from master_clash.database import get_checkpointer
 
-    checkpointer = MemorySaver()
+    checkpointer = get_checkpointer()
 
     supervisor = create_supervisor_agent(
         model=llm,

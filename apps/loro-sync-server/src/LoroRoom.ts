@@ -379,6 +379,18 @@ export class LoroRoom {
    */
   async alarm(): Promise<void> {
     try {
+      // Restore projectId from storage if not set (happens after DO restart)
+      if (!this.projectId) {
+        const storedProjectId = await this.state.storage.get<string>('project_id');
+        if (storedProjectId) {
+          this.projectId = storedProjectId;
+          console.log(`[LoroRoom] 🔄 Restored projectId from storage: ${storedProjectId}`);
+        } else {
+          console.warn('[LoroRoom] ⚠️ Cannot run alarm: no project ID in storage');
+          return;
+        }
+      }
+
       const alarmType = (await this.state.storage.get<string>('alarm_type')) || 'snapshot';
 
       if (alarmType === 'snapshot') {

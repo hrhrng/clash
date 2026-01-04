@@ -21,6 +21,9 @@ const getModelCard = (modelId?: string) => MODEL_CARDS.find((card) => card.id ==
 type AssetStatus = 'uploading' | 'generating' | 'completed' | 'fin' | 'failed';
 type NodeType = 'image' | 'video';
 
+// Track nodes currently being processed to prevent duplicate submissions
+const processingNodes = new Set<string>();
+
 /**
  * Process pending nodes - submit tasks to API/DB
  */
@@ -52,6 +55,14 @@ export async function processPendingNodes(
 
       // Case 1: generating + no src -> submit generation task
       if (status === 'generating' && !src) {
+        // Skip if already being processed (prevent race condition)
+        const processingKey = `${nodeId}:gen`;
+        if (processingNodes.has(processingKey)) {
+          console.log(`[NodeProcessor] ⏭️ Skipping ${nodeId.slice(0, 8)} - already being processed`);
+          continue;
+        }
+        processingNodes.add(processingKey);
+
         console.log(`[NodeProcessor] 🚀 Submitting ${nodeType}_gen for ${nodeId.slice(0, 8)}`);
         
         const taskType = nodeType === 'image' ? 'image_gen' : 'video_gen';
@@ -98,6 +109,9 @@ export async function processPendingNodes(
 
         const result = await submitTask(env, taskType, projectId, nodeId, params);
         
+        // Clear processing lock
+        processingNodes.delete(processingKey);
+        
         if (result.task_id) {
           updateNodeData(doc, nodeId, { pendingTask: result.task_id }, broadcast);
           submitted = true;
@@ -108,6 +122,14 @@ export async function processPendingNodes(
 
       // Case 2: completed + has src + no description -> submit description task
       if (status === 'completed' && src && !description) {
+        // Skip if already being processed (prevent race condition)
+        const processingKey = `${nodeId}:desc`;
+        if (processingNodes.has(processingKey)) {
+          console.log(`[NodeProcessor] ⏭️ Skipping desc for ${nodeId.slice(0, 8)} - already being processed`);
+          continue;
+        }
+        processingNodes.add(processingKey);
+
         console.log(`[NodeProcessor] 📝 Submitting description for ${nodeId.slice(0, 8)}`);
         
         const taskType = nodeType === 'image' ? 'image_desc' : 'video_desc';
@@ -117,6 +139,9 @@ export async function processPendingNodes(
         };
 
         const result = await submitTask(env, taskType, projectId, nodeId, params);
+        
+        // Clear processing lock
+        processingNodes.delete(processingKey);
         
         if (result.task_id) {
           updateNodeData(doc, nodeId, { pendingTask: result.task_id }, broadcast);

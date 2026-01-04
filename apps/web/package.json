@@ -69,6 +69,7 @@
     "react-markdown": "^10.1.0",
     "reactflow": "^11.11.4",
     "remotion": "^4.0.363",
+    "@clash/shared-types": "workspace:*",
     "zod": "^4.1.13"
   },
   "devDependencies": {

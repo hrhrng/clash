@@ -64,6 +64,9 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             workspace_group_id = runtime.state.get("workspace_group_id")
             if workspace_group_id:
                 parent_id = workspace_group_id
+                logger.info(f"[create_canvas_node] Auto-set parent_id from workspace: {parent_id}")
+        
+        logger.info(f"[create_canvas_node] Creating {node_type} node with parent_id={parent_id}")
 
         resolved_backend = backend(runtime) if callable(backend) else backend
 
@@ -95,23 +98,52 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         elif parent_id_from_proposal:
                             node_position = {"x": 50.0, "y": 50.0}
                         else:
+                            # Calculate rightmost position for root-level nodes
                             existing_nodes = loro_client.get_all_nodes() or {}
-                            max_x = 0.0
-                            max_y = 0.0
+                            max_right_edge = 0.0
+                            rightmost_y = 100.0  # Default Y position
+
                             for existing in existing_nodes.values():
-                                existing_pos = (existing or {}).get("position") or {}
+                                if not existing:
+                                    continue
+                                # Only consider root-level nodes (no parentId)
+                                if existing.get("parentId"):
+                                    continue
+
+                                existing_pos = existing.get("position") or {}
+                                existing_width = existing.get("width", 300)
                                 try:
-                                    max_x = max(max_x, float(existing_pos.get("x", 0.0)))
-                                    max_y = max(max_y, float(existing_pos.get("y", 0.0)))
+                                    right_edge = float(existing_pos.get("x", 0.0)) + float(existing_width)
+                                    if right_edge > max_right_edge:
+                                        max_right_edge = right_edge
+                                        rightmost_y = float(existing_pos.get("y", 100.0))
                                 except (TypeError, ValueError):
                                     continue
-                            node_position = {"x": max_x + 120.0, "y": max_y + 80.0}
+
+                            # Place to the right of the rightmost node, aligned with its Y
+                            node_position = {"x": max_right_edge + 100.0, "y": rightmost_y}
+
+                        # Set default dimensions based on node type (matching frontend ProjectEditor.tsx)
+                        resolved_type = proposal.get("nodeType") or node_type
+                        if resolved_type == "group":
+                            default_width = 400
+                            default_height = 400
+                        else:
+                            default_width = 300
+                            default_height = 300
 
                         loro_node = {
                             "id": result.node_id,
-                            "type": proposal.get("nodeType") or node_type,
+                            "type": resolved_type,
                             "position": node_position,
                             "data": node_data,
+                            # ReactFlow node dimensions - critical for proper rendering
+                            "width": default_width,
+                            "height": default_height,
+                            "style": {
+                                "width": default_width,
+                                "height": default_height,
+                            },
                             **(
                                 {"parentId": parent_id_from_proposal}
                                 if parent_id_from_proposal

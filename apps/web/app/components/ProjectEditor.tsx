@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import ReactFlow, {
     Background,
     BackgroundVariant,
@@ -42,8 +43,23 @@ import VideoEditorNode from './nodes/VideoEditorNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
 import { VideoEditorProvider } from './VideoEditorContext';
-import { findNonOverlappingPosition, getAbsolutePosition } from '@/lib/utils/layout';
 import { getLayoutedElements, getSmartLayoutedElements } from '@/lib/utils/elkLayout';
+import {
+    useLayoutManager,
+    getAbsoluteRect,
+    getAbsolutePosition,
+    rectContains,
+    rectOverlaps,
+    determineGroupOwnership,
+    updateNodeOwnership,
+    recursiveGroupScale,
+    applyGroupScales,
+    resolveCollisions,
+    applyResolution,
+    createMesh,
+    getGroupNodes,
+    isDescendant,
+} from '@/lib/layout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { useLoroSync } from '../hooks/useLoroSync';
@@ -135,44 +151,32 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         projectId: project.id,
         syncServerUrl: process.env.NEXT_PUBLIC_LORO_SYNC_URL || 'ws://localhost:8787',
         onNodesChange: (syncedNodes) => {
-            console.log('[ProjectEditor] Received nodes from Loro sync:', syncedNodes.length);
+            // Loro is the SINGLE SOURCE OF TRUTH - use its state directly
+            // Only preserve UI-specific state (selected, dragging) and spatial state during interaction
             setNodes((currentNodes) => {
-                // Smart Merge:
-                // If a node is currently selected (likely being interacted with), 
-                // we trust the LOCAL state for spatial properties (position, dimensions) 
-                // to prevent jumping/interruption by incoming server updates.
-                // We still accept data updates (content, status) from the server.
-                
-                const selectedIds = new Set(currentNodes.filter(n => n.selected).map(n => n.id));
                 const currentNodesMap = new Map(currentNodes.map(n => [n.id, n]));
-
-                // We use syncedNodes as the base to respect remote deletions/additions
+                
                 return syncedNodes.map(syncedNode => {
                     const currentNode = currentNodesMap.get(syncedNode.id);
                     
-                    if (currentNode && selectedIds.has(currentNode.id)) {
-                        // Node is selected - preserve local spatial state
+                    // Preserve spatial and UI state for nodes being interacted with
+                    // This prevents server updates from reverting local drag/resize/group changes
+                    if (currentNode && (currentNode.selected || currentNode.dragging)) {
                         return {
-                            ...syncedNode, // Accept data updates
-                            position: currentNode.position,
-                            width: currentNode.width,
-                            height: currentNode.height,
-                            style: currentNode.style,
-                            parentId: currentNode.parentId,
-                            extent: currentNode.extent,
-                            // Ensure selected state is preserved
-                            selected: true,
+                            ...syncedNode,           // Trust Loro for data (content, status, etc.)
+                            position: currentNode.position,  // Preserve local position during drag
+                            parentId: currentNode.parentId,  // Preserve group membership during interaction
+                            selected: currentNode.selected,
+                            dragging: currentNode.dragging,
                         };
                     }
                     
-                    // For non-selected nodes, trust the server entirely
-                    // But maybe preserve some local-only flags if needed?
+                    // Trust Loro completely for non-interacting nodes
                     return syncedNode;
                 });
             });
         },
         onEdgesChange: (syncedEdges) => {
-            console.log('[ProjectEditor] Received edges from Loro sync:', syncedEdges.length);
             setEdges(syncedEdges);
         },
     });
@@ -195,14 +199,12 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         onNodesChange(changes);
 
         // Debug: Log all changes
-        console.log('[ProjectEditor] handleNodesChange:', changes.length, 'changes', changes.map(c => c.type));
 
         // Handle node deletions - sync to Loro (Fallback if onNodesDelete doesn't fire)
         const removeChanges = changes.filter(c => c.type === 'remove');
         if (removeChanges.length > 0 && loroSync.connected) {
             removeChanges.forEach(change => {
                 if (change.type === 'remove') {
-                    console.log(`[ProjectEditor] Syncing node deletion to Loro (via onNodesChange): ${change.id}`);
                     loroSync.removeNode(change.id);
                 }
             });
@@ -218,92 +220,83 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 resizeChanges.forEach(change => {
                     if (change.type === 'dimensions' && change.dimensions) {
                         const node = updatedNodes.find(n => n.id === change.id);
-                        if (node && node.parentId) {
-                            // Update the node's dimensions in our temp list so the recursive logic sees the new size
-                            // Note: onNodesChange (called above) queues the state update, but 'currentNodes' here 
-                            // might be the *previous* state if React hasn't flushed yet. 
-                            // However, since we are inside setNodes callback, 'currentNodes' is the latest state *before* this update.
-                            // But onNodesChange also calls setNodes. This is tricky.
-                            // Actually, 'change.dimensions' has the NEW dimensions.
+                        if (!node) return;
 
-                            // Let's manually update the node in our temp list to match the change
-                            const nodeIndex = updatedNodes.findIndex(n => n.id === change.id);
-                            if (nodeIndex !== -1) {
-                                updatedNodes[nodeIndex] = {
-                                    ...updatedNodes[nodeIndex],
+                        // Update the node's dimensions in our temp list
+                        const nodeIndex = updatedNodes.findIndex(n => n.id === change.id);
+                        if (nodeIndex !== -1) {
+                            updatedNodes[nodeIndex] = {
+                                ...updatedNodes[nodeIndex],
+                                width: change.dimensions.width,
+                                height: change.dimensions.height,
+                                style: {
+                                    ...updatedNodes[nodeIndex].style,
                                     width: change.dimensions.width,
                                     height: change.dimensions.height,
-                                    // ReactFlow might also update style.width/height, but dimensions is the source of truth for layout
-                                    style: {
-                                        ...updatedNodes[nodeIndex].style,
-                                        width: change.dimensions.width,
-                                        height: change.dimensions.height,
-                                    }
-                                };
-                            }
+                                }
+                            };
+                        }
 
-                            // Now run recursive resize
-                            const resizeParentRecursive = (nodesList: Node[], childNode: Node): Node[] => {
-                                const pId = childNode.parentId;
-                                if (!pId) return nodesList;
+                        // CASE 1: If a GROUP is resized, check if any nodes should become children
+                        if (node.type === 'group') {
+                            const resizedGroup = updatedNodes[nodeIndex];
+                            const groupAbsRect = getAbsoluteRect(resizedGroup, updatedNodes);
 
-                                const parentIndex = nodesList.findIndex(n => n.id === pId);
-                                if (parentIndex === -1) return nodesList;
+                            // Check all non-descendant nodes to see if they're now inside this group
+                            updatedNodes.forEach((otherNode, otherIndex) => {
+                                // Skip the group itself and its existing descendants
+                                if (otherNode.id === node.id) return;
+                                if (isDescendant(otherNode.id, node.id, updatedNodes)) return;
 
-                                const parent = nodesList[parentIndex];
-                                const children = nodesList.filter(n => n.parentId === pId);
+                                // Skip nodes that are ancestors of this group (can't put parent inside child)
+                                if (isDescendant(node.id, otherNode.id, updatedNodes)) return;
 
-                                let maxRight = 0;
-                                let maxBottom = 0;
-                                const padding = 60;
+                                const otherAbsRect = getAbsoluteRect(otherNode, updatedNodes);
+                                const isInside = rectContains(groupAbsRect, otherAbsRect);
+                                const wasInside = otherNode.parentId === node.id;
 
-                                children.forEach(child => {
-                                    // For the node that changed, use its new dimensions (already in nodesList or childNode)
-                                    // For others, use their current dimensions
-                                    const w = child.width ?? Number(child.style?.width) ?? 0;
-                                    const h = child.height ?? Number(child.style?.height) ?? 0;
-                                    const x = child.position.x;
-                                    const y = child.position.y;
-
-                                    const right = x + w;
-                                    const bottom = y + h;
-
-                                    if (right > maxRight) maxRight = right;
-                                    if (bottom > maxBottom) maxBottom = bottom;
-                                });
-
-                                const requiredWidth = maxRight + padding;
-                                const requiredHeight = maxBottom + padding;
-
-                                const currentWidth = parent.width || Number(parent.style?.width) || 400;
-                                const currentHeight = parent.height || Number(parent.style?.height) || 400;
-
-                                if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
-                                    const newWidth = Math.max(currentWidth, requiredWidth);
-                                    const newHeight = Math.max(currentHeight, requiredHeight);
-
-                                    const newParent = {
-                                        ...parent,
-                                        width: newWidth,
-                                        height: newHeight,
-                                        style: {
-                                            ...parent.style,
-                                            width: newWidth,
-                                            height: newHeight,
-                                        }
+                                if (isInside && !wasInside) {
+                                    // Node is now inside the group but wasn't before
+                                    const groupAbsPos = getAbsolutePosition(resizedGroup, updatedNodes);
+                                    const relativePos = {
+                                        x: otherAbsRect.x - groupAbsPos.x,
+                                        y: otherAbsRect.y - groupAbsPos.y,
                                     };
-
-                                    const newNodesList = [...nodesList];
-                                    newNodesList[parentIndex] = newParent;
+                                    updatedNodes[otherIndex] = {
+                                        ...otherNode,
+                                        parentId: node.id,
+                                        position: relativePos,
+                                        extent: undefined,
+                                    };
                                     hasUpdates = true;
 
-                                    return resizeParentRecursive(newNodesList, newParent);
+                                    // Sync to Loro
+                                    if (loroSync.connected) {
+                                        loroSync.updateNode(otherNode.id, {
+                                            parentId: node.id,
+                                            position: relativePos,
+                                        });
+                                    }
                                 }
+                            });
+                        }
 
-                                return nodesList;
-                            };
+                        // CASE 2: If a node with parentId is resized, scale parent groups
+                        if (node.parentId) {
+                            const scales = recursiveGroupScale(change.id, updatedNodes);
+                            if (scales.size > 0) {
+                                updatedNodes = applyGroupScales(updatedNodes, scales);
+                                hasUpdates = true;
 
-                            updatedNodes = resizeParentRecursive(updatedNodes, updatedNodes[nodeIndex]);
+                                // Resolve collisions caused by scaling
+                                const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
+                                for (const groupId of scales.keys()) {
+                                    const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
+                                    if (result.steps.length > 0) {
+                                        updatedNodes = applyResolution(updatedNodes, result);
+                                    }
+                                }
+                            }
                         }
                     }
                 });
@@ -315,152 +308,164 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
     // Reliable sync handlers
     const onNodesDelete = useCallback((deletedNodes: Node[]) => {
-        console.log(`[ProjectEditor] onNodesDelete triggered for ${deletedNodes.length} nodes. Connected: ${loroSync.connected}`);
         if (loroSync.connected) {
             deletedNodes.forEach(node => {
-                console.log(`[ProjectEditor] Syncing node deletion to Loro: ${node.id}`);
                 loroSync.removeNode(node.id);
             });
         }
     }, [loroSync]);
 
-    const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, nodes: Node[]) => {
-        console.log(`[ProjectEditor] onNodeDragStop triggered for node ${node.id}. Connected: ${loroSync.connected}`);
-        
-        // Helper to recursively calculate absolute position of a node.
-        const getAbsolutePosition = (n: Node): { x: number; y: number } => {
-            if (!n.parentId) {
-                return { x: n.position.x, y: n.position.y };
-            }
-            const parent = nodes.find((p) => p.id === n.parentId);
-            if (!parent) {
-                return { x: n.position.x, y: n.position.y };
-            }
-            const parentAbsPos = getAbsolutePosition(parent);
-            return {
-                x: parentAbsPos.x + n.position.x,
-                y: parentAbsPos.y + n.position.y,
-            };
-        };
-
-        // Helper to check if groupId is a descendant of nodeId.
-        const isDescendant = (groupId: string, nodeId: string): boolean => {
-            const group = nodes.find((n) => n.id === groupId);
-            if (!group || !group.parentId) return false;
-            if (group.parentId === nodeId) return true;
-            return isDescendant(group.parentId, nodeId);
-        };
-
-        // 1. Group Logic: Check if dropped into/out of a group
-        const groupNodes = nodes.filter((n) => n.type === 'group' && n.id !== node.id);
-        const nodeRect = {
-            x: node.position.x,
-            y: node.position.y,
-            width: node.width || (node.type === 'group' ? 400 : 300),
-            height: node.height || (node.type === 'group' ? 400 : 400),
-        };
-
-        // Calculate absolute position for the dragged node
-        const absoluteNodePos = getAbsolutePosition(node);
-        const absoluteNodeRect = {
-            x: absoluteNodePos.x,
-            y: absoluteNodePos.y,
-            width: nodeRect.width,
-            height: nodeRect.height,
-        };
-
-        let newParentId: string | undefined = undefined;
-        let maxZIndex = -Infinity;
-
-        for (const group of groupNodes) {
-            // Skip if this group is a descendant of the node (prevent circular nesting)
-            if (isDescendant(group.id, node.id)) continue;
-
-            const groupRect = {
-                x: group.position.x,
-                y: group.position.y,
-                width: group.style?.width || 400,
-                height: group.style?.height || 400,
-            };
-
-            const absoluteGroupPos = getAbsolutePosition(group);
-            const absoluteGroupRect = {
-                x: absoluteGroupPos.x,
-                y: absoluteGroupPos.y,
-                width: groupRect.width,
-                height: groupRect.height,
-            };
-
-            // Check intersection
-            const nodeCenterX = absoluteNodeRect.x + nodeRect.width / 2;
-            const nodeCenterY = absoluteNodeRect.y + nodeRect.height / 2;
-
-            if (
-                nodeCenterX > absoluteGroupRect.x &&
-                nodeCenterX < absoluteGroupRect.x + (absoluteGroupRect.width as number) &&
-                nodeCenterY > absoluteGroupRect.y &&
-                nodeCenterY < absoluteGroupRect.y + (absoluteGroupRect.height as number)
-            ) {
-                const groupZIndex = Number(group.style?.zIndex ?? -1);
-                if (groupZIndex > maxZIndex) {
-                    maxZIndex = groupZIndex;
-                    newParentId = group.id;
-                }
-            }
-        }
+    const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, allNodes: Node[]) => {
+        // Use new layout system for group ownership detection (OVERLAP based)
+        const nodeAbsRect = getAbsoluteRect(node, allNodes);
+        const ownership = determineGroupOwnership(nodeAbsRect, node.id, allNodes, node.parentId);
 
         let finalNode = { ...node };
+        const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
 
-        // 2. Update parent if changed
-        if (newParentId !== node.parentId) {
-            console.log('[ProjectEditor] Parent changed from', node.parentId, 'to', newParentId);
-            
-            // Calculate new relative position
-            let newPos = node.position;
-            
-            if (newParentId) {
-                // Moving INTO a group
-                const newParent = nodes.find(n => n.id === newParentId);
-                if (newParent) {
-                    const parentAbsPos = getAbsolutePosition(newParent);
-                    newPos = {
-                        x: absoluteNodeRect.x - parentAbsPos.x,
-                        y: absoluteNodeRect.y - parentAbsPos.y
-                    };
-                }
-            } else {
-                // Moving OUT of a group (to root)
-                newPos = {
-                    x: absoluteNodeRect.x,
-                    y: absoluteNodeRect.y
-                };
-            }
+        // Track ownership change for visual feedback
+        const ownershipChanged = ownership.newParentId !== node.parentId;
+        const oldParentId = node.parentId;
+        const newParentId = ownership.newParentId;
+
+        // Update parent if changed
+        if (ownershipChanged) {
 
             finalNode = {
                 ...node,
                 parentId: newParentId,
-                position: newPos,
-                extent: newParentId ? 'parent' : undefined,
+                position: ownership.relativePosition,
+                extent: undefined,
                 // For group nodes, ensure they remain editable and above parent
                 ...(node.type === 'group' && newParentId ? {
                     draggable: true,
                     selectable: true,
                     style: {
                         ...node.style,
-                        zIndex: (Number(nodes.find(n => n.id === newParentId)?.style?.zIndex ?? 0)) + 1,
+                        zIndex: (Number(allNodes.find(n => n.id === newParentId)?.style?.zIndex ?? 0)) + 1,
                     }
                 } : {})
             };
-
-            setNodes((nds) => 
-                nds.map((n) => n.id === node.id ? finalNode : n)
-            );
         }
 
-        // 3. Sync to Loro
+        // Apply all updates in a single setNodes call
+        // Use flushSync to ensure state is updated synchronously so subsequent drags work immediately
+        flushSync(() => {
+            setNodes((nds) => {
+                // Apply ownership change for the dragged node
+                let updatedNodes = nds.map((n) => n.id === node.id ? finalNode : n);
+
+                // If the dragged node is a GROUP, check if it now covers any other nodes
+                if (node.type === 'group') {
+                    const draggedGroup = updatedNodes.find(n => n.id === node.id)!;
+                    const groupAbsRect = getAbsoluteRect(draggedGroup, updatedNodes);
+                    const groupAbsPos = getAbsolutePosition(draggedGroup, updatedNodes);
+
+                    updatedNodes = updatedNodes.map((otherNode) => {
+                        // Skip the group itself and its existing descendants
+                        if (otherNode.id === node.id) return otherNode;
+                        if (isDescendant(otherNode.id, node.id, updatedNodes)) return otherNode;
+
+                        // Skip nodes that are ancestors of this group
+                        if (isDescendant(node.id, otherNode.id, updatedNodes)) return otherNode;
+
+                        const otherAbsRect = getAbsoluteRect(otherNode, updatedNodes);
+                        const isInside = rectContains(groupAbsRect, otherAbsRect);
+                        const wasInside = otherNode.parentId === node.id;
+
+                        if (isInside && !wasInside) {
+                            // Node is now inside the group
+                            const relativePos = {
+                                x: otherAbsRect.x - groupAbsPos.x,
+                                y: otherAbsRect.y - groupAbsPos.y,
+                            };
+
+                            // Sync to Loro
+                            if (loroSync.connected) {
+                                loroSync.updateNode(otherNode.id, {
+                                    parentId: node.id,
+                                    position: relativePos,
+                                });
+                            }
+
+                            return {
+                                ...otherNode,
+                                parentId: node.id,
+                                position: relativePos,
+                                extent: undefined,
+                            };
+                        }
+
+                        return otherNode;
+                    });
+                }
+
+                // Auto-scale parent groups if needed
+                const scales = recursiveGroupScale(node.id, updatedNodes);
+                if (scales.size > 0) {
+                    updatedNodes = applyGroupScales(updatedNodes, scales);
+
+                    // Resolve collisions caused by scaling
+                    for (const groupId of scales.keys()) {
+                        const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
+                        if (result.steps.length > 0) {
+                            updatedNodes = applyResolution(updatedNodes, result);
+                        }
+                    }
+                }
+
+                // Clear receiving/releasing states and set flash animations for ownership changes
+                updatedNodes = updatedNodes.map((n) => {
+                    if (n.type !== 'group') return n;
+
+                    // Determine if this group needs flash animation
+                    const shouldFlashReceived = ownershipChanged && n.id === newParentId;
+                    const shouldFlashReleased = ownershipChanged && n.id === oldParentId;
+
+                    // Clear drag states and set flash states
+                    if (n.data?.isReceiving || n.data?.isReleasing || shouldFlashReceived || shouldFlashReleased) {
+                        return {
+                            ...n,
+                            data: {
+                                ...n.data,
+                                isReceiving: false,
+                                isReleasing: false,
+                                justReceived: shouldFlashReceived,
+                                justReleased: shouldFlashReleased,
+                            }
+                        };
+                    }
+                    return n;
+                });
+
+                const targetNode = updatedNodes.find(n => n.id === node.id);
+                return updatedNodes;
+            });
+        });
+
+        // Clear flash animations after 500ms
+        if (ownershipChanged && (oldParentId || newParentId)) {
+            setTimeout(() => {
+                setNodes((nds) => nds.map((n) => {
+                    if (n.type !== 'group') return n;
+                    if (n.id === oldParentId || n.id === newParentId) {
+                        return {
+                            ...n,
+                            data: {
+                                ...n.data,
+                                justReceived: false,
+                                justReleased: false,
+                            }
+                        };
+                    }
+                    return n;
+                }));
+            }, 500);
+        }
+
+        // Sync to Loro
         if (loroSync.connected) {
-            console.log(`[ProjectEditor] Syncing node update to Loro: ${finalNode.id}`, { position: finalNode.position, parentId: finalNode.parentId });
-            loroSync.updateNode(finalNode.id, { 
+            loroSync.updateNode(finalNode.id, {
                 position: finalNode.position,
                 parentId: finalNode.parentId,
                 extent: finalNode.extent,
@@ -473,10 +478,27 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         setSelectedNodes(nodes);
     }, []);
 
-    // Sync local state when prop changes (e.g. after agent action revalidation)
-    // Sync local state when prop changes (e.g. after agent action revalidation)
-    // Sync local state when prop changes (e.g. after agent action revalidation)
-    // Sync local state when prop changes (e.g. after agent action revalidation)
+    // Handle node drag to show receiving/releasing visual feedback on groups
+    const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, allNodes: Node[]) => {
+        // Skip if dragging a group (we don't show feedback for group-to-group)
+        if (node.type === 'group') return;
+
+        console.log('[onNodeDrag] FIRED! node:', node.id);
+
+        // TEST: 无条件让所有group高亮
+        setNodes((nds) => nds.map((n) => {
+            if (n.type !== 'group') return n;
+            console.log('[onNodeDrag] Setting group', n.id, 'isReceiving=true');
+            return {
+                ...n,
+                data: {
+                    ...n.data,
+                    isReceiving: true,
+                }
+            };
+        }));
+    }, [setNodes]);
+
     // Sync local state when prop changes (e.g. after agent action revalidation)
     useEffect(() => {
         if (project.nodes) {
@@ -596,7 +618,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         if (removeChanges.length > 0 && loroSync.connected) {
             removeChanges.forEach(change => {
                 if (change.type === 'remove') {
-                    console.log(`[ProjectEditor] Syncing edge deletion to Loro: ${change.id}`);
                     loroSync.removeEdge(change.id);
                 }
             });
@@ -613,7 +634,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     e.target === (params as Connection).target
                 );
                 if (addedEdge && loroSync.connected) {
-                    console.log(`[ProjectEditor] Syncing new edge to Loro: ${addedEdge.id}`);
                     loroSync.addEdge(addedEdge.id, addedEdge);
                 }
                 return newEdges;
@@ -715,7 +735,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 const parent = nodes.find(n => n.id === extraData.parentId);
                 const parentZIndex = Number(parent?.style?.zIndex ?? 0);
                 zIndex = parentZIndex + 1;
-                console.log(`[addNode] Creating nested group. Parent zIndex: ${parentZIndex}, New zIndex: ${zIndex}`);
             } else {
                 // Root Group: Keep existing logic (behind other groups)
                 const groupNodes = nodes.filter((n) => n.type === 'group');
@@ -724,7 +743,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     return Math.min(min, nodeZIndex);
                 }, 0);
                 zIndex = minZIndex - 1;
-                console.log(`[addNode] Creating root group. New zIndex: ${zIndex}`);
             }
         }
 
@@ -758,7 +776,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             // Validate parentId exists
             if (parentId) {
                 const parentExists = nds.find(n => n.id === parentId);
-                console.log(`[addNode] Validating parentId: ${parentId}. Found: ${!!parentExists}`);
                 if (!parentExists) {
                     console.warn(`Parent node ${parentId} not found in current nodes list (size: ${nds.length}), creating node at root level`);
                     parentId = undefined;
@@ -794,7 +811,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             }
 
             const upstreamList = Array.isArray(extraData.upstreamNodeIds) ? extraData.upstreamNodeIds : [];
-            console.log('[addNode] Calculating position for', nodeType, 'parentId:', parentId, 'upstream:', upstreamList, 'layout:', extraData.layoutDirection);
 
             if (parentId) {
                 // Start at top-left of group
@@ -888,17 +904,37 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             }
 
-            console.log('[addNode] Initial targetPos:', targetPos);
 
-            const position = findNonOverlappingPosition(
-                targetPos,
-                defaultWidth,
-                defaultHeight,
-                nds,
-                nds,
-                parentId
-            );
-            console.log('[addNode] Final position:', position);
+            // Use mesh-based layout only for nodes inside groups
+            // Root-level nodes use the calculated rightmost position directly
+            let position = targetPos;
+            const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
+
+            if (parentId) {
+                // Inside a group: use mesh for collision-free placement
+                const siblingRects = nds
+                    .filter(n => n.parentId === parentId && n.type !== 'group')
+                    .map(n => getAbsoluteRect(n, nds));
+                position = mesh.findNonOverlappingPosition(
+                    targetPos,
+                    { width: defaultWidth, height: defaultHeight },
+                    siblingRects
+                );
+            } else {
+                // Root level: use the rightmost position directly
+                // Only adjust if there's a direct overlap at the exact position
+                const directRect = { x: targetPos.x, y: targetPos.y, width: defaultWidth, height: defaultHeight };
+                const rootNodes = nds.filter(n => !n.parentId);
+                const hasDirectOverlap = rootNodes.some(n => {
+                    const nodeRect = getAbsoluteRect(n, nds);
+                    return rectOverlaps(directRect, nodeRect);
+                });
+
+                if (hasDirectOverlap) {
+                    // Shift right by default width + spacing to avoid overlap
+                    position = { x: targetPos.x + defaultWidth + 50, y: targetPos.y };
+                }
+            }
 
             const newNode: Node = {
                 id: newNodeId,
@@ -917,73 +953,28 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 className: nodeType === 'group' ? 'group-node' : '',
             };
 
-            // 3. Update nodes with Recursive Group Resizing
+            // 3. Update nodes with Recursive Group Resizing using new layout system
             let updatedNodes = [...nds, newNode];
 
-            const resizeParentRecursive = (currentNodes: Node[], childNode: Node): Node[] => {
-                const pId = childNode.parentId;
-                if (!pId) return currentNodes;
+            // Use new recursive group scale
+            const scales = recursiveGroupScale(newNode.id, updatedNodes);
+            if (scales.size > 0) {
+                updatedNodes = applyGroupScales(updatedNodes, scales);
 
-                const parentIndex = currentNodes.findIndex(n => n.id === pId);
-                if (parentIndex === -1) return currentNodes;
-
-                const parent = currentNodes[parentIndex];
-
-                // Calculate bounding box of ALL children (including the new/updated child)
-                const children = currentNodes.filter(n => n.parentId === pId);
-
-                let maxRight = 0;
-                let maxBottom = 0;
-                const padding = 60;
-
-                children.forEach(child => {
-                    const w = child.width || Number(child.style?.width) || 300;
-                    const h = child.height || Number(child.style?.height) || 300;
-                    const right = child.position.x + w;
-                    const bottom = child.position.y + h;
-                    if (right > maxRight) maxRight = right;
-                    if (bottom > maxBottom) maxBottom = bottom;
-                });
-
-                const requiredWidth = maxRight + padding;
-                const requiredHeight = maxBottom + padding;
-
-                const currentWidth = parent.width || Number(parent.style?.width) || 400;
-                const currentHeight = parent.height || Number(parent.style?.height) || 400;
-
-                if (requiredWidth > currentWidth || requiredHeight > currentHeight) {
-                    const newWidth = Math.max(currentWidth, requiredWidth);
-                    const newHeight = Math.max(currentHeight, requiredHeight);
-
-                    console.log('[addNode] Resizing group', parent.id, 'from', currentWidth, 'x', currentHeight, 'to', newWidth, 'x', newHeight);
-
-                    const newParent = {
-                        ...parent,
-                        width: newWidth,
-                        height: newHeight,
-                        style: {
-                            ...parent.style,
-                            width: newWidth,
-                            height: newHeight,
-                        }
-                    };
-
-                    const newNodesList = [...currentNodes];
-                    newNodesList[parentIndex] = newParent;
-
-                    // Recurse up
-                    return resizeParentRecursive(newNodesList, newParent);
+                // Resolve collisions caused by scaling
+                for (const groupId of scales.keys()) {
+                    const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
+                    if (result.steps.length > 0) {
+                        updatedNodes = applyResolution(updatedNodes, result);
+                    }
                 }
+            }
 
-                return currentNodes;
-            };
-
-            const finalNodes = resizeParentRecursive(updatedNodes, newNode);
+            const finalNodes = updatedNodes;
 
             // Sync new node to Loro
             const createdNode = finalNodes.find(n => n.id === newNodeId);
             if (createdNode && loroSync.connected) {
-                console.log('[ProjectEditor] Syncing new node to Loro:', newNodeId);
                 loroSync.addNode(newNodeId, createdNode);
             }
 
@@ -1183,7 +1174,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         
         // Sync all node positions to Loro to persist layout
         if (loroSync.connected) {
-            console.log('[ProjectEditor] Syncing layout changes to Loro...');
             layoutedNodes.forEach((node) => {
                 loroSync.updateNode(node.id, {
                     position: node.position,
@@ -1191,7 +1181,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     height: node.height,
                 });
             });
-            console.log(`[ProjectEditor] Synced ${layoutedNodes.length} node positions to Loro`);
         }
     }, [nodes, edges, setNodes, setEdges, loroSync]);
 
@@ -1266,6 +1255,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                     onNodesChange={handleNodesChange}
                                     onEdgesChange={handleEdgesChange}
                                     onNodesDelete={onNodesDelete}
+                                    onNodeDrag={onNodeDrag}
                                     onNodeDragStop={onNodeDragStop}
                                     onConnect={onConnect}
                                     onSelectionChange={onSelectionChange}

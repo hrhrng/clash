@@ -37,6 +37,16 @@ def create_wait_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
         if loro_client and loro_client.connected:
             try:
+                # Pre-check: Get node and verify it's an asset node, not a generation node
+                node_data = loro_client.get_node(node_id)
+                
+                if node_data:
+                    node_type = node_data.get("type", "")
+                    
+                    # If this is a generation node (action-badge), not an asset node - fail immediately
+                    if node_type == "action-badge":
+                        return f"Error: Node '{node_id}' is a generation node (action-badge), not an asset node. wait_for_generation only works with image/video asset nodes. Please pass the ID of the actual image or video node created by run_generation_node."
+                
                 start_time = asyncio.get_event_loop().time()
                 while asyncio.get_event_loop().time() - start_time < timeout_seconds:
                     node_data = loro_client.get_node(node_id)
@@ -49,8 +59,8 @@ def create_wait_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
                             logger.info(f"[LoroSync] Node {node_id} generation completed (has media)")
                             return "Task completed."
 
-                        if status == "completed":
-                            logger.info(f"[LoroSync] Node {node_id} status: completed")
+                        if status == "completed" or status == "fin":
+                            logger.info(f"[LoroSync] Node {node_id} status: {status}")
                             return "Task completed."
                         elif status == "failed":
                             error = data.get("error", "Unknown error")

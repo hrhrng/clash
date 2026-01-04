@@ -84,6 +84,16 @@ def create_node(project_id: str, type: str, data: dict[str, Any], group_id: str 
         node_type = "action-badge-image"
         type = "generative" # Frontend expects 'generative' for the proposal type wrapper?
 
+    # Set default dimensions based on node type (matching frontend ProjectEditor.tsx)
+    default_width = 300
+    default_height = 300
+    if node_type == "group":
+        default_width = 400
+        default_height = 400
+    elif node_type == "action-badge":
+        default_width = 320
+        default_height = 220
+
     proposal = {
         "id": proposal_id,
         "type": "generative" if type == "image_gen" or type == "video_gen" else "simple", # Simplified logic
@@ -94,7 +104,14 @@ def create_node(project_id: str, type: str, data: dict[str, Any], group_id: str 
         },
         "groupId": group_id,
         "upstreamNodeIds": upstream_node_ids,
-        "message": f"Proposed {type} node: {data.get('label', 'Untitled')}"
+        "message": f"Proposed {type} node: {data.get('label', 'Untitled')}",
+        # ReactFlow node properties - critical for proper rendering
+        "width": default_width,
+        "height": default_height,
+        "style": {
+            "width": default_width,
+            "height": default_height,
+        }
     }
 
     if type == "group":

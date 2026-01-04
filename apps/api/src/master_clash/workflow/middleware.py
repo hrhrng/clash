@@ -214,8 +214,13 @@ You have access to canvas tools for creating and managing visual content:
 - create_canvas_node: Create text/group nodes (for organization)
 - create_generation_node: Create PromptActionNodes with embedded prompts for image/video generation
 - run_generation_node: Run a generation node to produce the asset (call after create)
-- wait_for_generation: Wait for image/video generation to complete
+- wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
 - search_canvas: Search nodes by content
+
+**CRITICAL: Always Organize in Groups**
+1. FIRST create a Group to contain your work (e.g., "Scene 1", "Character Designs")
+2. THEN create all content nodes with parentId pointing to that group
+3. NEVER leave nodes floating outside of a group!
 
 IMPORTANT: PromptActionNode Architecture:
 - Prompt and action are now MERGED into a single node type
@@ -225,13 +230,15 @@ IMPORTANT: PromptActionNode Architecture:
 - You do NOT need to create separate prompt/text nodes - everything is in the PromptActionNode
 
 Workflow:
-1. Use create_generation_node with:
+1. Create a Group first (using create_canvas_node with type='group')
+2. Use create_generation_node with:
    - 'prompt': detailed generation prompt for the AI model
    - 'content': markdown description/notes for display
+   - 'parent_id': The group ID from step 1 (REQUIRED!)
    - For video_gen: MUST include upstreamNodeIds with at least one completed image node ID
    - For image_gen: upstreamNodeIds are optional
-2. Then use run_generation_node to trigger the generation
-3. Call wait_for_generation to check status
+3. Then use run_generation_node to trigger the generation
+4. Call wait_for_generation to check status (pass the returned asset node ID, NOT the action-badge ID)
 """
 
     def _generate_canvas_tools(self) -> list[BaseTool]:

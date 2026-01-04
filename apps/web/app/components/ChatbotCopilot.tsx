@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PaperPlaneRight, CaretLeft, CaretRight, Sparkle, Plus, ClockCounterClockwise } from '@phosphor-icons/react';
+import { PaperPlaneRight, CaretLeft, CaretRight, Sparkle, Plus, ClockCounterClockwise, StopCircle, Trash } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
 import { Command } from '../actions';
 import { useChat } from '@ai-sdk/react';
@@ -18,6 +18,8 @@ import { Node, Edge, Connection } from 'reactflow';
 import ReactMarkdown from 'react-markdown';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { thumbnailCache } from '@/lib/utils/thumbnailCache';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 
 interface Message {
@@ -86,10 +88,67 @@ export default function ChatbotCopilot({
         return Date.now().toString() + Math.random().toString(36).substring(2, 9);
     };
 
-    const [threadId, setThreadId] = useState<string>(() => generateId());
-    const [sessionHistory, setSessionHistory] = useState<string[]>([]);
+    const [threadId, setThreadId] = useState<string>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem(`clash_thread_id_${projectId}`);
+            if (saved) return saved;
+        }
+        return generateId();
+    });
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(`clash_thread_id_${projectId}`, threadId);
+        }
+    }, [threadId, projectId]);
+
+    interface SessionInfo {
+        threadId: string;
+        title?: string;
+        updatedAt?: string;
+    }
+
+    const [sessionHistory, setSessionHistory] = useState<SessionInfo[]>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem(`clash_session_history_${projectId}`);
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    // Handle migration from string[] to SessionInfo[]
+                    return parsed.map((item: any) => 
+                        typeof item === 'string' ? { threadId: item } : item
+                    );
+                } catch (e) {
+                    console.error('Failed to parse session history', e);
+                }
+            }
+        }
+        return [];
+    });
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(`clash_session_history_${projectId}`, JSON.stringify(sessionHistory));
+        }
+    }, [sessionHistory, projectId]);
+
+    // Automatically add current threadId to session history if it has content
+    useEffect(() => {
+        if (displayItems.length > 0) {
+           setSessionHistory(prev => {
+               const exists = prev.some(s => s.threadId === threadId);
+               if (exists) return prev;
+               return [{ threadId, title: `Session ${threadId.slice(-6)}` }, ...prev];
+           });
+        }
+    }, [displayItems.length, threadId]);
+
     const [showHistory, setShowHistory] = useState(false);
     const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
+    
+    // Session management state
+    const [sessionStatus, setSessionStatus] = useState<'idle' | 'running' | 'completing' | 'interrupted' | 'completed'>('idle');
+    const eventSourceRef = useRef<EventSource | null>(null);
 
     // Typewriter effect state
     const [isTyping, setIsTyping] = useState(false);
@@ -97,16 +156,174 @@ export default function ChatbotCopilot({
     const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
     const handleNewSession = () => {
-        const newThreadId = generateId();
-        if (messages.length > 0 || displayItems.length > 0) {
-            setSessionHistory(prev => [...prev, threadId]);
+        console.log('[ChatbotCopilot] Starting new session reset');
+        
+        // 1. Close active EventSource
+        if (eventSourceRef.current) {
+            console.log('[ChatbotCopilot] Closing active EventSource for new session');
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
         }
+
+        // 2. Clear typewriter and queue
+        if (typewriterIntervalRef.current) {
+            clearInterval(typewriterIntervalRef.current);
+            typewriterIntervalRef.current = null;
+        }
+        textQueueRef.current = '';
+        setIsTyping(false);
+
+        // 3. Reset all workflow states
+        const newThreadId = generateId();
         setThreadId(newThreadId);
         setDisplayItems([]);
+        setSessionStatus('idle');
+        setIsProcessing(false);
+        setProcessingStatus('');
+        
+        // 4. Reset sub-agent states and todos
+        setTodoItems([]);
+        
+        console.log('[ChatbotCopilot] New session initiated:', newThreadId);
     };
+
+    // Deletes a session and all its data
+    const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent switching to the session being deleted
+        
+        if (!window.confirm('Are you sure you want to delete this session and all its history?')) {
+            return;
+        }
+
+        console.log('[ChatbotCopilot] Deleting session:', id);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/${id}`, {
+                method: 'DELETE',
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to delete session');
+            }
+
+            // 1. Update local history list
+            setSessionHistory(prev => prev.filter(s => s.threadId !== id));
+
+            // 2. If we deleted the current session, start a new one
+            if (id === threadId) {
+                console.log('[ChatbotCopilot] Current session deleted, resetting UI');
+                handleNewSession();
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error deleting session:', err);
+        }
+    }, [threadId, handleNewSession]);
+
+    // Stop/interrupt the current session
+    const handleStop = async () => {
+        console.log('[ChatbotCopilot] Stop requested');
+        setSessionStatus('completing');
+        
+        // Close the EventSource immediately to stop receiving events
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+        }
+        
+        // Notify backend to stop after current step
+        try {
+            await fetch(`${API_BASE_URL}/api/v1/session/${threadId}/interrupt`, {
+                method: 'POST',
+            });
+            console.log('[ChatbotCopilot] Interrupt request sent to backend');
+        } catch (e) {
+            console.error('[ChatbotCopilot] Failed to send interrupt request:', e);
+        }
+        
+        setIsProcessing(false);
+        setSessionStatus('interrupted');
+    };
+
+    const loadSessionHistory = useCallback(async (id: string) => {
+        console.log('[ChatbotCopilot] Loading structured session history:', id);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/${id}/history`);
+            if (!response.ok) throw new Error('Failed to fetch history');
+            const data = await response.json();
+            
+            if (data.messages && data.messages.length > 0) {
+                // Backend now returns structured displayItems, use them directly
+                setDisplayItems(data.messages);
+                console.log(`[ChatbotCopilot] Loaded ${data.messages.length} structured items from history`);
+            } else {
+                setDisplayItems([]);
+            }
+            
+            // Also check status
+            const statusResponse = await fetch(`${API_BASE_URL}/api/v1/session/${id}/status`);
+            if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                setSessionStatus(statusData.status || 'idle');
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error loading history:', err);
+        }
+    }, [projectId]);
+
+    // Load initial history
+    useEffect(() => {
+        if (threadId) {
+            loadSessionHistory(threadId);
+        }
+    }, [threadId, loadSessionHistory]);
+
+    const fetchProjectSessions = useCallback(async () => {
+        console.log('[ChatbotCopilot] Fetching session list for project:', projectId);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/project/${projectId}/list`);
+            if (!response.ok) throw new Error('Failed to fetch session list');
+            const data = await response.json();
+            
+            if (data.sessions) {
+                setSessionHistory(prev => {
+                    // Map backend objects to SessionInfo
+                    const backendSessions: SessionInfo[] = data.sessions.map((s: any) => ({
+                        threadId: s.thread_id,
+                        title: s.title,
+                        updatedAt: s.updated_at
+                    }));
+
+                    // Merge: prefer backend info for existing IDs, keep local-only IDs if any
+                    const merged = [...backendSessions];
+                    prev.forEach(p => {
+                        if (!merged.some(m => m.threadId === p.threadId)) {
+                            merged.push(p);
+                        }
+                    });
+                    
+                    return merged.sort((a, b) => {
+                        const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+                        const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+                        return dateB - dateA;
+                    });
+                });
+                console.log(`[ChatbotCopilot] Synced ${data.sessions.length} sessions from backend`);
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error fetching session list:', err);
+        }
+    }, [projectId]);
+
+    // Initial sync of session list
+    useEffect(() => {
+        fetchProjectSessions();
+    }, [fetchProjectSessions]);
 
     const handleHistoryClick = () => {
         setShowHistory(!showHistory);
+        // Refresh list when opening history
+        if (!showHistory) {
+            fetchProjectSessions();
+        }
     };
 
     // Sync initial messages to display items
@@ -287,6 +504,7 @@ export default function ChatbotCopilot({
     const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
         setIsProcessing(true);
         setProcessingStatus('Thinking');
+        setSessionStatus('running');
         // 1. Add User Message (only if not resuming)
         if (!resume) {
             const userMsgId = generateId();
@@ -301,7 +519,7 @@ export default function ChatbotCopilot({
 
         // 3. Connect to SSE Stream
         console.log('[ChatbotCopilot] Connecting to SSE stream...');
-        const url = new URL(`http://localhost:8000/api/v1/stream/${projectId}`);
+        const url = new URL(`${API_BASE_URL}/api/v1/stream/${projectId}`);
         url.searchParams.append('thread_id', threadId);
         if (resume) {
             url.searchParams.append('resume', 'true');
@@ -316,6 +534,7 @@ export default function ChatbotCopilot({
         }
 
         const eventSource = new EventSource(url.toString());
+        eventSourceRef.current = eventSource;  // Save ref for stop functionality
 
         // Track if stream ended normally to suppress error on close
         let normalEnd = false;
@@ -1036,7 +1255,31 @@ export default function ChatbotCopilot({
             console.log('[ChatbotCopilot] Received end event. Closing stream.');
             normalEnd = true;
             eventSource.close();
+            eventSourceRef.current = null;
             setIsProcessing(false);
+            setSessionStatus('completed');
+        });
+
+        // Handle session interrupted event from backend
+        eventSource.addEventListener('session_interrupted', (e: any) => {
+            console.log('[ChatbotCopilot] Session interrupted by backend');
+            normalEnd = true;
+            eventSource.close();
+            eventSourceRef.current = null;
+            setIsProcessing(false);
+            setSessionStatus('interrupted');
+            try {
+                const data = JSON.parse(e.data);
+                // Add a system message about interruption
+                setDisplayItems(prev => [...prev, {
+                    type: 'message',
+                    role: 'assistant',
+                    content: `⏸️ ${data.message || 'Session interrupted. You can resume by sending another message.'}`,
+                    id: generateId()
+                }]);
+            } catch (err) {
+                console.error('[ChatbotCopilot] Failed to parse session_interrupted:', err);
+            }
         });
 
         // ========================================
@@ -1118,8 +1361,14 @@ export default function ChatbotCopilot({
         setInput('');
         setShouldStickToBottom(true);
 
+        // If session was interrupted, we can just continue with the same thread_id
+        // The backend will use the checkpoint to maintain context
+        // No explicit "resume" needed - user's new message continues the conversation
         await runStreamScenario(value);
     };
+
+    // Handle resume choice from dialog - REMOVED: no explicit dialog needed
+    // User simply continues by sending a new message
 
     // Process data stream for commands - temporarily disabled as data is not available in useChat return
     /*
@@ -1273,21 +1522,34 @@ export default function ChatbotCopilot({
                                         {sessionHistory.length === 0 ? (
                                             <div className="p-4 text-center text-sm text-slate-400">No history yet</div>
                                         ) : (
-                                            sessionHistory.map((id, index) => (
+                                            sessionHistory.map((item, index) => (
                                                 <div
-                                                    key={id}
+                                                    key={item.threadId}
                                                     className="px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0 flex items-center justify-between group"
                                                     onClick={() => {
-                                                        // In a real app, we would load this session
-                                                        alert(`Load session: ${id}`);
+                                                        // Switch to this session
+                                                        setThreadId(item.threadId);
                                                         setShowHistory(false);
                                                     }}
                                                 >
                                                     <div className="flex flex-col">
-                                                        <span className="text-sm font-medium text-slate-700">Session {index + 1}</span>
-                                                        <span className="text-[10px] text-slate-400 font-mono">{id.slice(-6)}</span>
+                                                        <span className="text-sm font-medium text-slate-700 truncate max-w-[180px]">
+                                                            {item.title || `Session ${index + 1}`}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-400 font-mono">{item.threadId.slice(-6)}</span>
                                                     </div>
-                                                    <CaretRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                                                    <div className="flex items-center gap-2">
+                                                        <motion.button
+                                                            onClick={(e) => deleteSession(item.threadId, e)}
+                                                            className="p-1.5 rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                                                            whileHover={{ scale: 1.1 }}
+                                                            whileTap={{ scale: 0.9 }}
+                                                            title="Delete Session"
+                                                        >
+                                                            <Trash className="w-3.5 h-3.5" />
+                                                        </motion.button>
+                                                        <CaretRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                                                    </div>
                                                 </div>
                                             ))
                                         )}
@@ -1454,19 +1716,33 @@ export default function ChatbotCopilot({
                                         className={`flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         disabled={isLoading || isProcessing}
                                     />
-                                    <motion.button
-                                        type="submit"
-                                        disabled={!input.trim() || isLoading || isProcessing}
-                                        className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim() && !isProcessing
-                                            ? 'bg-gray-900/90 text-white shadow-lg'
-                                            : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
-                                            }`}
-                                        whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
-                                        whileTap={input.trim() ? { scale: 0.95 } : {}}
-                                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                                    >
-                                        <PaperPlaneRight className="w-4 h-4" weight="fill" />
-                                    </motion.button>
+                                    {sessionStatus === 'running' ? (
+                                        <motion.button
+                                            type="button"
+                                            onClick={handleStop}
+                                            className="px-4 py-4 rounded-matrix transition-all flex items-center justify-center gap-2 bg-red-500/90 text-white shadow-lg hover:bg-red-600"
+                                            whileHover={{ scale: 1.05, y: -2 }}
+                                            whileTap={{ scale: 0.95 }}
+                                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                        >
+                                            <StopCircle className="w-4 h-4" weight="fill" />
+                                            <span className="text-sm font-medium">Stop</span>
+                                        </motion.button>
+                                    ) : (
+                                        <motion.button
+                                            type="submit"
+                                            disabled={!input.trim() || isLoading || isProcessing}
+                                            className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim() && !isProcessing
+                                                ? 'bg-gray-900/90 text-white shadow-lg'
+                                                : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
+                                                }`}
+                                            whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
+                                            whileTap={input.trim() ? { scale: 0.95 } : {}}
+                                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                        >
+                                            <PaperPlaneRight className="w-4 h-4" weight="fill" />
+                                        </motion.button>
+                                    )}
                                 </form>
                             </div>
                         </motion.div>

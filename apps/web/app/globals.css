@@ -134,3 +134,31 @@ pre {
   padding: 0 !important;
   /* Ensure wrapper doesn't have background */
 }
+
+/* Group node visual feedback - receiving (blue) */
+.group-receiving {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 12px rgba(59, 130, 246, 0.3);
+  background-color: rgba(59, 130, 246, 0.05) !important;
+}
+
+/* Group node visual feedback - releasing (red) */
+.group-releasing {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 2px #ef4444, 0 0 12px rgba(239, 68, 68, 0.3);
+  background-color: rgba(239, 68, 68, 0.05) !important;
+}
+
+/* Group just received a node - blue highlight */
+.group-just-received {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 16px rgba(59, 130, 246, 0.4);
+  background-color: rgba(59, 130, 246, 0.08) !important;
+}
+
+/* Group just released a node - red highlight */
+.group-just-released {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 2px #ef4444, 0 0 16px rgba(239, 68, 68, 0.4);
+  background-color: rgba(239, 68, 68, 0.08) !important;
+}
