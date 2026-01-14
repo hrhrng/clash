@@ -1,6 +1,6 @@
 import type { Node } from 'reactflow';
 import type { Rect, Size, ScaleResult } from '../types';
-import { getAbsoluteRect, getAbsolutePosition, getNodeSize, rectUnion } from '../core/geometry';
+import { getAbsoluteRect, getAbsolutePosition } from '../core/geometry';
 import { getChildren, getAncestors } from './hierarchy';
 
 const DEFAULT_PADDING = 60;
@@ -24,9 +24,11 @@ export function calculateGroupBounds(
     let maxBottom = 0;
 
     for (const child of children) {
-        const defaultSize = getNodeSize(child.type || 'default');
-        const width = child.width || (child.style?.width as number) || defaultSize.width;
-        const height = child.height || (child.style?.height as number) || defaultSize.height;
+        // IMPORTANT: Use ReactFlow measured dimensions when available to avoid drift
+        // between visual size and persisted width/height (e.g. asset nodes that auto-size).
+        const rect = getAbsoluteRect(child, nodes);
+        const width = rect.width;
+        const height = rect.height;
 
         const right = child.position.x + width;
         const bottom = child.position.y + height;
@@ -46,8 +48,9 @@ export function calculateGroupBounds(
  */
 export function needsExpansion(group: Node, nodes: Node[], padding: number = DEFAULT_PADDING): boolean {
     const requiredSize = calculateGroupBounds(group.id, nodes, padding);
-    const currentWidth = group.width || (group.style?.width as number) || MIN_GROUP_SIZE.width;
-    const currentHeight = group.height || (group.style?.height as number) || MIN_GROUP_SIZE.height;
+    const currentRect = getAbsoluteRect(group, nodes);
+    const currentWidth = currentRect.width || MIN_GROUP_SIZE.width;
+    const currentHeight = currentRect.height || MIN_GROUP_SIZE.height;
 
     return requiredSize.width > currentWidth || requiredSize.height > currentHeight;
 }
@@ -63,8 +66,9 @@ export function scaleGroupToFitChild(
     padding: number = DEFAULT_PADDING
 ): ScaleResult {
     const groupAbsPos = getAbsolutePosition(group, nodes);
-    const currentWidth = group.width || (group.style?.width as number) || MIN_GROUP_SIZE.width;
-    const currentHeight = group.height || (group.style?.height as number) || MIN_GROUP_SIZE.height;
+    const groupRect = getAbsoluteRect(group, nodes);
+    const currentWidth = groupRect.width || MIN_GROUP_SIZE.width;
+    const currentHeight = groupRect.height || MIN_GROUP_SIZE.height;
 
     // Child position is relative to group
     const childRelRight = childRect.x - groupAbsPos.x + childRect.width;
@@ -193,12 +197,13 @@ export function autoScaleGroups(
  * Check if a child is within the group's current bounds
  */
 export function isChildWithinBounds(child: Node, group: Node): boolean {
-    const groupWidth = group.width || (group.style?.width as number) || MIN_GROUP_SIZE.width;
-    const groupHeight = group.height || (group.style?.height as number) || MIN_GROUP_SIZE.height;
+    const groupRect = getAbsoluteRect(group, [group, child]);
+    const groupWidth = groupRect.width || MIN_GROUP_SIZE.width;
+    const groupHeight = groupRect.height || MIN_GROUP_SIZE.height;
 
-    const childSize = getNodeSize(child.type || 'default');
-    const childWidth = child.width || (child.style?.width as number) || childSize.width;
-    const childHeight = child.height || (child.style?.height as number) || childSize.height;
+    const childRect = getAbsoluteRect(child, [group, child]);
+    const childWidth = childRect.width;
+    const childHeight = childRect.height;
 
     const childRight = child.position.x + childWidth;
     const childBottom = child.position.y + childHeight;

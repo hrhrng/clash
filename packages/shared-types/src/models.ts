@@ -1,10 +1,51 @@
 import { z } from 'zod';
 
-export const ModelKindSchema = z.enum(['image', 'video']);
+export const ModelKindSchema = z.enum(['image', 'video', 'audio']);
 export type ModelKind = z.infer<typeof ModelKindSchema>;
+
+/**
+ * Gemini ImageConfig aspect ratios
+ * Reference: https://ai.google.dev/gemini-api/docs/image-generation
+ */
+export const GEMINI_ASPECT_RATIOS = [
+  { label: '1:1', value: '1:1' },
+  { label: '2:3', value: '2:3' },
+  { label: '3:2', value: '3:2' },
+  { label: '3:4', value: '3:4' },
+  { label: '4:3', value: '4:3' },
+  { label: '4:5', value: '4:5' },
+  { label: '5:4', value: '5:4' },
+  { label: '9:16', value: '9:16' },
+  { label: '16:9', value: '16:9' },
+  { label: '21:9', value: '21:9' },
+] as const;
+
+/**
+ * Gemini ImageConfig image sizes
+ * Reference: https://googleapis.github.io/python-genai/genai.html#genai.types.ImageConfig
+ */
+export const GEMINI_IMAGE_SIZES = [
+  { label: '1K (Fast)', value: '1K' },
+  { label: '2K (Balanced)', value: '2K' },
+  { label: '4K (High Quality)', value: '4K' },
+] as const;
 
 export const ModelParameterTypeSchema = z.enum(['select', 'slider', 'number', 'text', 'boolean']);
 export type ModelParameterType = z.infer<typeof ModelParameterTypeSchema>;
+
+/**
+ * Provider configuration for models
+ * Each model can have multiple providers (e.g., ElevenLabs official API or KIE.ai)
+ */
+export const ProviderSchema = z.enum(['official', 'kie']);
+export type Provider = z.infer<typeof ProviderSchema>;
+
+export const ModelProviderConfigSchema = z.object({
+  model_id: z.string(),
+  provider: ProviderSchema,
+  default: z.boolean().default(false),
+});
+export type ModelProviderConfig = z.infer<typeof ModelProviderConfigSchema>;
 
 export const ModelParameterSchema = z.object({
   id: z.string(),
@@ -44,6 +85,8 @@ export const ModelCardSchema = z.object({
   parameters: z.array(ModelParameterSchema),
   defaultParams: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),
   input: ModelInputRuleSchema.default({ requiresPrompt: true, referenceImage: 'optional' }),
+  availableProviders: z.array(ProviderSchema).optional(),
+  defaultProvider: ProviderSchema.optional(),
 });
 export type ModelCard = z.infer<typeof ModelCardSchema>;
 
@@ -59,14 +102,16 @@ export const MODEL_CARDS: ModelCard[] = [
         id: 'aspect_ratio',
         label: 'Aspect Ratio',
         type: 'select',
-        options: [
-          { label: '1:1', value: '1:1' },
-          { label: '3:4', value: '3:4' },
-          { label: '4:3', value: '4:3' },
-          { label: '9:16', value: '9:16' },
-          { label: '16:9', value: '16:9' },
-        ],
+        options: GEMINI_ASPECT_RATIOS.map(r => ({ label: r.label, value: r.value })),
         defaultValue: '16:9',
+      },
+      {
+        id: 'image_size',
+        label: 'Image Size',
+        type: 'select',
+        options: GEMINI_IMAGE_SIZES.map(s => ({ label: s.label, value: s.value })),
+        defaultValue: '2K',
+        description: 'Higher resolution = better quality but slower generation',
       },
       {
         id: 'stylization',
@@ -111,6 +156,7 @@ export const MODEL_CARDS: ModelCard[] = [
     ],
     defaultParams: {
       aspect_ratio: '16:9',
+      image_size: '2K',
       stylization: 100,
       weirdness: 0,
       diversity: 0,
@@ -129,14 +175,16 @@ export const MODEL_CARDS: ModelCard[] = [
         id: 'aspect_ratio',
         label: 'Aspect Ratio',
         type: 'select',
-        options: [
-          { label: '1:1', value: '1:1' },
-          { label: '3:4', value: '3:4' },
-          { label: '4:3', value: '4:3' },
-          { label: '9:16', value: '9:16' },
-          { label: '16:9', value: '16:9' },
-        ],
+        options: GEMINI_ASPECT_RATIOS.map(r => ({ label: r.label, value: r.value })),
         defaultValue: '16:9',
+      },
+      {
+        id: 'image_size',
+        label: 'Image Size',
+        type: 'select',
+        options: GEMINI_IMAGE_SIZES.map(s => ({ label: s.label, value: s.value })),
+        defaultValue: '2K',
+        description: 'Higher resolution = better quality but slower generation',
       },
       {
         id: 'stylization',
@@ -169,6 +217,7 @@ export const MODEL_CARDS: ModelCard[] = [
     ],
     defaultParams: {
       aspect_ratio: '16:9',
+      image_size: '2K',
       stylization: 200,
       weirdness: 0,
       count: 1,
@@ -314,5 +363,113 @@ export const MODEL_CARDS: ModelCard[] = [
       cfg_scale: 0.5,
     },
     input: { requiresPrompt: true, referenceImage: 'required', referenceMode: 'start_end' },
+  },
+  {
+    id: 'minimax-tts',
+    name: 'MiniMax TTS',
+    provider: 'MiniMax',
+    kind: 'audio',
+    description: 'High-quality Chinese and English text-to-speech.',
+    parameters: [
+      {
+        id: 'voice_id',
+        label: 'Voice',
+        type: 'select',
+        options: [
+          { label: 'Female - Warm', value: 'female-warm' },
+          { label: 'Female - Energetic', value: 'female-energetic' },
+          { label: 'Male - Calm', value: 'male-calm' },
+          { label: 'Male - Storyteller', value: 'male-storyteller' },
+        ],
+        defaultValue: 'female-warm',
+      },
+      {
+        id: 'speed',
+        label: 'Speed',
+        type: 'slider',
+        min: 0.5,
+        max: 2.0,
+        step: 0.1,
+        defaultValue: 1.0,
+        description: 'Speech speed multiplier',
+      },
+      {
+        id: 'pitch',
+        label: 'Pitch',
+        type: 'slider',
+        min: -12,
+        max: 12,
+        step: 1,
+        defaultValue: 0,
+        description: 'Voice pitch adjustment (semitones)',
+      },
+    ],
+    defaultParams: {
+      voice_id: 'female-warm',
+      speed: 1.0,
+      pitch: 0,
+    },
+    input: { requiresPrompt: true, referenceImage: 'forbidden', referenceMode: 'none' },
+  },
+  {
+    id: 'elevenlabs-tts',
+    name: 'ElevenLabs TTS',
+    provider: 'ElevenLabs',
+    kind: 'audio',
+    description: 'Ultra-realistic voice synthesis with emotional range.',
+    parameters: [
+      {
+        id: 'voice_id',
+        label: 'Voice',
+        type: 'select',
+        options: [
+          { label: 'Rachel - Calm', value: 'rachel' },
+          { label: 'Drew - Professional', value: 'drew' },
+          { label: 'Clyde - Warm', value: 'clyde' },
+          { label: 'Paul - Narrator', value: 'paul' },
+        ],
+        defaultValue: 'rachel',
+      },
+      {
+        id: 'model_id',
+        label: 'Model',
+        type: 'select',
+        options: [
+          { label: 'Multilingual v2', value: 'eleven_multilingual_v2' },
+          { label: 'English v2', value: 'eleven_monolingual_v1' },
+          { label: 'Turbo v2', value: 'eleven_turbo_v2' },
+        ],
+        defaultValue: 'eleven_multilingual_v2',
+      },
+      {
+        id: 'stability',
+        label: 'Stability',
+        type: 'slider',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        defaultValue: 0.5,
+        description: 'Voice consistency (0=variable, 1=stable)',
+      },
+      {
+        id: 'similarity_boost',
+        label: 'Similarity',
+        type: 'slider',
+        min: 0,
+        max: 1,
+        step: 0.05,
+        defaultValue: 0.75,
+        description: 'How closely to match the original voice',
+      },
+    ],
+    defaultParams: {
+      voice_id: 'rachel',
+      model_id: 'eleven_multilingual_v2',
+      stability: 0.5,
+      similarity_boost: 0.75,
+    },
+    input: { requiresPrompt: true, referenceImage: 'forbidden', referenceMode: 'none' },
+    availableProviders: ['official', 'kie'],
+    defaultProvider: 'official',
   },
 ] as unknown as ModelCard[];

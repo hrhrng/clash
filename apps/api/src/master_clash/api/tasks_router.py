@@ -39,7 +39,7 @@ HEARTBEAT_INTERVAL_MS = 30 * 1000  # 30 seconds
 WORKER_ID = f"worker_{uuid.uuid4().hex[:8]}"  # Unique per process
 
 # Task types
-TaskType = Literal["image_gen", "video_gen", "image_desc", "video_desc"]
+TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc"]
 
 # Status constants
 STATUS_PENDING = "pending"
@@ -195,11 +195,12 @@ async def process_image_generation(task_id: str, params: dict) -> None:
     """Generate image using Gemini."""
     callback_url = params.get("callback_url")
     node_id = params.get("node_id")
-    
+
     try:
         await claim_task(task_id)
-        logger.info(f"[Tasks] Processing image_gen: {task_id}")
-        
+        logger.info(f"[Tasks] 🎨 Processing image_gen: {task_id}, node: {node_id}")
+        logger.info(f"[Tasks] 📋 Params: {params}")
+
         prompt = params.get("prompt", "")
         model_id = params.get("model") or params.get("model_id")
         model_params = params.get("model_params") or {}
@@ -208,10 +209,12 @@ async def process_image_generation(task_id: str, params: dict) -> None:
         # Support legacy aspect_ratio field
         if params.get("aspect_ratio") and "aspect_ratio" not in model_params:
             model_params["aspect_ratio"] = params.get("aspect_ratio")
-        
+
+        logger.info(f"[Tasks] 🚀 Calling generation_models.generate_image with model={model_id or generation_models.DEFAULT_IMAGE_MODEL}")
+
         # Start heartbeat
         heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
-        
+
         try:
             generation_result = await generation_models.generate_image(
                 ImageGenerationRequest(
@@ -248,6 +251,66 @@ async def process_image_generation(task_id: str, params: dict) -> None:
             
     except Exception as e:
         logger.error(f"[Tasks] image_gen failed: {e}")
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "status": "failed",
+            "error": str(e),
+            "pendingTask": None
+        })
+
+
+async def process_audio_generation(task_id: str, params: dict) -> None:
+    """Generate audio/speech using TTS."""
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎵 Processing audio_gen: {task_id}, node: {node_id}")
+        logger.info(f"[Tasks] 📋 Params: {params}")
+
+        text = params.get("prompt", "")
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        project_id = params.get("project_id")
+
+        logger.info(f"[Tasks] 🚀 Calling generation_models.generate_audio with model={model_id or generation_models.DEFAULT_AUDIO_MODEL}")
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
+
+        try:
+            generation_result = await generation_models.generate_audio(
+                generation_models.AudioGenerationRequest(
+                    text=text,
+                    project_id=project_id,
+                    model_id=model_id or generation_models.DEFAULT_AUDIO_MODEL,
+                    params=model_params,
+                )
+            )
+
+            if generation_result.success and generation_result.r2_key:
+                await complete_task(task_id, result_url=generation_result.r2_key)
+
+                await callback_to_loro(callback_url, node_id, {
+                    "src": generation_result.r2_key,
+                    "status": "completed",
+                    "pendingTask": None,
+                    "model": model_id or generation_models.DEFAULT_AUDIO_MODEL,
+                })
+            else:
+                error_message = generation_result.error or "No audio generated"
+                await fail_task(task_id, error_message)
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": error_message,
+                    "pendingTask": None
+                })
+        finally:
+            heartbeat_task.cancel()
+
+    except Exception as e:
+        logger.exception(f"[Tasks] ❌ audio_gen failed for {task_id}")
         await fail_task(task_id, str(e))
         await callback_to_loro(callback_url, node_id, {
             "status": "failed",
@@ -486,6 +549,7 @@ async def submit_task(request: TaskSubmitRequest, background_tasks: BackgroundTa
     processor = {
         "image_gen": process_image_generation,
         "video_gen": process_video_generation,
+        "audio_gen": process_audio_generation,
         "image_desc": process_image_description,
         "video_desc": process_video_description,
     }.get(request.task_type)

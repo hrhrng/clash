@@ -71,13 +71,13 @@ RUN mkdir -p /app/output /app/assets
 
 # Health check for FastAPI server
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8888/health || exit 1
 
 # Expose port for FastAPI
-EXPOSE 8000
+EXPOSE 8888
 
 # Default command: Run FastAPI server with uvicorn
-CMD ["uvicorn", "master_clash.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "master_clash.api.main:app", "--host", "0.0.0.0", "--port", "8888"]
 
 # ==============================================================================
 # Usage Examples:

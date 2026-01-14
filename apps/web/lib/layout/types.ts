@@ -75,6 +75,12 @@ export interface LayoutManagerConfig {
     autoScale: boolean;
     autoResolveCollisions: boolean;
     maxChainReactionIterations: number;
+    /**
+     * Optional callback invoked inside layout operations that mutate nodes.
+     * Useful for syncing derived layout changes (e.g. group resize/collision resolution)
+     * to an external persistence layer.
+     */
+    onNodesMutated?: (prevNodes: Node[], nextNodes: Node[]) => void;
 }
 
 // Re-export Node type for convenience

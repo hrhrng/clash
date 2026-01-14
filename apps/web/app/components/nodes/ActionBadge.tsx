@@ -1,5 +1,5 @@
 import { memo, useState, useEffect, useCallback, useMemo } from 'react';
-import { Handle, Position, NodeProps, useReactFlow, useEdges } from 'reactflow';
+import { Handle, Position, Node, NodeProps, useReactFlow, useEdges } from 'reactflow';
 import { VideoCamera, Image as ImageIcon, CaretDown, X, Play, Spinner, ArrowsInLineVertical } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
@@ -11,6 +11,7 @@ import { generateSemanticId } from '@/lib/utils/semanticId';
 import MilkdownEditor from '../MilkdownEditor';
 import { resolveAssetUrl, isR2Key } from '../../../lib/utils/assets';
 import { MODEL_CARDS, type ModelCard, type ModelParameter } from '@clash/shared-types';
+import { applyLayoutPatchesToLoro, collectLayoutNodePatches } from '../../lib/loroNodeSync';
 
 type ModelParams = Record<string, string | number | boolean>;
 
@@ -24,9 +25,17 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     // React Flow hooks
     const { projectId } = useProject();
     const { getNodes, getEdges, addEdges, setNodes } = useReactFlow();
-    const { addNodeWithAutoLayout } = useLayoutManager();
     const loroSync = useOptionalLoroSyncContext();
     const edges = useEdges();
+    const onNodesMutated = useCallback(
+        (prevNodes: Node[], nextNodes: Node[]) => {
+            if (!loroSync?.connected) return;
+            const patches = collectLayoutNodePatches(prevNodes, nextNodes);
+            applyLayoutPatchesToLoro(loroSync, patches);
+        },
+        [loroSync]
+    );
+    const { addNodeWithAutoLayout } = useLayoutManager({ onNodesMutated });
 
     // Prompt editing state
     const [label, setLabel] = useState(data.label || 'Prompt');
@@ -300,6 +309,26 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
         }
     }, [data.autoRun, edges, data.upstreamNodeIds, id, isExecuting]);
 
+    // Helper to extract meaningful label from prompt content
+    const extractLabelFromPrompt = (promptText: string, fallback: string): string => {
+        if (!promptText || promptText.trim() === '') return fallback;
+
+        // Remove markdown headers and get first non-empty line
+        const lines = promptText
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line && !line.startsWith('#') && line !== 'Prompt' && line !== 'Enter your prompt here...');
+
+        if (lines.length === 0) return fallback;
+
+        // Take first 50 chars of first meaningful line
+        const firstLine = lines[0];
+        if (firstLine.length > 50) {
+            return firstLine.substring(0, 50) + '...';
+        }
+        return firstLine;
+    };
+
     // Execute action: generate image or video
     const handleExecute = async () => {
         setIsExecuting(true);
@@ -385,7 +414,12 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 // Create pending node - Loro will handle generation
                 // ============================================
                 const pendingNodeId = assetName;
+
+                // Extract meaningful label from prompt
+                const generatedLabel = extractLabelFromPrompt(prompt, 'Generated Image');
+
                 console.log('[ActionBadge] Creating pending image node:', pendingNodeId);
+                console.log('[ActionBadge] Label:', generatedLabel);
                 console.log('[ActionBadge] Prompt:', prompt);
 
                 // Create the pending node in React state
@@ -394,7 +428,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                         id: pendingNodeId,
                         type: 'image',
                         data: {
-                            label: assetName,
+                            label: generatedLabel,
                             src: '', // Empty src = generating
                             status: 'generating',
                             prompt: prompt, // Loro uses this for generation
@@ -497,7 +531,12 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 // Same pattern as image generation
                 // ============================================
                 const pendingNodeId = assetName;
+
+                // Extract meaningful label from prompt
+                const generatedLabel = extractLabelFromPrompt(prompt, 'Generated Video');
+
                 console.log('[ActionBadge] Creating pending video node:', pendingNodeId);
+                console.log('[ActionBadge] Label:', generatedLabel);
                 console.log('[ActionBadge] Prompt:', prompt);
                 console.log('[ActionBadge] Reference images:', referenceImageUrls);
                 const durationValue = modelParams.duration ?? 5;
@@ -509,7 +548,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                         id: pendingNodeId,
                         type: 'video',
                         data: {
-                            label: assetName,
+                            label: generatedLabel,
                             src: '', // Empty src = generating
                             status: 'generating',
                             prompt: prompt, // Loro uses this for generation

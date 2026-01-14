@@ -9,7 +9,7 @@
 const API_URL =
     process.env.NEXT_PUBLIC_BACKEND_URL ||
     process.env.BACKEND_API_URL || // fallback for server contexts
-    'http://localhost:8000';
+    'http://localhost:8888';
 
 interface GenerateIDResponse {
     ids: string[];

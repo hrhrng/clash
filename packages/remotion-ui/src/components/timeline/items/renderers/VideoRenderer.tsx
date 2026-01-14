@@ -1,6 +1,6 @@
 import React from 'react';
-import type { VideoItem } from '@master-clash/remotion-core';
-
+import type { Item, Asset, VideoItem } from '@remotion-fast/core';
+import { colors } from '../../styles';
 import type { ItemRenderProps } from '../registry';
 import { secondsToFrames } from '../../utils/timeFormatter';
 
@@ -26,7 +26,7 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
     if (!asset?.duration || !('src' in video)) return;
 
     const render = async () => {
-      const duration = asset.duration!;
+      const duration = asset.duration;
       const totalFrames = secondsToFrames(duration, 30); // sampling grid; not playback
 
       const displayWidth = Math.max(1, Math.floor(width));
@@ -111,7 +111,7 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
   }, [asset?.duration, video.src, width, height, pixelsPerFrame]);
 
   return (
-    <div style={{ position: 'relative', width, height, background: 'transparent' }}>
+    <div style={{ position: 'relative', width, height, background: colors.bg.primary }}>
       <canvas ref={canvasRef} style={{ width, height, display: 'block', opacity: ready ? 1 : 0.9 }} />
       {/* Waveform overlay if available */}
       {asset?.waveform && (
@@ -136,3 +136,4 @@ const AudioWaveform: React.FC<{ waveform: number[]; width: number; height: numbe
     </svg>
   );
 };
+

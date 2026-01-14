@@ -1,7 +1,10 @@
 'use client';
 
-import { memo, useState, useMemo } from 'react';
-import { NodeProps, NodeResizeControl, useReactFlow } from 'reactflow';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Node, NodeProps, NodeResizeControl, useNodes, useReactFlow } from 'reactflow';
+import { useOptionalLoroSyncContext } from '../LoroSyncContext';
+import { useLayoutActions } from '../LayoutActionsContext';
+import { MagicWand } from '@phosphor-icons/react';
 
 const controlStyle = {
     background: '#FF9900',
@@ -11,33 +14,34 @@ const controlStyle = {
     height: 10,
 };
 
-interface GroupNodeData {
-    label?: string;
-    isReceiving?: boolean;   // Node is being dragged over this group
-    isReleasing?: boolean;   // Node is being dragged out of this group
-    justReceived?: boolean;  // Flash animation after receiving a node
-    justReleased?: boolean;  // Flash animation after releasing a node
-}
-
-const GroupNode = ({ selected, data, id }: NodeProps<GroupNodeData>) => {
+const GroupNode = ({ selected, data, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Group');
-    const { getNodes } = useReactFlow();
+    const nodes = useNodes();
+    const { setNodes } = useReactFlow();
+    const loroSync = useOptionalLoroSyncContext();
+    const { relayoutParent } = useLayoutActions();
+    const syncTimeoutRef = useRef<number | null>(null);
 
     // Calculate nesting depth
     const depth = useMemo(() => {
-        const nodes = getNodes();
         let currentId = id;
         let level = 0;
 
         while (currentId) {
-            const node = nodes.find(n => n.id === currentId);
+            const node = nodes.find((n) => n.id === currentId);
             if (!node || !node.parentId) break;
             currentId = node.parentId;
             level++;
         }
 
         return level;
-    }, [id, getNodes]);
+    }, [id, nodes]);
+
+    useEffect(() => {
+        if (typeof data.label === 'string' && data.label !== label) {
+            setLabel(data.label);
+        }
+    }, [data.label, label]);
 
     // Generate background color based on depth
     const backgroundColor = useMemo(() => {
@@ -49,15 +53,25 @@ const GroupNode = ({ selected, data, id }: NodeProps<GroupNodeData>) => {
         return `bg-slate-100/${opacity}`;
     }, [depth, selected]);
 
-    // Build CSS classes for visual feedback states
-    const feedbackClasses = useMemo(() => {
-        const classes: string[] = [];
-        if (data.isReceiving) classes.push('group-receiving');
-        if (data.isReleasing) classes.push('group-releasing');
-        if (data.justReceived) classes.push('group-just-received');
-        if (data.justReleased) classes.push('group-just-released');
-        return classes.join(' ');
-    }, [data.isReceiving, data.isReleasing, data.justReceived, data.justReleased]);
+    const scheduleLoroSync = (nextLabel: string) => {
+        if (!loroSync?.connected) return;
+        if (syncTimeoutRef.current) {
+            window.clearTimeout(syncTimeoutRef.current);
+        }
+        syncTimeoutRef.current = window.setTimeout(() => {
+            loroSync.updateNode(id, {
+                data: { label: nextLabel },
+            });
+        }, 250);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (syncTimeoutRef.current) {
+                window.clearTimeout(syncTimeoutRef.current);
+            }
+        };
+    }, []);
 
     return (
         <>
@@ -71,7 +85,7 @@ const GroupNode = ({ selected, data, id }: NodeProps<GroupNodeData>) => {
             )}
 
             <div
-                className={`h-full w-full border-2 transition-all duration-300 ${selected ? 'border-[#FF9900]' : 'border-slate-300'} ${backgroundColor} ${feedbackClasses}`}
+                className={`h-full w-full border-2 transition-all duration-300 ${selected ? 'border-[#FF9900]' : 'border-slate-300'} ${backgroundColor}`}
             >
                 {/* Floating Title Input */}
                 <div
@@ -82,10 +96,40 @@ const GroupNode = ({ selected, data, id }: NodeProps<GroupNodeData>) => {
                         className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
                         value={label}
                         onChange={(evt) => {
-                            setLabel(evt.target.value);
-                            data.label = evt.target.value;
+                            const nextLabel = evt.target.value;
+                            setLabel(nextLabel);
+                            setNodes((nds) =>
+                                nds.map((n: Node) =>
+                                    n.id === id
+                                        ? {
+                                              ...n,
+                                              data: {
+                                                  ...(n.data || {}),
+                                                  label: nextLabel,
+                                              },
+                                          }
+                                        : n
+                                )
+                            );
+                            scheduleLoroSync(nextLabel);
                         }}
                     />
+                </div>
+
+                {/* Relayout button (only affects first layer inside this group) */}
+                <div className="absolute -top-8 right-4 z-10">
+                    <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white/80 text-slate-600 shadow-sm backdrop-blur hover:bg-white hover:text-slate-900"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            relayoutParent(id);
+                        }}
+                        title="Relayout inside group"
+                    >
+                        <MagicWand className="h-4 w-4" weight="regular" />
+                    </button>
                 </div>
             </div>
         </>

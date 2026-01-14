@@ -2,8 +2,8 @@
  * 吸附计算工具
  */
 
-import type { Item, Track } from '@master-clash/remotion-core';
-
+import type { Item, Track } from '@remotion-fast/core';
+import { timeline } from '../styles';
 
 export interface SnapTarget {
   frame: number;
@@ -39,7 +39,7 @@ export function calculateSnap(
   currentItemId: string | null,
   playheadFrame: number,
   snapEnabled: boolean = true,
-  threshold: number = 10
+  threshold: number = timeline.snapThreshold
 ): SnapResult {
   if (!snapEnabled) {
     return {
@@ -68,7 +68,7 @@ export function calculateSnap(
   });
 
   // Grid
-  const gridFrame = Math.round(frame / 30) * 30;
+  const gridFrame = Math.round(frame / timeline.snapGridInterval) * timeline.snapGridInterval;
   gridTargets.push({ frame: gridFrame, type: 'grid', label: '网格' });
 
   const pickFrom = (targets: SnapTarget[]): SnapTarget | null => {
@@ -121,7 +121,7 @@ export function calculateResizeSnap(
   currentItemId: string,
   playheadFrame: number,
   snapEnabled: boolean = true,
-  threshold: number = 10
+  threshold: number = timeline.snapThreshold
 ): SnapResult {
   // 调整大小时的吸附逻辑与普通吸附类似，但只关注边缘
   return calculateSnap(frame, tracks, currentItemId, playheadFrame, snapEnabled, threshold);
@@ -138,7 +138,7 @@ export function calculateSnapForItemRange(
   currentItemId: string | null,
   playheadFrame: number,
   snapEnabled: boolean = true,
-  threshold: number = 10
+  threshold: number = timeline.snapThreshold
 ): SnapItemRangeResult {
   if (!snapEnabled) {
     return {

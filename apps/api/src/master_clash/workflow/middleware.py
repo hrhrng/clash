@@ -35,6 +35,7 @@ from master_clash.workflow.tools import (
     create_run_generation_tool,
     create_wait_generation_tool,
     create_search_nodes_tool,
+    create_list_model_cards_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,6 +213,7 @@ You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
 - create_canvas_node: Create text/group nodes (for organization)
+- list_model_cards: List available model cards for a given asset kind (image/video/audio). Use this first to choose a model and parameters.
 - create_generation_node: Create PromptActionNodes with embedded prompts for image/video generation
 - run_generation_node: Run a generation node to produce the asset (call after create)
 - wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
@@ -231,14 +233,16 @@ IMPORTANT: PromptActionNode Architecture:
 
 Workflow:
 1. Create a Group first (using create_canvas_node with type='group')
-2. Use create_generation_node with:
+2. Call list_model_cards to pick a model and parameters (progressive disclosure)
+3. Use create_generation_node with:
    - 'prompt': detailed generation prompt for the AI model
    - 'content': markdown description/notes for display
    - 'parent_id': The group ID from step 1 (REQUIRED!)
+   - 'modelParams': MUST be an object (dict), not a JSON string
    - For video_gen: MUST include upstreamNodeIds with at least one completed image node ID
    - For image_gen: upstreamNodeIds are optional
-3. Then use run_generation_node to trigger the generation
-4. Call wait_for_generation to check status (pass the returned asset node ID, NOT the action-badge ID)
+4. Then use run_generation_node to trigger the generation
+5. Call wait_for_generation to check status (pass the returned asset node ID, NOT the action-badge ID)
 """
 
     def _generate_canvas_tools(self) -> list[BaseTool]:
@@ -247,6 +251,7 @@ Workflow:
             create_list_nodes_tool(self.backend),
             create_read_node_tool(self.backend),
             create_create_node_tool(self.backend),
+            create_list_model_cards_tool(),
             create_generation_node_tool(self.backend),
             create_run_generation_tool(self.backend),
             create_wait_generation_tool(self.backend),

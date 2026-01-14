@@ -31,6 +31,7 @@ class LoroConnectionMixin:
     _pending_sends: set
     _ws_loop: asyncio.AbstractEventLoop | None
     _disconnecting: bool  # Flag to prevent auto-reconnect after intentional disconnect
+    _local_update_subscription: Any  # Loro subscription object
 
     async def connect(self):
         """Connect to the sync server via WebSocket and start syncing."""
@@ -65,6 +66,12 @@ class LoroConnectionMixin:
             except Exception as e:
                 logger.error(f"[LoroSyncClient] ❌ Failed to import initial state: {e}")
 
+            # Subscribe to local updates (automatic sync)
+            self._local_update_subscription = self.doc.subscribe_local_update(
+                lambda update: (self._send_update(bytes(update)), True)[1]
+            )
+            logger.info("[LoroSyncClient] Subscribed to local updates")
+
             # Start listening for updates
             asyncio.create_task(self._listen())
             logger.info("[LoroSyncClient] Started listening for updates from server")
@@ -76,6 +83,13 @@ class LoroConnectionMixin:
     async def disconnect(self):
         """Disconnect from the sync server."""
         self._disconnecting = True  # Signal to _listen() not to auto-reconnect
+
+        # Unsubscribe from local updates
+        if self._local_update_subscription:
+            self._local_update_subscription.unsubscribe()
+            self._local_update_subscription = None
+            logger.info("[LoroSyncClient] Unsubscribed from local updates")
+
         if self.ws:
             await self._flush_pending_sends()
             await self.ws.close()

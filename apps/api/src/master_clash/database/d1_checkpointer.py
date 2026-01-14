@@ -65,7 +65,14 @@ class D1Checkpointer(BaseCheckpointSaver):
 
         payload = {"sql": sql, "params": params or []}
 
-        response = httpx.post(self.base_url, headers=headers, json=payload, timeout=30.0)
+        # Use trust_env=True to respect system proxy settings and increase timeout
+        response = httpx.post(
+            self.base_url,
+            headers=headers,
+            json=payload,
+            timeout=60.0,
+            trust_env=True
+        )
         response.raise_for_status()
 
         result = response.json()
@@ -95,9 +102,11 @@ class D1Checkpointer(BaseCheckpointSaver):
 
         payload = {"sql": sql, "params": params or []}
 
-        async with httpx.AsyncClient() as client:
+        # Use trust_env=True to respect system proxy settings (HTTP_PROXY, HTTPS_PROXY)
+        # and increase timeout for potential network issues
+        async with httpx.AsyncClient(trust_env=True, timeout=60.0) as client:
             response = await client.post(
-                self.base_url, headers=headers, json=payload, timeout=30.0
+                self.base_url, headers=headers, json=payload
             )
             response.raise_for_status()
 

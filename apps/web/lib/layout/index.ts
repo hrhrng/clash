@@ -78,3 +78,20 @@ export {
 // Main hook
 export { useLayoutManager } from './hooks/useLayoutManager';
 export type { UseLayoutManagerReturn } from './hooks/useLayoutManager';
+
+// Grid relayout
+export { relayoutToGrid } from './grid/relayout';
+
+// Auto-insert (for nodes added by Python backend or frontend actions)
+export {
+    NEEDS_LAYOUT_POSITION,
+    needsAutoLayout,
+    findReferenceNode,
+    findBottomY,
+    calculateInsertPosition,
+    chainPushRight,
+    autoInsertNode,
+    applyAutoInsertResult,
+    processAutoLayoutNodes,
+} from './auto-insert';
+export type { AutoInsertResult } from './auto-insert';

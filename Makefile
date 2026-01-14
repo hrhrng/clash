@@ -15,7 +15,7 @@ dev-web:
 # 启动后端开发服务器 (with proxy for network access)
 dev-api:
 	@echo "Starting backend..."
-	HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8000
+	HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1 PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8888
 
 # 启动协作同步服务（Durable Object, with proxy for D1/R2 network access）
 dev-sync: db-sync-local
@@ -41,7 +41,7 @@ db-sync-local:
 dev:
 	@echo "Starting all services..."
 	@echo "Frontend: http://localhost:3000"
-	@echo "Backend:  http://localhost:8000"
+	@echo "Backend:  http://localhost:8888"
 	@$(MAKE) -j2 dev-web dev-api
 
 # 前端 + 同步服务（协作开发最常用）
@@ -55,7 +55,7 @@ dev-collab:
 dev-full:
 	@echo "Starting services..."
 	@echo "Frontend: http://localhost:3000"
-	@echo "Backend:  http://localhost:8000"
+	@echo "Backend:  http://localhost:8888"
 	@echo "Sync:     http://localhost:8787 (ws: /sync/:projectId)"
 	@$(MAKE) -j3 dev-web dev-api dev-sync
 
@@ -68,7 +68,7 @@ dev-gateway-full:
 	@echo "   │  Auth Gateway: http://localhost:8788        │"
 	@echo "   │  ├─ /          → Frontend (:3000)          │"
 	@echo "   │  ├─ /sync/*    → Loro Sync (:8787)         │"
-	@echo "   │  ├─ /api/chat  → Python API (:8000)        │"
+	@echo "   │  ├─ /api/chat  → Python API (:8888)        │"
 	@echo "   │  └─ /assets/*  → R2 Assets                 │"
 	@echo "   └─────────────────────────────────────────────┘"
 	@echo ""

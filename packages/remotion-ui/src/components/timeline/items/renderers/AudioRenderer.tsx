@@ -1,14 +1,14 @@
 import React from 'react';
-import type { AudioItem } from '@master-clash/remotion-core';
+import type { Item, Asset, AudioItem } from '@remotion-fast/core';
 import type { ItemRenderProps } from '../registry';
-
+import { colors } from '../../styles';
 
 export const AudioRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, height }) => {
-  const _audio = item as AudioItem;
+  const audio = item as AudioItem;
   const waveform = asset?.waveform;
 
   return (
-    <div style={{ position: 'relative', width, height, background: 'transparent' }}>
+    <div style={{ position: 'relative', width, height, background: colors.bg.primary }}>
       {waveform ? (
         <Waveform waveform={waveform} width={width} height={height} />
       ) : (
@@ -33,3 +33,4 @@ const Waveform: React.FC<{ waveform: number[]; width: number; height: number }> 
     </svg>
   );
 };
+

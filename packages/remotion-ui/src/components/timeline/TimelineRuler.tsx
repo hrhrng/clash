@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { colors, timeline, typography, shadows, zIndex } from './styles';
 import {
   formatTime,
   frameToPixels,
@@ -11,6 +12,7 @@ interface TimelineRulerProps {
   pixelsPerFrame: number;
   fps: number;
   onSeek: (frame: number) => void;
+  zoom: number;
   // Horizontal scroll sync from tracks viewport
   scrollLeft: number;
   // Visible content width to clamp ruler width
@@ -31,6 +33,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   pixelsPerFrame,
   fps,
   onSeek,
+  zoom,
   scrollLeft,
   viewportWidth,
   contentEndInFrames,
@@ -137,7 +140,19 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
 
   return (
     <div
-      className="sticky top-0 left-0 right-0 h-8 bg-slate-50 border-b border-slate-200 z-20 cursor-pointer select-none"
+      style={{
+        position: 'sticky',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: timeline.rulerHeight,
+        background: `linear-gradient(180deg, ${colors.bg.secondary} 0%, ${colors.bg.elevated} 100%)`,
+        // Use the track container's top border as the only separator
+        boxShadow: 'none',
+        zIndex: zIndex.ruler,
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
       onClick={handleClick}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
@@ -145,7 +160,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
       {/* SVG 刻度和标签 */}
       <svg
         width={totalWidth}
-        height={32}
+        height={timeline.rulerHeight}
         style={{
           position: 'absolute',
           left: leftOffset - scrollLeft,
@@ -158,10 +173,10 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
           <line
             key={`sub-${tick.frame}`}
             x1={crisp(tick.position)}
-            y1={26}
+            y1={timeline.rulerHeight - 6}
             x2={crisp(tick.position)}
-            y2={32}
-            className="stroke-slate-300"
+            y2={timeline.rulerHeight}
+            stroke={colors.border.default}
             strokeWidth={1}
           />
         ))}
@@ -171,16 +186,18 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
           <g key={`main-${tick.frame}`}>
             <line
               x1={crisp(tick.position)}
-              y1={22}
+              y1={timeline.rulerHeight - 10}
               x2={crisp(tick.position)}
-              y2={32}
-              className="stroke-slate-400"
+              y2={timeline.rulerHeight}
+              stroke={colors.text.tertiary}
               strokeWidth={1}
             />
             <text
               x={Math.round(tick.position) + 4}
               y={14}
-              className="fill-slate-500 text-[10px] font-mono"
+              fill={colors.text.secondary}
+              fontSize={typography.fontSize.xs}
+              fontFamily={typography.fontFamily.mono}
             >
               {tick.label}
             </text>
@@ -195,9 +212,22 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -5 }}
           transition={{ duration: 0.1 }}
-          className="absolute top-[-28px] -translate-x-1/2 bg-slate-800 text-white text-xs font-mono px-2 py-1 rounded shadow-md pointer-events-none z-50 whitespace-nowrap"
           style={{
+            position: 'absolute',
             left: mouseX,
+            top: -28,
+            transform: 'translateX(-50%)',
+            backgroundColor: colors.bg.elevated,
+            color: colors.text.primary,
+            fontSize: typography.fontSize.xs,
+            fontFamily: typography.fontFamily.mono,
+            padding: '4px 8px',
+            borderRadius: 4,
+            whiteSpace: 'nowrap',
+            boxShadow: shadows.md,
+            pointerEvents: 'none',
+            zIndex: zIndex.tooltip,
+            border: `1px solid ${colors.border.default}`,
           }}
         >
           {formatTime(hoveredFrame, fps)}

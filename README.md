@@ -47,7 +47,7 @@ graph TD
     
     Gateway -->|/| Web["Frontend (Next.js :3000)"]
     Gateway -->|/sync/*| Sync["Loro Sync Server (:8787)"]
-    Gateway -->|/api/*| API["Python API (:8000)"]
+    Gateway -->|/api/*| API["Python API (:8888)"]
     
     subgraph "Infrastructure"
         DO["Durable Objects (LoroRoom)"]
@@ -82,7 +82,7 @@ make dev-gateway-full
 | **主入口** | `http://localhost:8788` |
 | 前端 | `http://localhost:3000` |
 | 同步服务器 | `http://localhost:8787` |
-| 专家系统 | `http://localhost:8000` |
+| 专家系统 | `http://localhost:8888` |
 
 ---
 

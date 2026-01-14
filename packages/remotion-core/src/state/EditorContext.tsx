@@ -2,7 +2,7 @@ import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 import type { EditorState, EditorAction, Item, Asset } from '../types';
 
 // Initial state
-const initialState: EditorState = {
+const defaultState: EditorState = {
   tracks: [],
   selectedItemId: null,
   selectedTrackId: null,
@@ -15,6 +15,16 @@ const initialState: EditorState = {
   fps: 30,
   durationInFrames: 1500, // 50 seconds at 30fps
 };
+
+function normalizeInitialState(state?: Partial<EditorState>): EditorState {
+  if (!state) return defaultState;
+  return {
+    ...defaultState,
+    ...state,
+    tracks: state.tracks ?? defaultState.tracks,
+    assets: state.assets ?? defaultState.assets,
+  };
+}
 
 // Reducer function
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -264,12 +274,41 @@ type EditorContextType = {
 
 const EditorContext = createContext<EditorContextType | undefined>(undefined);
 
+type EditorProviderProps = {
+  children: ReactNode;
+  initialState?: Partial<EditorState>;
+  onStateChange?: (state: EditorState) => void;
+};
+
 // Provider
-export function EditorProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(editorReducer, initialState);
+export function EditorProvider({ children, initialState, onStateChange }: EditorProviderProps) {
+  const [state, dispatch] = useReducer(editorReducer, initialState, normalizeInitialState);
 
   // Listen for window messages
   useMessageListener(dispatch);
+
+  // Only call onStateChange when persistable fields change (not currentFrame/playing/selectedItemId)
+  // This prevents re-renders during playback
+  const prevPersistableRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (onStateChange) {
+      // Extract only the fields that need to be persisted
+      const persistable = {
+        tracks: state.tracks,
+        compositionWidth: state.compositionWidth,
+        compositionHeight: state.compositionHeight,
+        fps: state.fps,
+        durationInFrames: state.durationInFrames,
+        assets: state.assets,
+        zoom: state.zoom,
+      };
+      const persistableJson = JSON.stringify(persistable);
+      if (prevPersistableRef.current !== persistableJson) {
+        prevPersistableRef.current = persistableJson;
+        onStateChange(state);
+      }
+    }
+  }, [onStateChange, state]);
 
   return (
     <EditorContext.Provider value={{ state, dispatch }}>

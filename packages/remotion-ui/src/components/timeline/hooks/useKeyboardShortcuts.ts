@@ -9,8 +9,8 @@ export interface KeyboardShortcutHandlers {
   onUndo?: () => void;
   onRedo?: () => void;
   onPlayPause?: () => void;
-  onFrameForward?: (_frames: number) => void;
-  onFrameBackward?: (_frames: number) => void;
+  onFrameForward?: (frames: number) => void;
+  onFrameBackward?: (frames: number) => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
 }

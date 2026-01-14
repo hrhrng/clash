@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal
@@ -12,12 +13,16 @@ import httpx
 from master_clash.services import kling as beijing_kling
 from master_clash.services import r2
 from master_clash.services import kling_kie_client
+from master_clash.services import minimax_tts
+from master_clash.services import elevenlabs_tts
+from master_clash.services import kie_elevenlabs_tts
 from master_clash.tools.nano_banana import nano_banana_gen, nano_banana_pro_gen
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE_MODEL = "nano-banana-pro"
 DEFAULT_VIDEO_MODEL = "kling-image2video"
+DEFAULT_AUDIO_MODEL = "minimax-tts"
 
 
 # === Image generation ===
@@ -40,7 +45,11 @@ class ImageGenerationResult:
 async def _run_nano_banana(request: ImageGenerationRequest, *, use_pro: bool) -> ImageGenerationResult:
     generator = nano_banana_pro_gen if use_pro else nano_banana_gen
     aspect_ratio = request.params.get("aspect_ratio") or request.params.get("ratio") or "16:9"
-    base64_refs = [ref.split(",")[-1] if "base64," in ref else ref for ref in request.reference_images]
+    image_size = request.params.get("image_size") or "2K"
+    base64_refs = await _ensure_base64_refs(request.reference_images)
+
+    model_name = "nano-banana-pro" if use_pro else "nano-banana"
+    logger.info(f"[Generation] Starting {model_name} generation: prompt='{request.prompt[:50]}...', aspect_ratio={aspect_ratio}, image_size={image_size}, refs={len(base64_refs)}")
 
     try:
         image_base64 = await asyncio.to_thread(
@@ -49,14 +58,16 @@ async def _run_nano_banana(request: ImageGenerationRequest, *, use_pro: bool) ->
             "",
             base64_refs,
             aspect_ratio,
+            image_size,
         )
+        logger.info(f"[Generation] ✅ {model_name} generation successful, image size: {len(image_base64)} bytes")
         return ImageGenerationResult(
             success=True,
             base64_data=image_base64,
-            metadata={"model": request.model_id, "aspect_ratio": aspect_ratio},
+            metadata={"model": request.model_id, "aspect_ratio": aspect_ratio, "image_size": image_size},
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("[Generation] Nano Banana failed: %s", exc, exc_info=True)
+        logger.error(f"[Generation] ❌ {model_name} generation failed: {exc}", exc_info=True)
         return ImageGenerationResult(success=False, error=str(exc))
 
 
@@ -68,6 +79,63 @@ async def generate_image(request: ImageGenerationRequest) -> ImageGenerationResu
         return await _run_nano_banana(request, use_pro=True)
 
     return ImageGenerationResult(success=False, error=f"Unsupported image model: {model_id}")
+
+
+def _is_valid_base64(value: str) -> bool:
+    try:
+        base64.b64decode(value.strip(), validate=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _strip_data_uri(ref: str) -> tuple[str, bool]:
+    if ref.startswith("data:") and "," in ref:
+        payload = ref.split(",", 1)[1]
+        return payload, _is_valid_base64(payload)
+    if "base64," in ref:
+        payload = ref.split("base64,", 1)[1]
+        return payload, _is_valid_base64(payload)
+    return ref, False
+
+
+async def _fetch_http_bytes(url: str) -> bytes:
+    async with r2.get_http_client() as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        return response.content
+
+
+async def _ensure_base64_refs(reference_images: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for ref in reference_images:
+        if not isinstance(ref, str):
+            continue
+        candidate = ref.strip()
+        if not candidate:
+            continue
+
+        candidate, was_base64 = _strip_data_uri(candidate)
+        if was_base64 or _is_valid_base64(candidate):
+            normalized.append(candidate)
+            continue
+
+        try:
+            if candidate.startswith(("http://", "https://")):
+                data = await _fetch_http_bytes(candidate)
+                normalized.append(base64.b64encode(data).decode("utf-8"))
+                continue
+            if os.path.exists(candidate):
+                with open(candidate, "rb") as handle:
+                    normalized.append(base64.b64encode(handle.read()).decode("utf-8"))
+                continue
+
+            data, _ = await r2.fetch_object(candidate)
+            normalized.append(base64.b64encode(data).decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[Generation] Failed to resolve reference image: %s (%s)", candidate, exc)
+
+    return normalized
 
 
 # === Video generation ===
@@ -318,3 +386,126 @@ async def poll_video_job(model_id: str, external_task_id: str, project_id: str) 
     if not handler:
         return VideoPollResult(status="failed", error=f"No poller for model {model_id}")
     return await handler(external_task_id, project_id)
+
+
+# === Audio generation (TTS) ===
+@dataclass
+class AudioGenerationRequest:
+    """Request for audio/TTS generation."""
+    text: str
+    project_id: str
+    model_id: str = DEFAULT_AUDIO_MODEL
+    params: dict[str, Any] = field(default_factory=dict)
+    provider: str | None = None  # Provider override: 'official', 'kie', etc.
+
+
+@dataclass
+class AudioGenerationResult:
+    """Result from audio/TTS generation."""
+    success: bool
+    audio_bytes: bytes | None = None
+    r2_key: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+async def _run_minimax_tts(request: AudioGenerationRequest) -> AudioGenerationResult:
+    """Generate speech using MiniMax TTS."""
+    params = request.params
+
+    tts_request = minimax_tts.TTSRequest(
+        text=request.text,
+        voice_id=params.get("voice_id", "female-warm"),
+        speed=float(params.get("speed", 1.0)),
+        pitch=int(params.get("pitch", 0)),
+        model=params.get("model", "speech-01"),
+    )
+
+    result = await minimax_tts.generate_speech(tts_request)
+
+    if not result.success:
+        return AudioGenerationResult(success=False, error=result.error)
+
+    # Decode base64 audio data
+    audio_bytes = base64.b64decode(result.audio_base64)
+
+    # Upload to R2
+    r2_key = f"projects/{request.project_id}/generated/{int(time.time())}.mp3"
+    await r2.put_object(r2_key, audio_bytes, "audio/mpeg")
+
+    return AudioGenerationResult(
+        success=True,
+        audio_bytes=audio_bytes,
+        r2_key=r2_key,
+        metadata=result.metadata or {},
+    )
+
+
+async def _run_elevenlabs_tts(request: AudioGenerationRequest, provider: str = "official") -> AudioGenerationResult:
+    """
+    Generate speech using ElevenLabs TTS.
+
+    Args:
+        request: Audio generation request
+        provider: Provider to use ('official' for ElevenLabs API, 'kie' for KIE.ai)
+    """
+    params = request.params
+
+    tts_request_data = {
+        "text": request.text,
+        "voice_id": params.get("voice_id", "rachel"),
+        "model_id": params.get("model_id", "eleven_multilingual_v2"),
+        "stability": float(params.get("stability", 0.5)),
+        "similarity_boost": float(params.get("similarity_boost", 0.75)),
+    }
+
+    # Select provider
+    if provider == "kie":
+        logger.info("[Generation] Using KIE.ai provider for ElevenLabs TTS")
+        tts_request = kie_elevenlabs_tts.TTSRequest(**tts_request_data)
+        result = await kie_elevenlabs_tts.generate_speech(tts_request)
+    else:
+        logger.info("[Generation] Using official ElevenLabs API")
+        tts_request = elevenlabs_tts.TTSRequest(**tts_request_data)
+        result = await elevenlabs_tts.generate_speech(tts_request)
+
+    if not result.success:
+        return AudioGenerationResult(success=False, error=result.error)
+
+    # Upload to R2
+    r2_key = f"projects/{request.project_id}/generated/{int(time.time())}.mp3"
+    await r2.put_object(r2_key, result.audio_bytes, "audio/mpeg")
+
+    return AudioGenerationResult(
+        success=True,
+        audio_bytes=result.audio_bytes,
+        r2_key=r2_key,
+        metadata=result.metadata or {},
+    )
+
+
+async def generate_audio(request: AudioGenerationRequest) -> AudioGenerationResult:
+    """
+    Generate audio/speech from text.
+
+    Supported models:
+    - minimax-tts: MiniMax TTS (Chinese & English)
+    - elevenlabs-tts: ElevenLabs TTS (High quality, English)
+      - Providers: 'official' (default), 'kie' (via KIE.ai)
+
+    Provider can be specified via request.provider or request.params['provider']
+    """
+    model_id = request.model_id or DEFAULT_AUDIO_MODEL
+
+    # Get provider preference (from request or params)
+    provider = request.provider or request.params.get("provider", "official")
+
+    if model_id == "minimax-tts":
+        return await _run_minimax_tts(request)
+    if model_id == "elevenlabs-tts":
+        return await _run_elevenlabs_tts(request, provider=provider)
+
+    return AudioGenerationResult(
+        success=False,
+        error=f"Unsupported audio model: {model_id}"
+    )

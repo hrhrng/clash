@@ -91,14 +91,22 @@ async function getTaskStatus(
   error?: string;
 }> {
   try {
-    const response = await fetch(`${env.BACKEND_API_URL}/api/tasks/${taskId}`);
-    
+    const url = `${env.BACKEND_API_URL}/api/tasks/${taskId}`;
+    console.log(`[TaskPolling] 📡 Fetching task status from: ${url}`);
+
+    const response = await fetch(url);
+
     if (!response.ok) {
-      return { status: 'failed', error: `HTTP ${response.status}` };
+      const text = await response.text();
+      console.error(`[TaskPolling] ❌ HTTP ${response.status} error fetching task ${taskId}: ${text}`);
+      return { status: 'failed', error: `HTTP ${response.status}: ${text}` };
     }
 
-    return await response.json();
+    const result = await response.json();
+    console.log(`[TaskPolling] 📥 Task ${taskId} status:`, result);
+    return result;
   } catch (e) {
+    console.error(`[TaskPolling] ❌ Exception fetching task ${taskId}:`, e);
     return { status: 'failed', error: String(e) };
   }
 }

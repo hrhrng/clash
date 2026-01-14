@@ -7,7 +7,7 @@ export interface Env {
   FRONTEND?: Fetcher;   // Next.js frontend (production)
 
   // URL-based proxies (local development)
-  BACKEND_API_URL?: string;   // Python API (e.g., http://localhost:8000)
+  BACKEND_API_URL?: string;   // Python API (e.g., http://localhost:8888)
   FRONTEND_URL?: string;      // Frontend (e.g., http://localhost:3000)
 
   // Better Auth config

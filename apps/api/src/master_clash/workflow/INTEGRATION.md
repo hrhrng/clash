@@ -291,7 +291,7 @@ cd backend
 python -m master_clash.api.main
 
 # In another terminal, test SSE endpoint
-curl -N "http://localhost:8000/api/v1/stream/proj-test?thread_id=thread-1&user_input=Create+a+text+node"
+curl -N "http://localhost:8888/api/v1/stream/proj-test?thread_id=thread-1&user_input=Create+a+text+node"
 ```
 
 Expected output:
@@ -307,7 +307,7 @@ data: {"agent": "Agent", "content": "Created node alpha-ocean-square"}
 
 ```bash
 # Sync context from frontend
-curl -X POST http://localhost:8000/api/v1/project/proj-test/context \
+curl -X POST http://localhost:8888/api/v1/project/proj-test/context \
   -H "Content-Type: application/json" \
   -d '{
     "nodes": [

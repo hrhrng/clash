@@ -13,23 +13,22 @@ import {
   DragMoveEvent,
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
-import { useEditor } from '@master-clash/remotion-core';
-import type { Item } from '@master-clash/remotion-core';
+import { useEditor } from '@remotion-fast/core';
+import type { Item } from '@remotion-fast/core';
 import { TimelineHeader } from './timeline/TimelineHeader';
 import { TimelineRuler } from './timeline/TimelineRuler';
 import { TimelineTracksContainer } from './timeline/TimelineTracksContainer';
 import { TimelinePlayhead } from './timeline/TimelinePlayhead';
 import { TimelineItem } from './timeline/TimelineItem';
 import { useKeyboardShortcuts } from './timeline/hooks/useKeyboardShortcuts';
-
+import { colors, timeline as timelineStyles, typography } from './timeline/styles';
 import { getPixelsPerFrame, pixelsToFrame, frameToPixels, secondsToFrames } from './timeline/utils/timeFormatter';
-import { calculateSnap } from './timeline/utils/snapCalculator';
-import { buildPreview as buildItemDragPreview, finalizeDrop as finalizeItemDrop } from './timeline/dnd/itemDragLogic';
+import { calculateSnap, calculateSnapForItemRange, getAllSnapTargets } from './timeline/utils/snapCalculator';
+import { buildPreview as buildItemDragPreview, finalizeDrop as finalizeItemDrop, computeVerticalLandmarks } from './timeline/dnd/itemDragLogic';
 import { currentDraggedAsset, currentAssetDragOffset } from './AssetPanel';
 
 // 声明全局window属性
 declare global {
-  // eslint-disable-next-line no-unused-vars
   interface Window {
     currentDraggedItem: { item: Item; trackId: string } | null;
   }
@@ -51,8 +50,10 @@ export const Timeline: React.FC = () => {
 
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [draggedItem, setDraggedItem] = useState<{ trackId: string; item: Item } | null>(null);
-  const [, setDragOffset] = useState<number>(0); // 鼠标相对于素材左边缘的偏移量（像素）
+  const [dragOffset, setDragOffset] = useState<number>(0); // 鼠标相对于素材左边缘的偏移量（像素）
+  const [assetDragOffset, setAssetDragOffset] = useState<number>(0); // asset 拖动时的偏移量
   const lastDragTopRef = useRef<number | null>(null);
+  const previousContentEndRef = useRef<number>(0); // 记录上次的内容结束位置
 
   // 拖动预览状态：存储预期的落点位置（snap后的）
   const [dragPreview, setDragPreview] = useState<{
@@ -69,7 +70,7 @@ export const Timeline: React.FC = () => {
     snapGuideFrame?: number | null; // vertical guide line frame (only for item-start/item-end)
   } | null>(null);
   const [insertPosition, setInsertPosition] = useState<number | null>(null);
-
+  
   // Asset拖动预览状态（从AssetPanel拖入时的预览框）
   const [assetDragPreview, setAssetDragPreview] = useState<{
     item: Item;
@@ -88,7 +89,7 @@ export const Timeline: React.FC = () => {
     // Mount once so TracksContainer receives a stable portal target
     setLabelsPortalEl(labelsPortalRef.current);
   }, []);
-
+  
   // Sync horizontal scroll position of tracks viewport with ruler and playhead
   const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportContentWidth, setViewportContentWidth] = useState(0);
@@ -148,19 +149,19 @@ export const Timeline: React.FC = () => {
 
     const containerRect = container.getBoundingClientRect();
     const viewportRect = viewportEl.getBoundingClientRect();
-    const leftWithinTracks = leftOnViewport - containerRect.left - 200 - contentInsetLeftPx + viewportEl.scrollLeft;
+    const leftWithinTracks = leftOnViewport - containerRect.left - timelineStyles.trackLabelWidth - contentInsetLeftPx + viewportEl.scrollLeft;
     // Use DragOverlay position relative to viewport, then add scrollTop to get absolute position in content
     // (viewport position is visual, we need absolute position in the entire scrollable content)
     const topY = (topOnViewport - viewportRect.top) + viewportEl.scrollTop;
 
-    const insertThresholdPx = Math.min(12, Math.floor(80 * 0.15));
+    const insertThresholdPx = Math.min(12, Math.floor(timelineStyles.trackHeight * 0.15));
     // Debug: log decision landmarks relative to source track boundaries
     const H = heightPx;
     const q1 = topY + H / 3;
     const q2 = topY + (2 * H) / 3;
     const srcIdx = Math.max(0, tracks.findIndex((t) => t.id === dragPreview.originalTrackId));
-    const srcTop = srcIdx * 80;
-    const srcBottom = (srcIdx + 1) * 80;
+    const srcTop = srcIdx * timelineStyles.trackHeight;
+    const srcBottom = (srcIdx + 1) * timelineStyles.trackHeight;
     // eslint-disable-next-line no-console
     console.log('[DND][landmarks]', {
       topY: Math.round(topY),
@@ -180,7 +181,7 @@ export const Timeline: React.FC = () => {
       originalTrackId: dragPreview.originalTrackId,
       currentFrame,
       snapEnabled: !!snapEnabled,
-      trackHeight: 80,
+      trackHeight: timelineStyles.trackHeight,
       insertThresholdPx: insertThresholdPx,
     });
 
@@ -214,7 +215,7 @@ export const Timeline: React.FC = () => {
   }, [updatePreviewFromDnd]);
 
   // dnd-kit: item drag end -> commit move
-  const onDndItemEnd = useCallback((_event: DragEndEvent) => {
+  const onDndItemEnd = useCallback((event: DragEndEvent) => {
     if (!dragPreview) {
       setDraggedItem(null);
       setDragOffset(0);
@@ -243,7 +244,7 @@ export const Timeline: React.FC = () => {
       tracks,
       originalTrackId
     );
-
+    
     console.log('[DND] Drop action:', drop.type, {
       originalTrackId,
       targetTrackId: 'targetTrackId' in drop ? drop.targetTrackId : 'N/A',
@@ -296,7 +297,7 @@ export const Timeline: React.FC = () => {
     const measure = () => {
       const el = workspaceRef.current ?? containerRef.current;
       if (!el) return;
-      const width = el.getBoundingClientRect().width - 200;
+      const width = el.getBoundingClientRect().width - timelineStyles.trackLabelWidth;
       setViewportContentWidth(Math.max(0, Math.floor(width)));
     };
     measure();
@@ -352,7 +353,7 @@ export const Timeline: React.FC = () => {
 
   // Calculate zoom level needed to fit all content in viewport
   const calculateFitZoom = useCallback(() => {
-    if (contentEndInFrames === 0 || viewportContentWidth === 0) return 1;
+    if (contentEndInFrames === 0 || viewportContentWidth === 0) return timelineStyles.zoomDefault;
 
     // Calculate pixels per frame needed to fit content in viewport
     const neededPixelsPerFrame = viewportContentWidth / (contentEndInFrames * 1.1); // 1.1x for padding
@@ -360,25 +361,25 @@ export const Timeline: React.FC = () => {
     const fitZoom = neededPixelsPerFrame / 2;
 
     // Clamp between min and max
-    return Math.max(0.25, Math.min(5, fitZoom));
+    return Math.max(timelineStyles.zoomMin, Math.min(timelineStyles.zoomMax, fitZoom));
   }, [contentEndInFrames, viewportContentWidth]);
 
   // Smart zoom limits based on content
   const getSmartZoomLimits = useCallback(() => {
     if (contentEndInFrames === 0) {
-      return { min: 0.25, max: 5 };
+      return { min: timelineStyles.zoomMin, max: timelineStyles.zoomMax };
     }
 
     // Calculate minimum zoom that prevents timeline from being too small
     const minPxWidth = 200; // minimum timeline width
-    const minZoom = Math.max(0.25, minPxWidth / (contentEndInFrames * 2));
+    const minZoom = Math.max(timelineStyles.zoomMin, minPxWidth / (contentEndInFrames * 2));
 
     // Calculate maximum zoom that prevents excessive horizontal scrolling
     const maxFramesVisible = 300; // reasonable viewport size in frames
-    const maxZoom = Math.min(5, (viewportContentWidth / maxFramesVisible) / 2);
+    const maxZoom = Math.min(timelineStyles.zoomMax, (viewportContentWidth / maxFramesVisible) / 2);
 
     return {
-      min: Math.max(0.25, minZoom),
+      min: Math.max(timelineStyles.zoomMin, minZoom),
       max: Math.max(minZoom, maxZoom)
     };
   }, [contentEndInFrames, viewportContentWidth]);
@@ -409,7 +410,7 @@ export const Timeline: React.FC = () => {
 
   // Reset zoom to default
   const handleZoomReset = useCallback(() => {
-    dispatch({ type: 'SET_ZOOM', payload: 1 });
+    dispatch({ type: 'SET_ZOOM', payload: timelineStyles.zoomDefault });
   }, [dispatch]);
 
   // Handle zoom change from slider
@@ -424,6 +425,16 @@ export const Timeline: React.FC = () => {
     },
     [dispatch, durationInFrames]
   );
+
+  // ==================== 轨道操作 ====================
+  const handleAddTrack = useCallback(() => {
+    const newTrack = {
+      id: `track-${Date.now()}`,
+      name: 'Track',
+      items: [],
+    };
+    dispatch({ type: 'ADD_TRACK', payload: newTrack });
+  }, [dispatch]);
 
   const handleSelectTrack = useCallback(
     (trackId: string) => {
@@ -461,6 +472,50 @@ export const Timeline: React.FC = () => {
     [dispatch]
   );
 
+  // ==================== Item拖动处理 ====================
+  const handleItemDragStart = useCallback((e: React.DragEvent, trackId: string, item: Item) => {
+
+    // 同时设置本地state和全局window对象（兼容TimelineTracksContainer的insertDrop）
+    setDraggedItem({ trackId, item });
+    window.currentDraggedItem = { trackId, item };
+
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('dragType', 'item');
+    e.dataTransfer.setData('itemId', item.id);
+    e.dataTransfer.setData('trackId', trackId);
+
+    // 创建一个透明的拖动图像（隐藏默认的地球图标）
+    const dragImage = document.createElement('div');
+    dragImage.style.position = 'absolute';
+    dragImage.style.top = '-1000px';
+    dragImage.style.width = '1px';
+    dragImage.style.height = '1px';
+    document.body.appendChild(dragImage);
+    e.dataTransfer.setDragImage(dragImage, 0, 0);
+
+    // 拖动结束后清理
+    setTimeout(() => {
+      document.body.removeChild(dragImage);
+    }, 0);
+
+    // 计算鼠标相对于素材左边缘的偏移量
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    setDragOffset(offsetX);
+
+    // 初始化拖动预览状态
+    setDragPreview({
+      itemId: item.id,
+      item: item,
+      originalTrackId: trackId,
+      originalFrom: item.from,
+      previewTrackId: trackId,
+      previewFrame: item.from,
+    });
+
+  }, []);
+
   // ==================== 拖放处理（从 AssetPanel 拖入素材 + Timeline内移动）====================
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -497,7 +552,7 @@ export const Timeline: React.FC = () => {
       if (assetDragPreview) setAssetDragPreview(null);
       return;
     }
-
+    
     // 计算鼠标位置和目标位置
     const viewportEl = document.querySelector('.tracks-viewport') as HTMLDivElement | null;
     if (!viewportEl) return;
@@ -510,7 +565,7 @@ export const Timeline: React.FC = () => {
     // 计算 asset 左边缘的位置（减去拖动偏移量）
     const assetLeftX = mouseX - currentAssetDragOffset;
     const rawFrame = Math.max(0, Math.round(assetLeftX / pixelsPerFrame));
-    const snapResult = calculateSnap(rawFrame, tracks, null, currentFrame, snapEnabled, 10);
+    const snapResult = calculateSnap(rawFrame, tracks, null, currentFrame, snapEnabled, timelineStyles.snapThreshold);
     const frame = Math.max(0, snapResult.snappedFrame);
 
     console.log('[Timeline.handleDragOver] Position calc:', {
@@ -525,16 +580,16 @@ export const Timeline: React.FC = () => {
       frame,
       pixelsPerFrame,
     });
-
-    const trackIndex = Math.floor(y / 80);
-    const relativeY = y % 80;
+    
+    const trackIndex = Math.floor(y / timelineStyles.trackHeight);
+    const relativeY = y % timelineStyles.trackHeight;
     const threshold = 20;
 
     let targetTrackId: string | null = null;
     let insertIdx: number | null = null;
 
     // 与 item 拖动逻辑保持一致：检测是否在轨道边界附近（要插入新 track）
-    if (tracks.length > 0 && (relativeY < threshold || relativeY > 80 - threshold)) {
+    if (tracks.length > 0 && (relativeY < threshold || relativeY > timelineStyles.trackHeight - threshold)) {
       // 在轨道边界附近 - 准备插入新 track
       insertIdx = relativeY < threshold ? trackIndex : trackIndex + 1;
       if (insertIdx >= 0 && insertIdx <= tracks.length) {
@@ -562,7 +617,7 @@ export const Timeline: React.FC = () => {
 
     // 清除插入位置（因为现在是在现有 track 上）
     setInsertPosition(null);
-
+    
     // 创建预览item（包含完整信息以正确计算高度）
     let duration = 90; // 默认duration
     let itemType: any = 'video';
@@ -632,7 +687,7 @@ export const Timeline: React.FC = () => {
         durationInFrames: duration,
       } as Item;
     }
-
+    
     console.log('[Timeline.handleDragOver] Setting asset drag preview:', {
       previewItem,
       targetTrackId,
@@ -650,7 +705,7 @@ export const Timeline: React.FC = () => {
   // 创建素材项的辅助函数
   const createItemFromAsset = useCallback((asset: any, frame: number): Item | null => {
     const baseId = `item-${Date.now()}`;
-
+    
     // 默认变换属性：画布中心 (0, 0)、全尺寸
     const defaultProperties = {
       x: 0,          // 中心X (像素，相对于画布中心)
@@ -712,7 +767,7 @@ export const Timeline: React.FC = () => {
       // 如果没有轨道，先创建一个
       if (tracks.length === 0) {
         const itemType = isQuickAdd ? quickAddType :
-          (assets.find(a => a.id === assetId)?.type || 'Track');
+                        (assets.find(a => a.id === assetId)?.type || 'Track');
         const newTrack = {
           id: `track-${Date.now()}`,
           name: itemType.charAt(0).toUpperCase() + itemType.slice(1),
@@ -734,7 +789,7 @@ export const Timeline: React.FC = () => {
               rotation: 0,
               opacity: 1,
             };
-
+            
             if (quickAddType === 'text') {
               newItem = {
                 id: `text-${Date.now()}`,
@@ -772,7 +827,7 @@ export const Timeline: React.FC = () => {
             });
             dispatch({ type: 'SELECT_ITEM', payload: newItem.id });
           }
-
+          
           // 清除asset预览
           setAssetDragPreview(null);
           setInsertPosition(null);
@@ -781,6 +836,98 @@ export const Timeline: React.FC = () => {
     },
     [assets, tracks, dispatch, createItemFromAsset]
   );
+
+  // 处理item在轨道上拖动（只更新预览，不修改真实state）
+  const handleItemDragOver = useCallback(
+    (e: React.DragEvent, trackId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (!draggedItem || !dragPreview) {
+        return;
+      }
+
+      if (!containerRef.current) {
+        return;
+      }
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left - timelineStyles.trackLabelWidth - contentInsetLeftPx;
+
+      // 预览框左边缘位置 = 鼠标位置 - 拖动偏移量
+      const previewLeftX = mouseX - dragOffset;
+      const rawFrame = Math.max(0, Math.floor(previewLeftX / pixelsPerFrame));
+
+      // 计算吸附 - Shift键禁用吸附
+      const disableSnap = e.shiftKey || !snapEnabled;
+      // 拖动物料时，优先让左/右边缘都可吸附，选择移动量更小的方案
+      const snapResult = calculateSnapForItemRange(
+        rawFrame,
+        draggedItem.item.durationInFrames,
+        tracks,
+        draggedItem.item.id,
+        currentFrame,
+        !disableSnap,
+        timelineStyles.snapThreshold
+      );
+
+      // 只更新预览状态，不修改真实的state
+      setDragPreview({
+        ...dragPreview,
+        previewTrackId: trackId,
+        previewFrame: snapResult.snappedFrame,
+      });
+    },
+    [draggedItem, dragPreview, dragOffset, pixelsPerFrame, tracks, currentFrame, snapEnabled]
+  );
+
+  // 处理item拖动松手（真正更新位置）
+  const handleItemDrop = useCallback((e: React.DragEvent, trackId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!dragPreview) {
+      return;
+    }
+
+    // 如果位置或轨道发生了变化，才需要更新
+    const positionChanged = dragPreview.previewFrame !== dragPreview.originalFrom;
+    const trackChanged = dragPreview.previewTrackId !== dragPreview.originalTrackId;
+
+    if (trackChanged) {
+      // 跨轨道移动：先添加到新轨道，再从旧轨道删除
+      dispatch({
+        type: 'ADD_ITEM',
+        payload: {
+          trackId: dragPreview.previewTrackId,
+          item: { ...dragPreview.item, from: dragPreview.previewFrame },
+        },
+      });
+      dispatch({
+        type: 'REMOVE_ITEM',
+        payload: {
+          trackId: dragPreview.originalTrackId,
+          itemId: dragPreview.itemId,
+        },
+      });
+    } else if (positionChanged) {
+      // 同轨道内移动：只更新位置
+      dispatch({
+        type: 'UPDATE_ITEM',
+        payload: {
+          trackId: dragPreview.originalTrackId,
+          itemId: dragPreview.itemId,
+          updates: { from: dragPreview.previewFrame },
+        },
+      });
+    }
+
+    // 清除拖动状态
+    setDraggedItem(null);
+    setDragOffset(0);
+    setDragPreview(null);
+    window.currentDraggedItem = null;
+  }, [dragPreview, dispatch]);
 
   const handleItemDragEnd = useCallback(() => {
     setDraggedItem(null);
@@ -831,7 +978,7 @@ export const Timeline: React.FC = () => {
         null,
         currentFrame,
         snapEnabled,
-        10
+        timelineStyles.snapThreshold
       );
 
       const frame = Math.max(0, snapResult.snappedFrame);
@@ -854,7 +1001,7 @@ export const Timeline: React.FC = () => {
           rotation: 0,
           opacity: 1,
         };
-
+        
         if (quickAddType === 'text') {
           newItem = {
             id: `text-${Date.now()}`,
@@ -894,7 +1041,7 @@ export const Timeline: React.FC = () => {
 
       // 选中新添加的素材
       dispatch({ type: 'SELECT_ITEM', payload: newItem.id });
-
+      
       // 清除asset预览
       setAssetDragPreview(null);
       setInsertPosition(null);
@@ -926,11 +1073,11 @@ export const Timeline: React.FC = () => {
       onZoomIn: handleZoomIn,
       onZoomOut: handleZoomOut,
       // Reserved shortcuts (no-op for now to avoid console noise in production)
-      onCopy: () => { },
-      onPaste: () => { },
-      onDuplicate: () => { },
-      onUndo: () => { },
-      onRedo: () => { },
+      onCopy: () => {},
+      onPaste: () => {},
+      onDuplicate: () => {},
+      onUndo: () => {},
+      onRedo: () => {},
     },
     true
   );
@@ -947,7 +1094,15 @@ export const Timeline: React.FC = () => {
           setAssetDragPreview(null);
         }
       }}
-      className="flex flex-col h-full bg-slate-50 overflow-hidden relative"
+      style={{
+        width: '100%',
+        height: '100%',
+        backgroundColor: colors.bg.primary,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        position: 'relative',
+      }}
     >
       {/* 头部工具栏 - 固定高度 */}
       <TimelineHeader
@@ -966,44 +1121,73 @@ export const Timeline: React.FC = () => {
 
       {/* 工作区域：两列布局（左：标签列；右：标尺+轨道） */}
       <div
-        className="flex-1 flex flex-row overflow-hidden relative"
+        className="timeline-workspace"
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'row',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
         ref={workspaceRef}
       >
         {/* 左列：上方标尺占位 + 下方标签列表（通过 Portal 注入）*/}
         <div
           style={{
-            left: 200,
+            width: timelineStyles.trackLabelWidth,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            borderRight: `1px solid ${colors.border.default}`,
+            background: colors.bg.secondary,
           }}
-          className="shrink-0 flex flex-col border-r border-slate-200 bg-slate-50"
         >
           {/* 左侧 ruler 顶部占位 */}
           <div
             style={{
-              height: 30,
+              height: timelineStyles.rulerHeight,
+              flexShrink: 0,
+              position: 'sticky',
+              top: 0,
+              zIndex: 30,
+              background: `linear-gradient(180deg, ${colors.bg.secondary} 0%, ${colors.bg.elevated} 100%)`,
+              borderBottom: `1px solid ${colors.border.default}`,
             }}
-            className="shrink-0 sticky top-0 z-30 bg-slate-50 border-b border-slate-200"
           />
           {/* 标签面板挂载点 */}
-          <div ref={labelsPortalRef} className="flex-1 min-h-0" />
+          <div ref={labelsPortalRef} style={{ flex: 1, minHeight: 0 }} />
         </div>
 
         {/* 右列：上方标尺 + 下方轨道视口 */}
         <div
-          className="flex-1 flex flex-col min-w-0 relative overflow-hidden"
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+            position: 'relative',
+            overflow: 'hidden', // clip playhead/ruler overflow to right column
+          }}
           data-playhead-container
         >
           {/* 标尺 */}
           <div
             style={{
-              height: 30,
+              height: timelineStyles.rulerHeight,
+              flexShrink: 0,
+              position: 'sticky',
+              top: 0,
+              zIndex: 15,
+              background: `linear-gradient(180deg, ${colors.bg.secondary} 0%, ${colors.bg.elevated} 100%)`,
+              overflow: 'hidden',
             }}
-            className="shrink-0 sticky top-0 z-15 bg-slate-50 overflow-hidden border-b border-slate-200"
           >
             <TimelineRuler
               durationInFrames={displayDurationInFrames}
               pixelsPerFrame={pixelsPerFrame}
               fps={fps}
               onSeek={handleSeek}
+              zoom={zoom}
               scrollLeft={scrollLeft}
               viewportWidth={viewportContentWidth}
               leftOffset={contentInsetLeftPx}
@@ -1040,9 +1224,9 @@ export const Timeline: React.FC = () => {
               onDrop={handleDrop}
               onEmptyDrop={handleTimelineDrop}
               // 关闭原生 item 拖拽通道
-              onItemDragStart={() => { }}
-              onItemDragOver={() => { }}
-              onItemDrop={() => { }}
+              onItemDragStart={() => {}}
+              onItemDragOver={() => {}}
+              onItemDrop={() => {}}
               onItemDragEnd={handleItemDragEnd}
               dragPreview={dragPreview}
               assetDragPreview={assetDragPreview}
@@ -1052,7 +1236,7 @@ export const Timeline: React.FC = () => {
               contentInsetLeftPx={contentInsetLeftPx}
               externalInsertPosition={insertPosition}
             />
-
+            
             <DragOverlay dropAnimation={null}>
               {draggedItem ? (
                 <TimelineItem
@@ -1062,9 +1246,9 @@ export const Timeline: React.FC = () => {
                   pixelsPerFrame={pixelsPerFrame}
                   isSelected={false}
                   assets={assets}
-                  onSelect={() => { }}
-                  onDelete={() => { }}
-                  onUpdate={() => { }}
+                  onSelect={() => {}}
+                  onDelete={() => {}}
+                  onUpdate={() => {}}
                   isDragOverlay={true}
                   style={{
                     cursor: 'grabbing',
@@ -1077,11 +1261,22 @@ export const Timeline: React.FC = () => {
           </DndContext>
 
           {/* 播放头 - 仅覆盖右侧 */}
-          <div className="absolute inset-0 pointer-events-none z-20">
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              pointerEvents: 'none',
+              zIndex: 20,
+            }}
+          >
             <TimelinePlayhead
               currentFrame={currentFrame}
               pixelsPerFrame={pixelsPerFrame}
               fps={fps}
+              timelineHeight={tracks.length * timelineStyles.trackHeight + timelineStyles.rulerHeight}
               onSeek={handleSeek}
               scrollLeft={scrollLeft}
               leftOffset={contentInsetLeftPx}

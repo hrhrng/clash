@@ -7,6 +7,7 @@ import ReactFlow, {
     BackgroundVariant,
     useNodesState,
     useEdgesState,
+    applyNodeChanges,
     addEdge,
     Connection,
     Edge,
@@ -43,28 +44,34 @@ import VideoEditorNode from './nodes/VideoEditorNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
 import { VideoEditorProvider } from './VideoEditorContext';
-import { getLayoutedElements, getSmartLayoutedElements } from '@/lib/utils/elkLayout';
+import { getLayoutedElements } from '@/lib/utils/elkLayout';
+import { LayoutActionsProvider } from './LayoutActionsContext';
 import {
-    useLayoutManager,
     getAbsoluteRect,
     getAbsolutePosition,
     rectContains,
     rectOverlaps,
     determineGroupOwnership,
-    updateNodeOwnership,
     recursiveGroupScale,
     applyGroupScales,
     resolveCollisions,
     applyResolution,
     createMesh,
-    getGroupNodes,
+    getNestingDepth,
     isDescendant,
+    relayoutToGrid,
+    needsAutoLayout,
+    autoInsertNode,
+    applyAutoInsertResult,
 } from '@/lib/layout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { useLoroSync } from '../hooks/useLoroSync';
 import { LoroSyncProvider } from './LoroSyncContext';
 import { MODEL_CARDS } from '@clash/shared-types';
+import { applyLayoutPatchesToLoro, collectLayoutNodePatches } from '../lib/loroNodeSync';
+
+const CHILD_NODE_Z_INDEX_BASE = 1000;
 
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
@@ -141,7 +148,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     const initialNodes: Node[] = [];
     const initialEdges: Edge[] = [];
 
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+    const [nodes, setNodes] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
     const [selectedTool, setSelectedTool] = useState<string | null>(null);
     const [projectName, setProjectName] = useState(project.name);
@@ -152,34 +159,115 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         syncServerUrl: process.env.NEXT_PUBLIC_LORO_SYNC_URL || 'ws://localhost:8787',
         onNodesChange: (syncedNodes) => {
             // Loro is the SINGLE SOURCE OF TRUTH - use its state directly
-            // Only preserve UI-specific state (selected, dragging) and spatial state during interaction
+            // Only preserve spatial state during active interaction (drag/resize).
+            // Selection is UI-only and should NOT block remote/local layout updates.
             setNodes((currentNodes) => {
                 const currentNodesMap = new Map(currentNodes.map(n => [n.id, n]));
-                
-                return syncedNodes.map(syncedNode => {
+
+                let processedNodes = syncedNodes.map(syncedNode => {
                     const currentNode = currentNodesMap.get(syncedNode.id);
-                    
-                    // Preserve spatial and UI state for nodes being interacted with
-                    // This prevents server updates from reverting local drag/resize/group changes
-                    if (currentNode && (currentNode.selected || currentNode.dragging)) {
-                        return {
-                            ...syncedNode,           // Trust Loro for data (content, status, etc.)
-                            position: currentNode.position,  // Preserve local position during drag
-                            parentId: currentNode.parentId,  // Preserve group membership during interaction
-                            selected: currentNode.selected,
-                            dragging: currentNode.dragging,
-                        };
-                    }
-                    
-                    // Trust Loro completely for non-interacting nodes
-                    return syncedNode;
+
+                    if (!currentNode) return syncedNode;
+
+                    const isInteracting = !!(currentNode.dragging || currentNode.resizing);
+                    return {
+                        ...syncedNode, // Trust Loro for data + layout unless interacting
+                        position: isInteracting ? currentNode.position : syncedNode.position,
+                        parentId: isInteracting ? currentNode.parentId : syncedNode.parentId,
+                        width: isInteracting ? currentNode.width : syncedNode.width,
+                        height: isInteracting ? currentNode.height : syncedNode.height,
+                        style: isInteracting ? currentNode.style : syncedNode.style,
+                        // Always preserve UI-only flags
+                        selected: currentNode.selected,
+                        dragging: currentNode.dragging,
+                        resizing: currentNode.resizing,
+                    };
                 });
+                processedNodes = sanitizeNodes(processedNodes);
+
+                // Auto-layout nodes with placeholder position (from backend or programmatic creation)
+                const nodesToLayout = processedNodes.filter(needsAutoLayout);
+                if (nodesToLayout.length > 0) {
+                    console.log(`[ProjectEditor] Auto-laying out ${nodesToLayout.length} node(s)`);
+
+                    // Get current edges for reference detection
+                    // Note: We use the current edges state since onEdgesChange may have already updated them
+                    const currentEdges = edges;
+
+                    for (const node of nodesToLayout) {
+                        const result = autoInsertNode(node.id, processedNodes, currentEdges);
+                        processedNodes = applyAutoInsertResult(processedNodes, node.id, result);
+
+                        console.log(
+                            `[ProjectEditor] Auto-inserted ${node.id}: ` +
+                            `pos=(${result.position.x}, ${result.position.y}), ` +
+                            `ref=${result.referenceNodeId || 'none'}, ` +
+                            `pushed=${result.pushedNodes.size}`
+                        );
+
+                        // Auto-scale parent groups
+                        if (node.parentId) {
+                            const scales = recursiveGroupScale(node.id, processedNodes);
+                            if (scales.size > 0) {
+                                processedNodes = applyGroupScales(processedNodes, scales);
+                            }
+                        }
+                    }
+
+                    // Sync layout changes back to Loro (after a microtask to avoid loops)
+                    queueMicrotask(() => {
+                        if (!loroSyncRef.current?.connected) return;
+
+                        for (const node of nodesToLayout) {
+                            const layoutedNode = processedNodes.find(n => n.id === node.id);
+                            if (layoutedNode && !needsAutoLayout(layoutedNode)) {
+                                loroSyncRef.current.updateNode(node.id, {
+                                    position: layoutedNode.position,
+                                });
+                            }
+                        }
+
+                        // Also sync pushed nodes positions
+                        for (const node of processedNodes) {
+                            const original = syncedNodes.find(n => n.id === node.id);
+                            if (original && !nodesToLayout.some(n => n.id === node.id)) {
+                                if (node.position.x !== original.position.x || node.position.y !== original.position.y) {
+                                    loroSyncRef.current?.updateNode(node.id, {
+                                        position: node.position,
+                                    });
+                                }
+                            }
+                        }
+
+                        // Sync group size changes
+                        for (const node of processedNodes) {
+                            const original = syncedNodes.find(n => n.id === node.id);
+                            if (original && node.type === 'group') {
+                                if (node.width !== original.width || node.height !== original.height) {
+                                    loroSyncRef.current?.updateNode(node.id, {
+                                        width: node.width,
+                                        height: node.height,
+                                        style: node.style,
+                                    });
+                                }
+                            }
+                        }
+                    });
+                }
+
+                return processedNodes;
             });
         },
         onEdgesChange: (syncedEdges) => {
             setEdges(syncedEdges);
         },
     });
+
+    // Ref to access loroSync in callbacks without causing re-renders
+    const loroSyncRef = useRef(loroSync);
+    useEffect(() => {
+        loroSyncRef.current = loroSync;
+    }, [loroSync]);
 
 
 
@@ -191,39 +279,66 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     const [sidebarWidth, setSidebarWidth] = useState(384);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-    // Selection state
-    const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
+	    // Selection state
+	    const [selectedNodes, setSelectedNodes] = useState<Node[]>([]);
 
-    // Custom onNodesChange to handle recursive resizing
-    const handleNodesChange = useCallback((changes: NodeChange[]) => {
-        onNodesChange(changes);
+	    const applyAutoZIndex = useCallback((nodeList: Node[]): Node[] => {
+	        const getTargetZIndex = (node: Node): number => {
+	            const depth = getNestingDepth(node.id, nodeList);
+	            return node.type === 'group' ? depth : CHILD_NODE_Z_INDEX_BASE + depth;
+	        };
 
-        // Debug: Log all changes
+	        let changed = false;
+	        const next = nodeList.map((node) => {
+	            const targetZIndex = getTargetZIndex(node);
+	            const raw = (node.style as any)?.zIndex;
+	            const currentZIndex = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : undefined;
 
-        // Handle node deletions - sync to Loro (Fallback if onNodesDelete doesn't fire)
-        const removeChanges = changes.filter(c => c.type === 'remove');
-        if (removeChanges.length > 0 && loroSync.connected) {
-            removeChanges.forEach(change => {
-                if (change.type === 'remove') {
-                    loroSync.removeNode(change.id);
-                }
-            });
-        }
+	            if (typeof currentZIndex === 'number' && Number.isFinite(currentZIndex) && currentZIndex === targetZIndex) {
+	                return node;
+	            }
 
-        // Check for dimension changes (resizing)
-        const resizeChanges = changes.filter(c => c.type === 'dimensions');
-        if (resizeChanges.length > 0) {
-            setNodes((currentNodes) => {
-                let updatedNodes = [...currentNodes];
+	            changed = true;
+	            return {
+	                ...node,
+	                style: {
+	                    ...(node.style || {}),
+	                    zIndex: targetZIndex,
+	                },
+	            };
+	        });
+
+	        return changed ? next : nodeList;
+	    }, []);
+
+	    // Normalize z-index so that child nodes are always clickable above their groups:
+	    // - groups: zIndex = depth
+	    // - non-groups: zIndex = 1000 + depth
+	    useEffect(() => {
+	        const next = applyAutoZIndex(nodes);
+	        if (next === nodes) return;
+
+	        setNodes(next);
+	        applyLayoutPatchesToLoro(loroSync, collectLayoutNodePatches(nodes, next));
+	    }, [nodes, setNodes, loroSync, applyAutoZIndex]);
+
+	    // Custom onNodesChange to handle recursive resizing
+	    const handleNodesChange = useCallback((changes: NodeChange[]) => {
+	        setNodes((currentNodes) => {
+	            let updatedNodes = applyNodeChanges(changes, currentNodes);
+
+            // Check for dimension changes (resizing)
+            const resizeChanges = changes.filter((c) => c.type === 'dimensions');
+            if (resizeChanges.length > 0) {
                 let hasUpdates = false;
 
-                resizeChanges.forEach(change => {
+                resizeChanges.forEach((change) => {
                     if (change.type === 'dimensions' && change.dimensions) {
-                        const node = updatedNodes.find(n => n.id === change.id);
+                        const node = updatedNodes.find((n) => n.id === change.id);
                         if (!node) return;
 
                         // Update the node's dimensions in our temp list
-                        const nodeIndex = updatedNodes.findIndex(n => n.id === change.id);
+                        const nodeIndex = updatedNodes.findIndex((n) => n.id === change.id);
                         if (nodeIndex !== -1) {
                             updatedNodes[nodeIndex] = {
                                 ...updatedNodes[nodeIndex],
@@ -233,7 +348,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                     ...updatedNodes[nodeIndex].style,
                                     width: change.dimensions.width,
                                     height: change.dimensions.height,
-                                }
+                                },
                             };
                         }
 
@@ -255,31 +370,22 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 const isInside = rectContains(groupAbsRect, otherAbsRect);
                                 const wasInside = otherNode.parentId === node.id;
 
-                                if (isInside && !wasInside) {
-                                    // Node is now inside the group but wasn't before
-                                    const groupAbsPos = getAbsolutePosition(resizedGroup, updatedNodes);
-                                    const relativePos = {
-                                        x: otherAbsRect.x - groupAbsPos.x,
-                                        y: otherAbsRect.y - groupAbsPos.y,
-                                    };
-                                    updatedNodes[otherIndex] = {
-                                        ...otherNode,
-                                        parentId: node.id,
-                                        position: relativePos,
-                                        extent: undefined,
-                                    };
-                                    hasUpdates = true;
-
-                                    // Sync to Loro
-                                    if (loroSync.connected) {
-                                        loroSync.updateNode(otherNode.id, {
-                                            parentId: node.id,
-                                            position: relativePos,
-                                        });
-                                    }
-                                }
-                            });
-                        }
+	                                if (isInside && !wasInside) {
+	                                    const groupAbsPos = getAbsolutePosition(resizedGroup, updatedNodes);
+	                                    const relativePos = {
+	                                        x: otherAbsRect.x - groupAbsPos.x,
+	                                        y: otherAbsRect.y - groupAbsPos.y,
+	                                    };
+	                                    updatedNodes[otherIndex] = {
+	                                        ...otherNode,
+	                                        parentId: node.id,
+	                                        position: relativePos,
+	                                        extent: undefined,
+	                                    };
+	                                    hasUpdates = true;
+	                                }
+	                            });
+	                        }
 
                         // CASE 2: If a node with parentId is resized, scale parent groups
                         if (node.parentId) {
@@ -288,7 +394,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 updatedNodes = applyGroupScales(updatedNodes, scales);
                                 hasUpdates = true;
 
-                                // Resolve collisions caused by scaling
                                 const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
                                 for (const groupId of scales.keys()) {
                                     const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
@@ -301,10 +406,31 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     }
                 });
 
-                return hasUpdates ? updatedNodes : currentNodes;
+	                if (!hasUpdates) {
+	                    // no-op
+	                }
+
+	                // Persist any derived layout changes caused by resizing (dimensions/group scaling/collision resolution)
+	                // NOTE: We intentionally do NOT sync drag position changes here; those are handled in onNodeDragStop.
+	                updatedNodes = applyAutoZIndex(updatedNodes);
+	                const patches = collectLayoutNodePatches(currentNodes, updatedNodes);
+	                applyLayoutPatchesToLoro(loroSync, patches);
+	            }
+
+	            return updatedNodes;
+	        });
+
+        // Handle node deletions - sync to Loro (Fallback if onNodesDelete doesn't fire)
+        const removeChanges = changes.filter(c => c.type === 'remove');
+        if (removeChanges.length > 0 && loroSync.connected) {
+            removeChanges.forEach(change => {
+                if (change.type === 'remove') {
+                    loroSync.removeNode(change.id);
+                }
             });
         }
-    }, [onNodesChange, setNodes, loroSync]);
+
+    }, [setNodes, loroSync, applyAutoZIndex]);
 
     // Reliable sync handlers
     const onNodesDelete = useCallback((deletedNodes: Node[]) => {
@@ -315,189 +441,83 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         }
     }, [loroSync]);
 
-    const onNodeDragStop = useCallback((event: React.MouseEvent, node: Node, allNodes: Node[]) => {
-        // Use new layout system for group ownership detection (OVERLAP based)
-        const nodeAbsRect = getAbsoluteRect(node, allNodes);
-        const ownership = determineGroupOwnership(nodeAbsRect, node.id, allNodes, node.parentId);
+	    const onNodeDragStop = useCallback((_event: React.MouseEvent, node: Node, _allNodes: Node[]) => {
+	        let patchesToSync: Array<{ id: string; patch: any }> = [];
+	        let draggedNodePatch: any | null = null;
 
-        let finalNode = { ...node };
-        const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
+	        flushSync(() => {
+	            setNodes((nds) => {
+	                const currentNode = nds.find((n) => n.id === node.id) ?? node;
+	                const draggedNode: Node = {
+	                    ...currentNode,
+	                    position: node.position,
+	                    width: node.width ?? currentNode.width,
+	                    height: node.height ?? currentNode.height,
+	                };
+	                (draggedNode as any).measured = (node as any).measured ?? (currentNode as any).measured;
 
-        // Track ownership change for visual feedback
-        const ownershipChanged = ownership.newParentId !== node.parentId;
-        const oldParentId = node.parentId;
-        const newParentId = ownership.newParentId;
+	                // Group ownership is based on FULL CONTAINMENT:
+	                // the node joins a group only when its rect is fully inside that group.
+	                const nodeAbsRect = getAbsoluteRect(draggedNode, nds);
+	                const ownership = determineGroupOwnership(nodeAbsRect, draggedNode.id, nds);
 
-        // Update parent if changed
-        if (ownershipChanged) {
+	                const nextNode: Node = {
+	                    ...draggedNode,
+	                    parentId: ownership.newParentId,
+	                    position: ownership.relativePosition,
+	                    extent: undefined,
+	                };
+	                (nextNode as any).parentNode = ownership.newParentId;
 
-            finalNode = {
-                ...node,
-                parentId: newParentId,
-                position: ownership.relativePosition,
-                extent: undefined,
-                // For group nodes, ensure they remain editable and above parent
-                ...(node.type === 'group' && newParentId ? {
-                    draggable: true,
-                    selectable: true,
-                    style: {
-                        ...node.style,
-                        zIndex: (Number(allNodes.find(n => n.id === newParentId)?.style?.zIndex ?? 0)) + 1,
-                    }
-                } : {})
-            };
-        }
+	                // If a group is nested, ensure it stays above its parent.
+	                if (nextNode.type === 'group' && ownership.newParentId) {
+	                    const parent = nds.find((n) => n.id === ownership.newParentId);
+	                    const parentZIndex = Number((parent?.style as any)?.zIndex ?? 0);
+	                    nextNode.style = {
+	                        ...nextNode.style,
+	                        zIndex: parentZIndex + 1,
+	                    };
+	                }
 
-        // Apply all updates in a single setNodes call
-        // Use flushSync to ensure state is updated synchronously so subsequent drags work immediately
-        flushSync(() => {
-            setNodes((nds) => {
-                // Apply ownership change for the dragged node
-                let updatedNodes = nds.map((n) => n.id === node.id ? finalNode : n);
+	                let updatedNodes = nds.map((n) => (n.id === draggedNode.id ? nextNode : n));
 
-                // If the dragged node is a GROUP, check if it now covers any other nodes
-                if (node.type === 'group') {
-                    const draggedGroup = updatedNodes.find(n => n.id === node.id)!;
-                    const groupAbsRect = getAbsoluteRect(draggedGroup, updatedNodes);
-                    const groupAbsPos = getAbsolutePosition(draggedGroup, updatedNodes);
+	                // Auto-resize ancestors to fit the moved node (including nested groups).
+	                const scales = recursiveGroupScale(nextNode.id, updatedNodes);
+	                if (scales.size > 0) {
+	                    updatedNodes = applyGroupScales(updatedNodes, scales);
 
-                    updatedNodes = updatedNodes.map((otherNode) => {
-                        // Skip the group itself and its existing descendants
-                        if (otherNode.id === node.id) return otherNode;
-                        if (isDescendant(otherNode.id, node.id, updatedNodes)) return otherNode;
+	                    const mesh = createMesh({ cellWidth: 50, cellHeight: 50, maxColumns: 10 });
+	                    for (const groupId of scales.keys()) {
+	                        const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
+	                        if (result.steps.length > 0) {
+	                            updatedNodes = applyResolution(updatedNodes, result);
+	                        }
+	                    }
+	                }
 
-                        // Skip nodes that are ancestors of this group
-                        if (isDescendant(node.id, otherNode.id, updatedNodes)) return otherNode;
+	                updatedNodes = applyAutoZIndex(updatedNodes);
+	                draggedNodePatch = {
+	                    position: nextNode.position,
+	                    parentId: nextNode.parentId,
+	                    parentNode: (nextNode as any).parentNode,
+	                    extent: nextNode.extent,
+	                    style: nextNode.style,
+	                };
 
-                        const otherAbsRect = getAbsoluteRect(otherNode, updatedNodes);
-                        const isInside = rectContains(groupAbsRect, otherAbsRect);
-                        const wasInside = otherNode.parentId === node.id;
+	                patchesToSync = collectLayoutNodePatches(nds, updatedNodes).filter((p) => p.id !== draggedNode.id);
+	                return updatedNodes;
+	            });
+	        });
 
-                        if (isInside && !wasInside) {
-                            // Node is now inside the group
-                            const relativePos = {
-                                x: otherAbsRect.x - groupAbsPos.x,
-                                y: otherAbsRect.y - groupAbsPos.y,
-                            };
-
-                            // Sync to Loro
-                            if (loroSync.connected) {
-                                loroSync.updateNode(otherNode.id, {
-                                    parentId: node.id,
-                                    position: relativePos,
-                                });
-                            }
-
-                            return {
-                                ...otherNode,
-                                parentId: node.id,
-                                position: relativePos,
-                                extent: undefined,
-                            };
-                        }
-
-                        return otherNode;
-                    });
-                }
-
-                // Auto-scale parent groups if needed
-                const scales = recursiveGroupScale(node.id, updatedNodes);
-                if (scales.size > 0) {
-                    updatedNodes = applyGroupScales(updatedNodes, scales);
-
-                    // Resolve collisions caused by scaling
-                    for (const groupId of scales.keys()) {
-                        const result = resolveCollisions(updatedNodes, groupId, mesh, { maxIterations: 10 });
-                        if (result.steps.length > 0) {
-                            updatedNodes = applyResolution(updatedNodes, result);
-                        }
-                    }
-                }
-
-                // Clear receiving/releasing states and set flash animations for ownership changes
-                updatedNodes = updatedNodes.map((n) => {
-                    if (n.type !== 'group') return n;
-
-                    // Determine if this group needs flash animation
-                    const shouldFlashReceived = ownershipChanged && n.id === newParentId;
-                    const shouldFlashReleased = ownershipChanged && n.id === oldParentId;
-
-                    // Clear drag states and set flash states
-                    if (n.data?.isReceiving || n.data?.isReleasing || shouldFlashReceived || shouldFlashReleased) {
-                        return {
-                            ...n,
-                            data: {
-                                ...n.data,
-                                isReceiving: false,
-                                isReleasing: false,
-                                justReceived: shouldFlashReceived,
-                                justReleased: shouldFlashReleased,
-                            }
-                        };
-                    }
-                    return n;
-                });
-
-                const targetNode = updatedNodes.find(n => n.id === node.id);
-                return updatedNodes;
-            });
-        });
-
-        // Clear flash animations after 500ms
-        if (ownershipChanged && (oldParentId || newParentId)) {
-            setTimeout(() => {
-                setNodes((nds) => nds.map((n) => {
-                    if (n.type !== 'group') return n;
-                    if (n.id === oldParentId || n.id === newParentId) {
-                        return {
-                            ...n,
-                            data: {
-                                ...n.data,
-                                justReceived: false,
-                                justReleased: false,
-                            }
-                        };
-                    }
-                    return n;
-                }));
-            }, 500);
-        }
-
-        // Sync to Loro
-        if (loroSync.connected) {
-            loroSync.updateNode(finalNode.id, {
-                position: finalNode.position,
-                parentId: finalNode.parentId,
-                extent: finalNode.extent,
-                style: finalNode.style
-            });
-        }
-    }, [setNodes, loroSync]);
+	        if (loroSync.connected && draggedNodePatch) {
+	            loroSync.updateNode(node.id, draggedNodePatch);
+	        }
+	        applyLayoutPatchesToLoro(loroSync, patchesToSync);
+	    }, [setNodes, loroSync, applyAutoZIndex]);
 
     const onSelectionChange = useCallback(({ nodes }: { nodes: Node[] }) => {
         setSelectedNodes(nodes);
     }, []);
-
-    // Handle node drag to show receiving/releasing visual feedback on groups
-    const onNodeDrag = useCallback((event: React.MouseEvent, node: Node, allNodes: Node[]) => {
-        // Skip if dragging a group (we don't show feedback for group-to-group)
-        if (node.type === 'group') return;
-
-        console.log('[onNodeDrag] FIRED! node:', node.id);
-
-        // TEST: 无条件让所有group高亮
-        setNodes((nds) => nds.map((n) => {
-            if (n.type !== 'group') return n;
-            console.log('[onNodeDrag] Setting group', n.id, 'isReceiving=true');
-            return {
-                ...n,
-                data: {
-                    ...n.data,
-                    isReceiving: true,
-                }
-            };
-        }));
-    }, [setNodes]);
 
     // Sync local state when prop changes (e.g. after agent action revalidation)
     useEffect(() => {
@@ -671,7 +691,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     }, [loroSync]);
 
     const assetTools = [
-        // Context merged into TextNode
+        { id: 'text', label: 'Text', icon: TextT },
         { id: 'image', label: 'Image', icon: ImageIcon },
         { id: 'video', label: 'Video', icon: FilmSlate },
         { id: 'audio', label: 'Audio', icon: SpeakerHigh },
@@ -702,19 +722,21 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
         if (type === 'action-badge-image' || type === 'image-gen') {
             nodeType = 'action-badge';
-            nodeData = { 
-                actionType: 'image-gen', 
+            nodeData = {
+                label: 'Image Prompt',
+                actionType: 'image-gen',
                 ...imageModelDefaults,
                 content: '# Prompt\nEnter your prompt here...',
-                ...nodeData 
+                ...nodeData
             };
         } else if (type === 'action-badge-video' || type === 'video-gen') {
             nodeType = 'action-badge';
-            nodeData = { 
-                actionType: 'video-gen', 
+            nodeData = {
+                label: 'Video Prompt',
+                actionType: 'video-gen',
                 ...videoModelDefaults,
                 content: '# Prompt\nEnter your prompt here...',
-                ...nodeData 
+                ...nodeData
             };
         } else if (type === 'text') {
             nodeData = { label: 'Text Node', content: '# Hello World\nDouble click to edit.', ...nodeData };
@@ -725,6 +747,29 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             // so it will render as a TextNode.
         } else if (type === 'video-editor') {
             nodeData = { label: 'Video Editor', inputs: [], ...nodeData };
+        }
+
+        // If caller didn't specify a parentId, default to "current group context":
+        // - Prefer the selected group (deepest if multiple)
+        // - Otherwise, use the parentId of the first selected node (if any)
+        let insertionParentId: string | undefined = extraData.parentId;
+        if (!insertionParentId && selectedNodes.length > 0) {
+            const byId = new Map(nodes.map((n) => [n.id, n]));
+            const selectedGroups = selectedNodes
+                .map((n) => byId.get(n.id) ?? n)
+                .filter((n) => n.type === 'group');
+
+            if (selectedGroups.length > 0) {
+                insertionParentId = selectedGroups
+                    .slice()
+                    .sort((a, b) => getNestingDepth(b.id, nodes) - getNestingDepth(a.id, nodes))[0]?.id;
+            } else {
+                const first = byId.get(selectedNodes[0].id) ?? selectedNodes[0];
+                insertionParentId = first.parentId;
+            }
+        }
+        if (insertionParentId !== extraData.parentId) {
+            extraData = { ...extraData, parentId: insertionParentId };
         }
 
         // For group nodes, calculate z-index
@@ -970,7 +1015,11 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             }
 
+            updatedNodes = applyAutoZIndex(updatedNodes);
             const finalNodes = updatedNodes;
+
+            // Persist derived layout updates (group resize / collision resolution)
+            applyLayoutPatchesToLoro(loroSync, collectLayoutNodePatches(nds, finalNodes));
 
             // Sync new node to Loro
             const createdNode = finalNodes.find(n => n.id === newNodeId);
@@ -1024,16 +1073,59 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         if (file && pendingNodeType) {
             // Generate a unique ID for tracking the placeholder node
             const placeholderId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-            
+
             // Create local preview URL for immediate display
             const localPreviewUrl = URL.createObjectURL(file);
-            
-            // Create placeholder node with 'uploading' status and local preview
-            addNode(pendingNodeType, { 
+
+            // Read media dimensions before creating node
+            let mediaWidth: number | undefined;
+            let mediaHeight: number | undefined;
+
+            if (file.type.startsWith('image/')) {
+                try {
+                    const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+                            URL.revokeObjectURL(img.src); // Clean up temporary URL
+                        };
+                        img.onerror = reject;
+                        img.src = localPreviewUrl;
+                    });
+                    mediaWidth = dimensions.width;
+                    mediaHeight = dimensions.height;
+                    console.log(`[Upload] Image dimensions: ${mediaWidth}x${mediaHeight}`);
+                } catch (err) {
+                    console.warn('[Upload] Failed to read image dimensions:', err);
+                }
+            } else if (file.type.startsWith('video/')) {
+                try {
+                    const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+                        const video = document.createElement('video');
+                        video.preload = 'metadata';
+                        video.onloadedmetadata = () => {
+                            resolve({ width: video.videoWidth, height: video.videoHeight });
+                        };
+                        video.onerror = () => reject(new Error('Failed to read video metadata'));
+                        video.src = localPreviewUrl;
+                    });
+                    mediaWidth = dimensions.width;
+                    mediaHeight = dimensions.height;
+                    console.log(`[Upload] Video dimensions: ${mediaWidth}x${mediaHeight}`);
+                } catch (err) {
+                    console.warn('[Upload] Failed to read video dimensions:', err);
+                }
+            }
+
+            // Create placeholder node with 'uploading' status, local preview, and dimensions
+            addNode(pendingNodeType, {
                 id: placeholderId,
-                label: file.name, 
+                label: file.name,
                 status: 'uploading',
-                src: localPreviewUrl  // Show local preview during upload
+                src: localPreviewUrl,  // Show local preview during upload
+                // Store actual media dimensions for correct node sizing
+                naturalWidth: mediaWidth,
+                naturalHeight: mediaHeight,
             });
             
             try {
@@ -1162,27 +1254,44 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         }
     }, [nodes, edges, setNodes, setEdges]);
 
-    const onLayout = useCallback(async () => {
-        const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
-            nodes,
-            edges,
-            { 'elk.direction': 'RIGHT' }
-        );
+    const relayoutParent = useCallback(
+        (parentId: string | undefined) => {
+            setNodes((current) => {
+                let updated = relayoutToGrid(current, { gapX: 80, gapY: 80, centerInCell: true, scopeParentId: parentId });
 
-        setNodes([...layoutedNodes]);
-        setEdges([...layoutedEdges]);
-        
-        // Sync all node positions to Loro to persist layout
-        if (loroSync.connected) {
-            layoutedNodes.forEach((node) => {
-                loroSync.updateNode(node.id, {
-                    position: node.position,
-                    width: node.width,
-                    height: node.height,
-                });
+                // Resize the affected parent group (and its ancestors) after children move.
+                if (parentId) {
+                    const mergedScales = new Map<string, { width: number; height: number }>();
+                    const directChildren = updated.filter((n) => n.parentId === parentId);
+                    for (const child of directChildren) {
+                        const scales = recursiveGroupScale(child.id, updated);
+                        for (const [groupId, size] of scales.entries()) {
+                            const prev = mergedScales.get(groupId);
+                            if (!prev) mergedScales.set(groupId, size);
+                            else
+                                mergedScales.set(groupId, {
+                                    width: Math.max(prev.width, size.width),
+                                    height: Math.max(prev.height, size.height),
+                                });
+                        }
+                    }
+                    if (mergedScales.size > 0) {
+                        updated = applyGroupScales(updated, mergedScales);
+                    }
+                }
+
+                updated = applyAutoZIndex(updated);
+                applyLayoutPatchesToLoro(loroSync, collectLayoutNodePatches(current, updated));
+                return updated;
             });
-        }
-    }, [nodes, edges, setNodes, setEdges, loroSync]);
+        },
+        [setNodes, applyAutoZIndex, loroSync, recursiveGroupScale, applyGroupScales]
+    );
+
+    const onLayout = useCallback(() => {
+        // Global relayout = relayout root-level (parentId undefined) only.
+        relayoutParent(undefined);
+    }, [relayoutParent]);
 
 
     const findNodeIdByName = useCallback((name: string): string | undefined => {
@@ -1192,9 +1301,10 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
     return (
         <ProjectProvider projectId={project.id}>
-            <VideoEditorProvider>
-                <MediaViewerProvider>
-                    <LoroSyncProvider loroSync={loroSync}>
+            <LoroSyncProvider loroSync={loroSync}>
+                <VideoEditorProvider>
+                    <MediaViewerProvider>
+                        <LayoutActionsProvider value={{ relayoutParent }}>
                         <div className="flex h-screen w-full flex-col bg-white overflow-hidden">
                         {/* Hidden File Input */}
                         <input
@@ -1255,7 +1365,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                     onNodesChange={handleNodesChange}
                                     onEdgesChange={handleEdgesChange}
                                     onNodesDelete={onNodesDelete}
-                                    onNodeDrag={onNodeDrag}
                                     onNodeDragStop={onNodeDragStop}
                                     onConnect={onConnect}
                                     onSelectionChange={onSelectionChange}
@@ -1403,9 +1512,10 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             </div>
                         </div>
                         </div>
-                    </LoroSyncProvider>
-                </MediaViewerProvider>
-            </VideoEditorProvider>
+                        </LayoutActionsProvider>
+                    </MediaViewerProvider>
+                </VideoEditorProvider>
+            </LoroSyncProvider>
         </ProjectProvider >
     );
 }

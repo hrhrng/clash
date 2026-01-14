@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { useEditor } from "@master-clash/remotion-core";
+import { useEditor } from "@remotion-fast/core";
 import { InteractiveCanvas } from "./InteractiveCanvas";
 
 // Time formatting utilities
@@ -190,23 +190,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     height: "100%",
-    width: "100%",
-    backgroundColor: "transparent", // Let parent background show through
+    backgroundColor: "#1a1a1a",
   },
   canvasWrapper: {
     flex: 1,
-    backgroundColor: "#f1f5f9", // slate-100
+    backgroundColor: "#1a1a1a",
     minWidth: 0,
     minHeight: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
   },
   controlsWrapper: {
     padding: "12px 16px",
-    backgroundColor: "white",
-    borderTop: "1px solid #e2e8f0", // slate-200
+    backgroundColor: "#1a1a1a",
+    borderTop: "1px solid #2a2a2a",
   },
   controls: {
     display: "flex",
@@ -219,7 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "40px",
     height: "40px",
     borderRadius: "50%",
-    backgroundColor: "#2563eb", // blue-600
+    backgroundColor: "#0066ff",
     border: "none",
     color: "white",
     cursor: "pointer",
@@ -235,20 +230,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "4px",
     fontSize: "14px",
     fontFamily: "monospace",
-    color: "#0f172a", // slate-900
+    color: "#ffffff",
     minWidth: "140px",
     flexShrink: 0,
   },
   currentTime: {
-    color: "#0f172a", // slate-900
+    color: "#ffffff",
     fontWeight: 600,
   },
   timeSeparator: {
-    color: "#94a3b8", // slate-400
+    color: "#888888",
     margin: "0 4px",
   },
   totalTime: {
-    color: "#64748b", // slate-500
+    color: "#aaaaaa",
   },
   progressContainer: {
     flex: 1,
@@ -262,12 +257,12 @@ const styles: Record<string, React.CSSProperties> = {
     position: "relative",
     width: "100%",
     height: "4px",
-    backgroundColor: "#e2e8f0", // slate-200
+    backgroundColor: "#444444",
     borderRadius: "2px",
   },
   progressFill: {
     height: "100%",
-    backgroundColor: "#2563eb", // blue-600
+    backgroundColor: "#0066ff",
     borderRadius: "2px",
     transition: "width 0.1s ease",
   },
@@ -276,10 +271,10 @@ const styles: Record<string, React.CSSProperties> = {
     top: "50%",
     width: "16px",
     height: "16px",
-    backgroundColor: "#2563eb", // blue-600
+    backgroundColor: "#0066ff",
     borderRadius: "50%",
     transform: "translate(-50%, -50%)",
-    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.1)",
+    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.3)",
     transition: "left 0.1s ease",
   },
 };

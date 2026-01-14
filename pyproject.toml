@@ -33,6 +33,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]
+"packages/shared-types/python/clash_types/types.py" = ["N815"]
 
 [tool.ruff.format]
 quote-style = "double"

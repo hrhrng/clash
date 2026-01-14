@@ -39,13 +39,16 @@ def create_default_llm() -> ChatGoogleGenerativeAI:
 
 
 def create_multi_agent_workflow(llm: ChatGoogleGenerativeAI | None = None):
-    """Create the multi-agent workflow using deepagents-inspired architecture.
+    """Create the multi-agent workflow using deepagents-inspired architecture (sync version).
 
     This creates:
     1. A supervisor agent that delegates tasks
     2. Four specialist sub-agents (ScriptWriter, ConceptArtist, StoryboardDesigner, Editor)
     3. Middleware stack (TodoList, Canvas, SubAgent)
     4. Canvas backend for tool operations
+
+    Note: This version uses get_checkpointer() which may not work with PostgreSQL.
+    For PostgreSQL support, use create_multi_agent_workflow_async() instead.
 
     Args:
         llm: Optional language model (defaults to Gemini 2.5 Pro)
@@ -83,5 +86,72 @@ def create_multi_agent_workflow(llm: ChatGoogleGenerativeAI | None = None):
     return supervisor
 
 
-# Default compiled graph used by API/tests
-graph = create_multi_agent_workflow()
+async def create_multi_agent_workflow_async(llm: ChatGoogleGenerativeAI | None = None):
+    """Create the multi-agent workflow using deepagents-inspired architecture (async version).
+
+    This creates:
+    1. A supervisor agent that delegates tasks
+    2. Four specialist sub-agents (ScriptWriter, ConceptArtist, StoryboardDesigner, Editor)
+    3. Middleware stack (TodoList, Canvas, SubAgent)
+    4. Canvas backend for tool operations
+
+    This async version properly supports PostgreSQL checkpointers.
+
+    Args:
+        llm: Optional language model (defaults to Gemini 2.5 Pro)
+
+    Returns:
+        Compiled supervisor agent graph
+    """
+    llm = llm or create_default_llm()
+
+    # Create backend and middleware
+    backend = StateCanvasBackend()
+    canvas_middleware = CanvasMiddleware(backend=backend)
+    timeline_middleware = TimelineMiddleware()
+
+    # Create specialist sub-agents
+    subagents = create_specialist_agents(
+        model=llm,
+        canvas_middleware=canvas_middleware,
+        timeline_middleware=timeline_middleware,
+    )
+
+    # Create supervisor agent with delegation capability
+    # Use persistent checkpointer for cross-request state persistence
+    from master_clash.database import get_async_checkpointer
+
+    checkpointer = await get_async_checkpointer()
+
+    supervisor = create_supervisor_agent(
+        model=llm,
+        subagents=subagents,
+        backend=backend,
+        checkpointer=checkpointer,
+    )
+
+    return supervisor
+
+
+# Global cached graph instance
+_cached_graph = None
+
+
+async def get_or_create_graph():
+    """Get or create the global workflow graph instance.
+
+    This function lazily initializes the graph on first use and caches it
+    for subsequent requests. Supports async checkpointer initialization.
+
+    Returns:
+        Compiled supervisor agent graph
+    """
+    global _cached_graph
+    if _cached_graph is None:
+        _cached_graph = await create_multi_agent_workflow_async()
+    return _cached_graph
+
+
+# For backwards compatibility - will be lazily initialized on first use
+# Use get_or_create_graph() in async contexts instead
+graph = None

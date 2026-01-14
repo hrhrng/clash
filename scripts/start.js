@@ -3,7 +3,7 @@ const path = require('path');
 
 // Configuration
 const FRONTEND_PORT = process.env.FRONTEND_PORT || 3000;
-const BACKEND_PORT = process.env.BACKEND_PORT || 8000;
+const BACKEND_PORT = process.env.BACKEND_PORT || 8888;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 
 console.log('\x1b[36m%s\x1b[0m', '=== Master Clash Startup ===');

@@ -1,12 +1,17 @@
 import { useCallback, useMemo } from 'react';
-import { useReactFlow, Node } from 'reactflow';
+import { useReactFlow, Node, Edge } from 'reactflow';
 import type { Point, Size, Rect, OwnershipResult, LayoutManagerConfig, MeshConfig } from '../types';
 import { Mesh, createMesh } from '../core/mesh';
 import { getAbsoluteRect, getAbsolutePosition, getNodeSize } from '../core/geometry';
-import { determineGroupOwnership, updateNodeOwnership, checkOwnershipChange } from '../group/ownership';
-import { autoScaleGroups, recursiveGroupScale, applyGroupScales } from '../group/auto-scale';
+import { updateNodeOwnership, checkOwnershipChange } from '../group/ownership';
+import { recursiveGroupScale, applyGroupScales } from '../group/auto-scale';
 import { resolveCollisions, applyResolution } from '../collision/resolver';
-import { getSiblings } from '../group/hierarchy';
+import {
+    needsAutoLayout,
+    autoInsertNode,
+    applyAutoInsertResult,
+    type AutoInsertResult,
+} from '../auto-insert';
 
 const DEFAULT_CONFIG: LayoutManagerConfig = {
     mesh: {
@@ -57,6 +62,10 @@ export interface UseLayoutManagerReturn {
         offset?: { x: number; y: number }
     ) => Node | null;
 
+    // Auto-insert for nodes with special placeholder position (from backend or programmatic creation)
+    // Returns IDs of nodes that were processed
+    handleAutoInsertNodes: (edges: Edge[]) => string[];
+
     // Mesh instance
     mesh: Mesh;
 }
@@ -94,8 +103,12 @@ export function useLayoutManager(
      * Apply ownership change to a node
      */
     const applyOwnershipChange = useCallback((nodeId: string, ownership: OwnershipResult) => {
-        setNodes((nodes) => updateNodeOwnership(nodes, nodeId, ownership));
-    }, [setNodes]);
+        setNodes((nodes) => {
+            const nextNodes = updateNodeOwnership(nodes, nodeId, ownership);
+            finalConfig.onNodesMutated?.(nodes, nextNodes);
+            return nextNodes;
+        });
+    }, [setNodes, finalConfig]);
 
     /**
      * Resolve collisions for a specific node
@@ -107,11 +120,13 @@ export function useLayoutManager(
             });
             if (result.steps.length > 0) {
                 console.log(`[LayoutManager] Resolved ${result.steps.length} collision(s) in ${result.iterations} iteration(s)`);
-                return applyResolution(nodes, result);
+                const nextNodes = applyResolution(nodes, result);
+                finalConfig.onNodesMutated?.(nodes, nextNodes);
+                return nextNodes;
             }
             return nodes;
         });
-    }, [setNodes, mesh, finalConfig.maxChainReactionIterations]);
+    }, [setNodes, mesh, finalConfig]);
 
     /**
      * Scale groups for a node (after position/size change)
@@ -121,11 +136,13 @@ export function useLayoutManager(
             const scales = recursiveGroupScale(nodeId, nodes);
             if (scales.size > 0) {
                 console.log(`[LayoutManager] Scaled ${scales.size} group(s)`);
-                return applyGroupScales(nodes, scales);
+                const nextNodes = applyGroupScales(nodes, scales);
+                finalConfig.onNodesMutated?.(nodes, nextNodes);
+                return nextNodes;
             }
             return nodes;
         });
-    }, [setNodes]);
+    }, [setNodes, finalConfig]);
 
     /**
      * Handle node drag end - check ownership and resolve collisions
@@ -162,6 +179,9 @@ export function useLayoutManager(
                 }
             }
 
+            if (updatedNodes !== nodes) {
+                finalConfig.onNodesMutated?.(nodes, updatedNodes);
+            }
             return updatedNodes;
         });
     }, [checkGroupOwnership, setNodes, mesh, finalConfig]);
@@ -191,6 +211,9 @@ export function useLayoutManager(
                 }
             }
 
+            if (updatedNodes !== nodes) {
+                finalConfig.onNodesMutated?.(nodes, updatedNodes);
+            }
             return updatedNodes;
         });
     }, [setNodes, mesh, finalConfig]);
@@ -298,6 +321,7 @@ export function useLayoutManager(
                 }
             }
 
+            finalConfig.onNodesMutated?.(nodes, updatedNodes);
             return updatedNodes;
         });
 
@@ -320,18 +344,105 @@ export function useLayoutManager(
             return null;
         }
 
-        // Calculate target position based on parent
+        // Use parent's parent as the parentId for the new node (same group as the parent node).
+        const parentGroupId = parentNode.parentId;
+
+        // Calculate target position next to the parent node, in the coordinate system
+        // expected by addNodeWithLayout:
+        // - root: absolute
+        // - inside a group: relative to that group
         const parentAbsPos = getAbsolutePosition(parentNode, nodes);
-        const targetPos = {
+        const absTargetPos = {
             x: parentAbsPos.x + offset.x,
             y: parentAbsPos.y + offset.y,
         };
 
-        // Use parent's parent as the parentId for the new node
-        const parentGroupId = parentNode.parentId;
+        if (parentGroupId) {
+            const parentGroup = nodes.find((n) => n.id === parentGroupId);
+            if (parentGroup) {
+                const groupAbsPos = getAbsolutePosition(parentGroup, nodes);
+                const relTargetPos = {
+                    x: absTargetPos.x - groupAbsPos.x,
+                    y: absTargetPos.y - groupAbsPos.y,
+                };
+                return addNodeWithLayout(newNode, relTargetPos, parentGroupId);
+            }
+        }
 
-        return addNodeWithLayout(newNode, targetPos, parentGroupId);
+        return addNodeWithLayout(newNode, absTargetPos, undefined);
     }, [getNodes, addNodeWithLayout]);
+
+    /**
+     * Handle auto-insert for nodes with special placeholder position
+     * This is called when nodes are added from backend (Python) or programmatically
+     * with position = { x: -1, y: -1 }
+     *
+     * Rules:
+     * - Has reference (source node in same group via edge) → insert to the right
+     * - No reference → place at bottom of group/canvas
+     * - Chain-push overlapping nodes to the right
+     */
+    const handleAutoInsertNodes = useCallback((edges: Edge[]): string[] => {
+        const processed: string[] = [];
+
+        setNodes((nodes) => {
+            // Find nodes that need auto-layout
+            const nodesToLayout = nodes.filter(needsAutoLayout);
+
+            if (nodesToLayout.length === 0) {
+                return nodes;
+            }
+
+            console.log(`[LayoutManager] Auto-inserting ${nodesToLayout.length} node(s)`);
+
+            let updatedNodes = [...nodes];
+
+            for (const node of nodesToLayout) {
+                // Calculate position and push overlapping nodes
+                const result = autoInsertNode(node.id, updatedNodes, edges);
+
+                console.log(
+                    `[LayoutManager] Auto-inserted ${node.id}: ` +
+                    `position=(${result.position.x}, ${result.position.y}), ` +
+                    `hasReference=${result.hasReference}, ` +
+                    `pushed=${result.pushedNodes.size} node(s)`
+                );
+
+                // Apply the result
+                updatedNodes = applyAutoInsertResult(updatedNodes, node.id, result);
+                processed.push(node.id);
+
+                // Auto-scale parent groups if the node is in a group
+                if (finalConfig.autoScale && node.parentId) {
+                    const scales = recursiveGroupScale(node.id, updatedNodes);
+                    if (scales.size > 0) {
+                        console.log(`[LayoutManager] Scaled ${scales.size} group(s) for ${node.id}`);
+                        updatedNodes = applyGroupScales(updatedNodes, scales);
+
+                        // Resolve collisions caused by group scaling
+                        if (finalConfig.autoResolveCollisions) {
+                            for (const groupId of scales.keys()) {
+                                const collisionResult = resolveCollisions(updatedNodes, groupId, mesh, {
+                                    maxIterations: finalConfig.maxChainReactionIterations,
+                                });
+                                if (collisionResult.steps.length > 0) {
+                                    updatedNodes = applyResolution(updatedNodes, collisionResult);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (updatedNodes !== nodes) {
+                finalConfig.onNodesMutated?.(nodes, updatedNodes);
+            }
+
+            return updatedNodes;
+        });
+
+        return processed;
+    }, [setNodes, mesh, finalConfig]);
 
     return {
         checkGroupOwnership,
@@ -344,6 +455,7 @@ export function useLayoutManager(
         findNonOverlappingPosition,
         addNodeWithLayout,
         addNodeWithAutoLayout,
+        handleAutoInsertNodes,
         mesh,
     };
 }

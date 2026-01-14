@@ -20,4 +20,10 @@ def get_checkpointer(*args: Any, **kwargs: Any):  # lazy import to avoid hard de
     return _get(*args, **kwargs)
 
 
-__all__ = ["get_checkpointer", "get_db_connection", "init_database", "get_database"]
+async def get_async_checkpointer(*args: Any, **kwargs: Any):  # lazy import for async version
+    from master_clash.database.checkpointer import get_async_checkpointer as _get_async
+
+    return await _get_async(*args, **kwargs)
+
+
+__all__ = ["get_checkpointer", "get_async_checkpointer", "get_db_connection", "init_database", "get_database"]

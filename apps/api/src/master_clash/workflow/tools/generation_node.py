@@ -31,6 +31,22 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             default=None,
             description="Markdown content displayed to users (e.g., prompt notes, scene context). This is the visible prompt part of the merged PromptActionNode."
         )
+        modelId: str | None = Field(  # noqa: N815
+            default=None,
+            description="Optional model ID to use for generation (e.g., 'nano-banana-pro').",
+        )
+        model: str | None = Field(
+            default=None,
+            description="Optional model ID alias (kept for backward compatibility).",
+        )
+        modelParams: dict[str, object] | None = Field(  # noqa: N815
+            default=None,
+            description="Optional model parameters as an object (NOT a JSON string), e.g. {'aspect_ratio': '21:9'}.",
+        )
+        aspectRatio: str | None = Field(  # noqa: N815
+            default=None,
+            description="Optional aspect ratio hint for frontend sizing (e.g., '16:9').",
+        )
         modelName: str | None = Field(  # noqa: N815
             default=None, description="Optional model name override"
         )
@@ -99,6 +115,12 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
         # Prepare data with merged upstream IDs
         data_dict = payload.model_dump(exclude_none=True)
+        if data_dict.get("prompt") and not data_dict.get("content"):
+            # Mirror prompt into content so the UI shows the generation prompt.
+            data_dict["content"] = data_dict["prompt"]
+        if data_dict.get("content") and not data_dict.get("prompt"):
+            # Ensure generation uses the same text if only content is provided.
+            data_dict["prompt"] = data_dict["content"]
         final_upstream_ids = set(data_dict.get("upstreamNodeIds", []))
         if upstream_node_id:
             final_upstream_ids.add(upstream_node_id)

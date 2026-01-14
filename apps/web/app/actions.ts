@@ -297,7 +297,7 @@ export async function createAsset(data: {
             const callbackUrl = `${protocol}://${host}/api/internal/assets/update`;
 
             // Fire and forget
-            fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/describe`, {
+            fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8888'}/api/describe`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

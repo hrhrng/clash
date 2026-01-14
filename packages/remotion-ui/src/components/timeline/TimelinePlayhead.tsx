@@ -1,11 +1,13 @@
 import React, { useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
+import { colors, timeline, zIndex, shadows, animations } from './styles';
 import { formatTime, frameToPixels } from './utils/timeFormatter';
 
 interface TimelinePlayheadProps {
   currentFrame: number;
   pixelsPerFrame: number;
   fps: number;
+  timelineHeight: number;
   onSeek: (frame: number) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
@@ -22,6 +24,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
   currentFrame,
   pixelsPerFrame,
   fps,
+  timelineHeight,
   onSeek,
   onDragStart,
   onDragEnd,
@@ -34,13 +37,8 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
   const position = frameToPixels(currentFrame, pixelsPerFrame);
   // 播放头中心轴（不再加半线宽，线和手柄都围绕它对齐）
   const centerX = leftOffset + position - scrollLeft;
-  // Hardcoded dimensions to match previous style constants
-  const playheadWidth = 2;
-  const playheadTriangleSize = 16;
-  const trackLabelWidth = 200; // Matches TimelineTrack.tsx
-
-  const lineLeft = centerX - playheadWidth / 2;
-  const triangleLeft = centerX - playheadTriangleSize / 2;
+  const lineLeft = centerX - timeline.playheadWidth / 2;
+  const triangleLeft = centerX - timeline.playheadTriangleSize / 2;
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -60,7 +58,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
         const xFromContainer = moveEvent.clientX - rect.left;
         const xRelativeToContent = rightPane
           ? xFromContainer - leftOffset
-          : xFromContainer - trackLabelWidth - leftOffset;
+          : xFromContainer - timeline.trackLabelWidth - leftOffset;
         const x = xRelativeToContent + scrollLeft;
         const frame = Math.max(0, Math.round(x / pixelsPerFrame));
         onSeek(frame);
@@ -80,13 +78,28 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 z-30 pointer-events-none">
+    <div
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: zIndex.playhead,
+        pointerEvents: 'none',
+      }}
+    >
       {/* 竖线：始终渲染。通过 label 面板更高的 z-index 进行遮挡 */}
       <div
-        className={`absolute top-0 bottom-0 w-[2px] bg-blue-500 transition-shadow duration-200 ${isDragging ? 'shadow-[0_0_8px_rgba(59,130,246,0.6)]' : ''
-          }`}
         style={{
+          position: 'absolute',
           left: lineLeft,
+          top: 0,
+          bottom: 0,
+          width: timeline.playheadWidth,
+          backgroundColor: colors.accent.primary,
+          boxShadow: isDragging ? '0 0 8px rgba(74, 158, 255, 0.6)' : 'none',
+          transition: isDragging ? 'none' : 'box-shadow 0.2s ease',
         }}
       />
 
@@ -98,11 +111,22 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
         animate={{
           scale: isDragging ? 1.3 : isHovered ? 1.2 : 1,
         }}
-        transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-        className={`absolute top-[-1px] w-0 h-0 border-l-[8px] border-r-[8px] border-t-[16px] border-l-transparent border-r-transparent border-t-blue-500 cursor-ew-resize pointer-events-auto block ${isDragging ? 'drop-shadow-[0_0_4px_rgba(59,130,246,0.8)]' : ''
-          }`}
+        transition={animations.springGentle}
         style={{
+          position: 'absolute',
+          // 三角以中心轴定位，使尖端与竖线中心对齐
           left: triangleLeft,
+          top: -1,
+          width: 0,
+          height: 0,
+          borderLeft: `${timeline.playheadTriangleSize / 2}px solid transparent`,
+          borderRight: `${timeline.playheadTriangleSize / 2}px solid transparent`,
+          borderTop: `${timeline.playheadTriangleSize}px solid ${colors.accent.primary}`,
+          cursor: 'ew-resize',
+          pointerEvents: 'auto',
+          filter: isDragging ? 'drop-shadow(0 0 4px rgba(74, 158, 255, 0.8))' : 'none',
+          // 三角形也始终渲染，由更高 z-index 的 label 遮挡
+          display: 'block',
         }}
       >
         {/* Tooltip - 显示当前时间 */}
@@ -112,7 +136,22 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.15 }}
-            className="absolute left-1/2 bottom-[20px] -translate-x-1/2 bg-slate-800 text-white text-[11px] font-mono px-2 py-1 rounded shadow-md pointer-events-none whitespace-nowrap z-50"
+            style={{
+              position: 'absolute',
+              left: '50%',
+              bottom: timeline.playheadTriangleSize + 4,
+              transform: 'translateX(-50%)',
+              backgroundColor: colors.bg.elevated,
+              color: colors.text.primary,
+              fontSize: 11,
+              fontFamily: 'monospace',
+              padding: '4px 8px',
+              borderRadius: 4,
+              whiteSpace: 'nowrap',
+              boxShadow: shadows.md,
+              pointerEvents: 'none',
+              zIndex: zIndex.tooltip,
+            }}
           >
             {formatTime(currentFrame, fps)}
           </motion.div>

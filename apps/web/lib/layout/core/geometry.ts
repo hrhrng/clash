@@ -9,18 +9,22 @@ export function getNodeSize(type: string): Size {
         case 'group':
             return { width: 400, height: 400 };
         case 'text':
-            return { width: 300, height: 200 };
+            return { width: 300, height: 400 };
         case 'prompt':
             return { width: 300, height: 150 };
         case 'context':
             return { width: 300, height: 400 };
         case 'image':
         case 'video':
-            return { width: 300, height: 300 };
+            // Default size closer to actual loaded size (MAX_MEDIA_DIMENSION = 500)
+            // Most images will be around 400-500px after loading
+            return { width: 400, height: 400 };
         case 'audio':
             return { width: 300, height: 100 };
         case 'action-badge':
-            return { width: 200, height: 80 };
+            return { width: 320, height: 220 };
+        case 'video-editor':
+            return { width: 250, height: 200 };
         default:
             return { width: 300, height: 300 };
     }

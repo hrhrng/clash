@@ -160,7 +160,7 @@ async def analyze_with_gemini():
 
 ```bash
 # 发起视频分析请求
-curl -X POST "http://localhost:8000/api/analyze-video" \
+curl -X POST "http://localhost:8888/api/analyze-video" \
   -H "Content-Type: application/json" \
   -d '{
     "video_path": "/path/to/video.mp4",

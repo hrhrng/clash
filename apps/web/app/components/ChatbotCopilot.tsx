@@ -14,12 +14,12 @@ import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
 import { ThinkingProcess } from './copilot/ThinkingProcess';
 import { TodoList, TodoItem } from './copilot/TodoList';
 import { ThinkingIndicator } from './copilot/ThinkingIndicator';
-import { Node, Edge, Connection } from 'reactflow';
+import type { Node as RFNode, Edge as RFEdge, Connection as RFConnection } from 'reactflow';
 import ReactMarkdown from 'react-markdown';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { thumbnailCache } from '@/lib/utils/thumbnailCache';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8888';
 
 
 interface Message {
@@ -38,13 +38,13 @@ interface ChatbotCopilotProps {
     onWidthChange: (width: number) => void;
     isCollapsed: boolean;
     onCollapseChange: (collapsed: boolean) => void;
-    selectedNodes?: Node[];
+    selectedNodes?: RFNode[];
     onAddNode?: (type: string, extraData?: any) => string;
-    onAddEdge?: (params: Edge | Connection) => void;
-    onUpdateNode?: (nodeId: string, updates: Partial<Node>) => void;
+    onAddEdge?: (params: RFEdge | RFConnection) => void;
+    onUpdateNode?: (nodeId: string, updates: Partial<RFNode>) => void;
     findNodeIdByName?: (name: string) => string | undefined;
-    nodes?: Node[];
-    edges?: Edge[];
+    nodes?: RFNode[];
+    edges?: RFEdge[];
     initialPrompt?: string;
 }
 
@@ -88,16 +88,18 @@ export default function ChatbotCopilot({
         return Date.now().toString() + Math.random().toString(36).substring(2, 9);
     };
 
-    const [threadId, setThreadId] = useState<string>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(`clash_thread_id_${projectId}`);
-            if (saved) return saved;
-        }
-        return generateId();
-    });
+    const [threadId, setThreadId] = useState<string>('');
 
     useEffect(() => {
-        if (typeof window !== 'undefined') {
+        if (typeof window === 'undefined' || threadId) {
+            return;
+        }
+        const saved = localStorage.getItem(`clash_thread_id_${projectId}`);
+        setThreadId(saved || generateId());
+    }, [projectId, threadId]);
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && threadId) {
             localStorage.setItem(`clash_thread_id_${projectId}`, threadId);
         }
     }, [threadId, projectId]);
@@ -108,23 +110,29 @@ export default function ChatbotCopilot({
         updatedAt?: string;
     }
 
-    const [sessionHistory, setSessionHistory] = useState<SessionInfo[]>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(`clash_session_history_${projectId}`);
-            if (saved) {
-                try {
-                    const parsed = JSON.parse(saved);
-                    // Handle migration from string[] to SessionInfo[]
-                    return parsed.map((item: any) => 
-                        typeof item === 'string' ? { threadId: item } : item
-                    );
-                } catch (e) {
-                    console.error('Failed to parse session history', e);
-                }
-            }
+    const [sessionHistory, setSessionHistory] = useState<SessionInfo[]>([]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return;
         }
-        return [];
-    });
+        const saved = localStorage.getItem(`clash_session_history_${projectId}`);
+        if (!saved) {
+            setSessionHistory([]);
+            return;
+        }
+        try {
+            const parsed = JSON.parse(saved);
+            // Handle migration from string[] to SessionInfo[]
+            const normalized = parsed.map((item: any) =>
+                typeof item === 'string' ? { threadId: item } : item
+            );
+            setSessionHistory(normalized);
+        } catch (e) {
+            console.error('Failed to parse session history', e);
+            setSessionHistory([]);
+        }
+    }, [projectId]);
 
     useEffect(() => {
         if (typeof window !== 'undefined') {
@@ -134,7 +142,7 @@ export default function ChatbotCopilot({
 
     // Automatically add current threadId to session history if it has content
     useEffect(() => {
-        if (displayItems.length > 0) {
+        if (displayItems.length > 0 && threadId) {
            setSessionHistory(prev => {
                const exists = prev.some(s => s.threadId === threadId);
                if (exists) return prev;
@@ -144,6 +152,8 @@ export default function ChatbotCopilot({
     }, [displayItems.length, threadId]);
 
     const [showHistory, setShowHistory] = useState(false);
+    const historyDropdownRef = useRef<HTMLDivElement | null>(null);
+    const historyButtonRef = useRef<HTMLButtonElement | null>(null);
     const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
     
     // Session management state
@@ -319,12 +329,36 @@ export default function ChatbotCopilot({
     }, [fetchProjectSessions]);
 
     const handleHistoryClick = () => {
-        setShowHistory(!showHistory);
-        // Refresh list when opening history
-        if (!showHistory) {
-            fetchProjectSessions();
-        }
+        setShowHistory((prev) => {
+            const next = !prev;
+            if (next) fetchProjectSessions();
+            return next;
+        });
     };
+
+    useEffect(() => {
+        if (!showHistory) return;
+
+        const onPointerDown = (event: PointerEvent) => {
+            const target = event.target as globalThis.Node | null;
+            if (!target) return;
+            if (historyDropdownRef.current?.contains(target)) return;
+            if (historyButtonRef.current?.contains(target)) return;
+            setShowHistory(false);
+        };
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setShowHistory(false);
+        };
+
+        // Use capture so this still works even if other handlers call stopPropagation().
+        document.addEventListener("pointerdown", onPointerDown, true);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown, true);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [showHistory]);
 
     // Sync initial messages to display items
     useEffect(() => {
@@ -1252,7 +1286,8 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('end', () => {
-            console.log('[ChatbotCopilot] Received end event. Closing stream.');
+            console.log('[ChatbotCopilot] ===== RECEIVED END EVENT ===== Closing stream.');
+            hasReceivedData = true;
             normalEnd = true;
             eventSource.close();
             eventSourceRef.current = null;
@@ -1493,6 +1528,7 @@ export default function ChatbotCopilot({
                             </motion.button>
                             <motion.button
                                 onClick={handleHistoryClick}
+                                ref={historyButtonRef}
                                 className="p-2 rounded-lg hover:bg-gray-100/50 text-slate-600 transition-colors relative"
                                 whileHover={{ scale: 1.1 }}
                                 whileTap={{ scale: 0.9 }}
@@ -1513,6 +1549,7 @@ export default function ChatbotCopilot({
                                     initial={{ opacity: 0, y: -10, scale: 0.95 }}
                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                     exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                                    ref={historyDropdownRef}
                                     className="absolute top-14 right-4 z-30 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden"
                                 >
                                     <div className="p-3 border-b border-slate-100 bg-slate-50">

@@ -7,7 +7,7 @@ Provides atomic batch operations for updating multiple nodes and edges.
 import logging
 from typing import Any
 
-from loro import ExportMode, LoroDoc
+from loro import LoroDoc
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,6 @@ class LoroBatchMixin:
     """Mixin providing batch operations."""
 
     doc: LoroDoc
-
-    def _send_update(self, update: bytes):
-        """To be implemented by main class."""
-        raise NotImplementedError
 
     def batch_update_graph(self, nodes: dict[str, Any] = None, edges: dict[str, Any] = None):
         """Atomically set (insert/update) multiple nodes AND edges in a single transaction.
@@ -35,8 +31,6 @@ class LoroBatchMixin:
             return
 
         logger.info(f"[LoroSyncClient] 📦 Batch graph update ({len(nodes)} nodes, {len(edges)} edges)")
-
-        version_before = self.doc.oplog_vv
 
         if nodes:
             nodes_map = self.doc.get_map("nodes")
@@ -78,6 +72,5 @@ class LoroBatchMixin:
                         pass
                 edges_map.insert(edge_id, edge_data)
 
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info("[LoroSyncClient] ✅ Batch graph transaction completed")

@@ -27,7 +27,8 @@ from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.nano_banana import nano_banana_gen
 from master_clash.loro_sync import LoroSyncClient
 from master_clash.utils import image_to_base64
-from master_clash.workflow.multi_agent import graph
+from master_clash.workflow.multi_agent import get_or_create_graph
+from master_clash.api.stream_emitter import StreamEmitter
 
 # Configure logging
 settings = get_settings()
@@ -79,122 +80,6 @@ class GenerateDescriptionResponse(BaseModel):
 
     task_id: str = Field(..., description="Task ID")
     status: str = Field(default="processing", description="Task status")
-
-
-class StreamEmitter:
-    """Helper class to emit formatted SSE events."""
-
-    def format_event(self, event_type: str, data: dict, thread_id: str | None = None) -> str:
-        logger.info(f"Emitting event: {event_type} - {str(data)[:200]}...")
-        
-        # Log to database if thread_id is provided
-        if thread_id:
-            from master_clash.services.session_interrupt import log_session_event
-            log_session_event(thread_id, event_type, data)
-            
-        return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-
-    def text(self, content: str, thread_id: str | None = None, agent: str = "Director", agent_id: str | None = None) -> str:
-        """Output text token/message."""
-        payload = {"agent": agent, "content": content}
-        if agent_id:
-            payload["agent_id"] = agent_id
-        return self.format_event("text", payload, thread_id=thread_id)
-
-    def thinking(
-        self, content: str, thread_id: str | None = None, agent: str = None, id: str = None, agent_id: str | None = None
-    ) -> str:
-        """Output thinking token/message."""
-        data = {"content": content}
-        if agent:
-            data["agent"] = agent
-        if id:
-            data["id"] = id
-        if agent_id:
-            data["agent_id"] = agent_id
-        return self.format_event("thinking", data, thread_id=thread_id)
-
-    def sub_agent_start(self, agent: str, task: str, id: str) -> str:
-        logger.info(f"Sub-agent START: {agent} - {task} ({id})")
-        return self.format_event("sub_agent_start", {"agent": agent, "task": task, "id": id})
-
-    def sub_agent_end(self, agent: str, result: str, id: str) -> str:
-        logger.info(f"Sub-agent END: {agent} - {result} ({id})")
-        return self.format_event("sub_agent_end", {"agent": agent, "result": result, "id": id})
-
-    def end(self) -> str:
-        """Output end token."""
-        return self.format_event("end", {})
-
-    async def tool_create_node(
-        self, agent: str, tool_name: str, args: dict, proposal_data: dict, result_text: str
-    ):
-        """Tool execution: Create Node."""
-        tool_id = f"call_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Tool START: {agent} - {tool_name} ({tool_id})")
-        yield self.format_event(
-            "tool_start", {"agent": agent, "tool_name": tool_name, "args": args, "id": tool_id}
-        )
-        await asyncio.sleep(1)  # Simulate work
-        logger.info(f"Node Proposal: {proposal_data.get('id')}")
-        yield self.format_event("node_proposal", proposal_data)
-        logger.info(f"Tool END: {agent} - {result_text} ({tool_id})")
-        yield self.format_event(
-            "tool_end",
-            {
-                "agent": agent,
-                "result": result_text,
-                "status": "success",
-                "id": tool_id,
-                "tool": tool_name,
-            },
-            thread_id=None, # Will be set in stream_workflow loop callers if needed
-        )
-
-    async def tool_poll_asset(
-        self, agent: str, node_id: str, context: ProjectContext, get_asset_id_func
-    ):
-        """Tool execution: Poll Asset Status."""
-        tool_id = f"call_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Tool Poll START: {agent} - {node_id} ({tool_id})")
-        yield self.format_event(
-            "tool_start",
-            {
-                "agent": agent,
-                "tool_name": "check_asset_status",
-                "args": {"node_id": node_id},
-                "id": tool_id,
-            },
-        )
-
-        asset_id = get_asset_id_func(node_id, context)
-        if not asset_id:
-            logger.info(f"Tool Poll RETRY: {node_id}")
-            yield self.format_event(
-                "tool_end",
-                {
-                    "agent": agent,
-                    "result": "Still generating...",
-                    "status": "success",
-                    "id": tool_id,
-                    "tool": "check_asset_status",
-                },
-            )
-            yield self.format_event("retry", {})
-            yield None  # Signal not found
-        else:
-            logger.info(f"Tool Poll SUCCESS: {node_id} -> {asset_id}")
-            yield self.format_event(
-                "tool_end",
-                {
-                    "agent": agent,
-                    "result": f"Asset generated: {asset_id}",
-                    "status": "success",
-                    "id": tool_id,
-                    "tool": "check_asset_status",
-                },
-            )
-            yield asset_id  # Signal found
 
 
 @app.get("/api/v1/stream/{project_id}")
@@ -322,6 +207,9 @@ async def stream_workflow(
             return agent, agent_id
 
         try:
+            # Get or create the workflow graph lazily
+            graph = await get_or_create_graph()
+
             async for streamed in graph.astream(
                 inputs,
                 config=config,
@@ -633,14 +521,21 @@ async def stream_workflow(
                 yield emitter.format_event("session_interrupted", {
                     "thread_id": thread_id,
                     "message": "Session interrupted. You can resume later with the same thread_id.",
-                })
+                }, thread_id=thread_id)
             else:
                 logger.error("Stream workflow failed: %s", exc, exc_info=True)
                 await set_session_status(thread_id, "completed")  # Mark as completed on error
-                yield emitter.format_event("workflow_error", {"message": str(exc)})
+
+                # Extract error message safely - avoid serialization issues
+                error_msg = str(exc)
+                if not error_msg or len(error_msg) > 500:
+                    error_msg = f"{type(exc).__name__}: {str(exc)[:500]}"
+
+                # Don't pass thread_id to avoid logging complex exception objects
+                yield emitter.format_event("workflow_error", {"message": error_msg})
 
         # Always end the stream FIRST, before disconnecting Loro
-        yield emitter.end()
+        yield emitter.end(thread_id=thread_id)
 
         # Cleanup: Disconnect Loro client in background (non-blocking)
         # This prevents the SSE stream from waiting for the websocket to close
@@ -699,6 +594,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "master_clash.api.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8888,
         reload=True,  # Disable in production
     )

@@ -67,7 +67,11 @@ class Settings:
         self.replicate_api_key: str | None = _env("REPLICATE_API_KEY")
         self.stability_api_key: str | None = _env("STABILITY_API_KEY")
         self.kie_api_key: str | None = _env("KIE_API_KEY")
-        
+
+        # TTS APIs
+        self.minimax_api_key: str | None = _env("MINIMAX_API_KEY")
+        self.elevenlabs_api_key: str | None = _env("ELEVENLABS_API_KEY")
+
         # Kling Video AI
         self.KLING_ACCESS_KEY: str | None = _env("KLING_ACCESS_KEY")
         self.KLING_SECRET_KEY: str | None = _env("KLING_SECRET_KEY")
@@ -96,10 +100,13 @@ class Settings:
         self.r2_bucket_name: str | None = _env("R2_BUCKET_NAME")
         self.r2_public_url: str | None = _env("R2_PUBLIC_URL")
 
-        # Cloudflare D1 (checkpointer)
+        # Cloudflare D1 (checkpointer) - DEPRECATED: Use PostgreSQL instead
         self.cloudflare_account_id: str | None = _env("CLOUDFLARE_ACCOUNT_ID")
         self.cloudflare_d1_database_id: str | None = _env("CLOUDFLARE_D1_DATABASE_ID")
         self.cloudflare_api_token: str | None = _env("CLOUDFLARE_API_TOKEN")
+
+        # PostgreSQL (Neon) - for checkpointer, sessions, and agent data
+        self.postgres_connection_string: str | None = _env("POSTGRES_CONNECTION_STRING")
 
         # Loro Sync Server
         self.loro_sync_url: str | None = _env("LORO_SYNC_URL", "ws://localhost:8787")
@@ -125,11 +132,17 @@ class Settings:
 
     @property
     def use_d1_checkpointer(self) -> bool:
+        """DEPRECATED: Use use_postgres_checkpointer instead."""
         return bool(
             self.cloudflare_account_id
             and self.cloudflare_d1_database_id
             and self.cloudflare_api_token
         )
+
+    @property
+    def use_postgres_checkpointer(self) -> bool:
+        """Check if PostgreSQL checkpointer should be used."""
+        return bool(self.postgres_connection_string)
 
     @property
     def is_production(self) -> bool:

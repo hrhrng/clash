@@ -3,16 +3,23 @@ import React, { memo, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { FilmSlate, Play, ArrowSquareOut } from '@phosphor-icons/react';
 import { useVideoEditor } from '../VideoEditorContext';
+import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 
 const VideoEditorNode = ({ data, id }: NodeProps) => {
     const { openEditor } = useVideoEditor();
+    const loroSync = useOptionalLoroSyncContext();
 
     const handleOpenEditor = useCallback(() => {
         // Collect assets from data
         const assets = data.inputs || [];
+        let timelineDsl = data.timelineDsl;
+        if (loroSync?.doc) {
+            const loroNode = loroSync.doc.getMap('nodes').get(id) as any;
+            timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
+        }
         console.log('Opening editor with assets:', assets);
-        openEditor(assets);
-    }, [data.inputs, openEditor]);
+        openEditor(assets, id, timelineDsl);
+    }, [data.inputs, data.timelineDsl, id, loroSync, openEditor]);
 
     return (
         <div

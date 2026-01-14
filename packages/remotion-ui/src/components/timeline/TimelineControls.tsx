@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-
+import { colors, typography } from './styles';
 
 interface ZoomControlProps {
   zoom: number;
@@ -65,21 +65,57 @@ export const ZoomControl: React.FC<ZoomControlProps> = ({
   }, [isDragging]);
 
   return (
-    <div className="flex items-center gap-3 h-8">
+    <div style={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: 12,
+      height: 32, // 固定容器高度确保对齐
+    }}>
       {/* Zoom Out Button */}
       <button
         onClick={onZoomOut}
         disabled={!canZoomOut}
-        className={`w-7 h-7 flex items-center justify-center rounded-md border text-base leading-none transition-all ${canZoomOut
-          ? 'border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 cursor-pointer'
-          : 'border-slate-100 text-slate-300 cursor-not-allowed'
-          }`}
+        style={{
+          width: 28,
+          height: 28,
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'transparent',
+          border: `1px solid ${colors.border.default}`,
+          borderRadius: '6px',
+          color: canZoomOut ? colors.text.primary : colors.text.disabled,
+          fontSize: 16,
+          lineHeight: 1,
+          cursor: canZoomOut ? 'pointer' : 'not-allowed',
+          opacity: canZoomOut ? 1 : 0.3,
+          transition: 'all 0.15s ease',
+        }}
+        onMouseEnter={(e) => {
+          if (canZoomOut) {
+            e.currentTarget.style.backgroundColor = colors.bg.hover;
+            e.currentTarget.style.borderColor = colors.accent.primary;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (canZoomOut) {
+            e.currentTarget.style.backgroundColor = 'transparent';
+            e.currentTarget.style.borderColor = colors.border.default;
+          }
+        }}
       >
         −
       </button>
 
       {/* Slider */}
-      <div className="relative w-[180px] h-7 flex items-center group">
+      <div style={{ 
+        position: 'relative', 
+        width: 180,
+        height: 28, // 与按钮高度一致
+        display: 'flex',
+        alignItems: 'center', // 垂直居中对齐
+      }}>
         <input
           ref={sliderRef}
           type="range"
@@ -95,18 +131,116 @@ export const ZoomControl: React.FC<ZoomControlProps> = ({
             updateTooltipPosition();
           }}
           onMouseLeave={() => !isDragging && setShowTooltip(false)}
-          className="w-full h-1 bg-slate-200 rounded-full appearance-none cursor-pointer outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110 [&::-webkit-slider-thumb]:active:scale-125"
+          className="zoom-slider"
+          style={{
+            width: '100%',
+            height: 4,
+            outline: 'none',
+            WebkitAppearance: 'none',
+            appearance: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            margin: 0, // 移除默认margin
+          }}
         />
+
+        <style>{`
+          .zoom-slider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            background: ${colors.border.default};
+            border-radius: 2px;
+          }
+
+          .zoom-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: ${colors.accent.primary};
+            cursor: grab;
+            margin-top: -6px; /* (16px - 4px) / 2 = 6px */
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            transition: all 0.15s ease;
+            border: 2px solid #fff;
+          }
+
+          .zoom-slider:hover::-webkit-slider-thumb {
+            transform: scale(1.1);
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+          }
+
+          .zoom-slider:active::-webkit-slider-thumb {
+            cursor: grabbing;
+            transform: scale(1.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          }
+
+          .zoom-slider::-moz-range-track {
+            width: 100%;
+            height: 4px;
+            background: ${colors.border.default};
+            border-radius: 2px;
+            border: none;
+          }
+
+          .zoom-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: ${colors.accent.primary};
+            cursor: grab;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            transition: all 0.15s ease;
+          }
+
+          .zoom-slider:hover::-moz-range-thumb {
+            transform: scale(1.1);
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+          }
+
+          .zoom-slider:active::-moz-range-thumb {
+            cursor: grabbing;
+            transform: scale(1.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          }
+        `}</style>
       </div>
 
       {/* Zoom In Button */}
       <button
         onClick={onZoomIn}
         disabled={!canZoomIn}
-        className={`w-7 h-7 flex items-center justify-center rounded-md border text-base leading-none transition-all ${canZoomIn
-          ? 'border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 cursor-pointer'
-          : 'border-slate-100 text-slate-300 cursor-not-allowed'
-          }`}
+        style={{
+          width: 28,
+          height: 28,
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'transparent',
+          border: `1px solid ${colors.border.default}`,
+          borderRadius: '6px',
+          color: canZoomIn ? colors.text.primary : colors.text.disabled,
+          fontSize: 16,
+          lineHeight: 1,
+          cursor: canZoomIn ? 'pointer' : 'not-allowed',
+          opacity: canZoomIn ? 1 : 0.3,
+          transition: 'all 0.15s ease',
+        }}
+        onMouseEnter={(e) => {
+          if (canZoomIn) {
+            e.currentTarget.style.backgroundColor = colors.bg.hover;
+            e.currentTarget.style.borderColor = colors.accent.primary;
+          }
+        }}
+        onMouseLeave={(e) => {
+          if (canZoomIn) {
+            e.currentTarget.style.backgroundColor = 'transparent';
+            e.currentTarget.style.borderColor = colors.border.default;
+          }
+        }}
       >
         +
       </button>
@@ -114,15 +248,37 @@ export const ZoomControl: React.FC<ZoomControlProps> = ({
       {/* Tooltip */}
       {showTooltip && (
         <div
-          className="fixed bg-slate-900 text-white px-3 py-1.5 rounded-md text-xs font-bold whitespace-nowrap pointer-events-none shadow-xl z-[999999]"
           style={{
+            position: 'fixed',
             left: tooltipX,
-            top: tooltipY - 40,
+            top: tooltipY - 50,
             transform: 'translateX(-50%)',
+            backgroundColor: '#000',
+            color: '#fff',
+            padding: '8px 14px',
+            borderRadius: '6px',
+            fontSize: '14px',
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.8)',
+            zIndex: 999999,
           }}
         >
           {zoom.toFixed(2)}×
-          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-slate-900" />
+          <div
+            style={{
+              position: 'absolute',
+              bottom: -6,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 0,
+              height: 0,
+              borderLeft: '6px solid transparent',
+              borderRight: '6px solid transparent',
+              borderTop: '6px solid #000',
+            }}
+          />
         </div>
       )}
     </div>
@@ -148,15 +304,21 @@ export const SnapButton: React.FC<SnapButtonProps> = ({ enabled, onToggle }) => 
   };
 
   return (
-    <div className="relative">
+    <div style={{ position: 'relative' }}>
       <button
         ref={buttonRef}
         onClick={onToggle}
-        onMouseEnter={() => {
+        onMouseEnter={(e) => {
           setShowTooltip(true);
           updateTooltipPosition();
+          e.currentTarget.style.backgroundColor = colors.bg.hover;
+          e.currentTarget.style.borderColor = colors.accent.primary;
         }}
-        onMouseLeave={() => setShowTooltip(false)}
+        onMouseLeave={(e) => {
+          setShowTooltip(false);
+          e.currentTarget.style.backgroundColor = 'transparent';
+          e.currentTarget.style.borderColor = colors.border.default;
+        }}
         onMouseMove={(e) => {
           if (showTooltip) {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -164,29 +326,64 @@ export const SnapButton: React.FC<SnapButtonProps> = ({ enabled, onToggle }) => 
             setTooltipY(rect.top);
           }
         }}
-        className={`w-7 h-7 flex items-center justify-center rounded-md border transition-all ${enabled
-          ? 'bg-blue-50 border-blue-500 text-blue-600'
-          : 'bg-transparent border-slate-200 text-slate-400 hover:border-blue-400 hover:text-blue-500'
-          }`}
+        style={{
+          width: 28,
+          height: 28,
+          padding: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'transparent',
+          border: `1px solid ${colors.border.default}`,
+          borderRadius: '6px',
+          cursor: 'pointer',
+          opacity: enabled ? 1 : 0.3,
+          transition: 'all 0.15s ease',
+        }}
       >
         {/* Bootstrap Icons Magnet - Professional Design */}
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 1a7 7 0 0 0-7 7v3h4V8a3 3 0 0 1 6 0v3h4V8a7 7 0 0 0-7-7m7 11h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z" />
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path 
+            d="M8 1a7 7 0 0 0-7 7v3h4V8a3 3 0 0 1 6 0v3h4V8a7 7 0 0 0-7-7m7 11h-4v3h4zM5 12H1v3h4zM0 8a8 8 0 1 1 16 0v8h-6V8a2 2 0 1 0-4 0v8H0z"
+            fill={enabled ? colors.accent.primary : colors.text.primary}
+          />
         </svg>
       </button>
 
       {/* Tooltip */}
       {showTooltip && (
         <div
-          className="fixed bg-slate-900 text-white px-3 py-1.5 rounded-md text-xs font-bold whitespace-nowrap pointer-events-none shadow-xl z-[999999]"
           style={{
+            position: 'fixed',
             left: tooltipX,
             top: tooltipY - 40,
             transform: 'translateX(-50%)',
+            backgroundColor: '#000',
+            color: '#fff',
+            padding: '8px 14px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.8)',
+            zIndex: 999999,
           }}
         >
-          Magnet {enabled ? 'On' : 'Off'}
-          <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-slate-900" />
+          磁吸 {enabled ? '开启' : '关闭'}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: -6,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 0,
+              height: 0,
+              borderLeft: '6px solid transparent',
+              borderRight: '6px solid transparent',
+              borderTop: '6px solid #000',
+            }}
+          />
         </div>
       )}
     </div>

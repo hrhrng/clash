@@ -231,19 +231,81 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
                 parent_id = action_node_data.get("parentId") if action_node_data else None
 
+                # Generate a meaningful label from the action node's label or prompt
+                action_node_label = None
+                if action_node_data and action_node_data.get("data"):
+                    action_node_label = action_node_data["data"].get("label") or action_node_data["data"].get("content")
+
+                # Extract first meaningful line from prompt or label
+                if action_node_label:
+                    # Remove markdown headers and get first non-empty line
+                    lines = [line.strip() for line in action_node_label.split('\n') if line.strip() and not line.strip().startswith('#')]
+                    if lines:
+                        # Take first 50 chars of first line
+                        generated_label = lines[0][:50]
+                        if len(lines[0]) > 50:
+                            generated_label += "..."
+                    else:
+                        generated_label = f"Generated {gen_type}"
+                else:
+                    # Fallback: use first part of prompt
+                    if prompt:
+                        generated_label = prompt[:50]
+                        if len(prompt) > 50:
+                            generated_label += "..."
+                    else:
+                        generated_label = f"Generated {gen_type}"
+
+                logger.info(f"[RunGen] Generated label for asset node: '{generated_label}'")
+
+                action_data = action_node_data.get("data", {}) if action_node_data else {}
+                if not isinstance(action_data, dict):
+                    action_data = {}
+
+                model_params = action_data.get("modelParams") or {}
+                if not isinstance(model_params, dict):
+                    model_params = {}
+
+                model_id = action_data.get("modelId") or action_data.get("model")
+                aspect_ratio = (
+                    model_params.get("aspect_ratio")
+                    or action_data.get("aspectRatio")
+                    or "16:9"
+                )
+                reference_mode = action_data.get("referenceMode")
+
                 node_data = {
-                    "label": f"Generating {gen_type}...",
+                    "label": generated_label,
                     "prompt": prompt,
                     "src": "",
                     "status": "generating",
                     "assetId": asset_id,
                     "sourceNodeId": node_id,
+                    "aspectRatio": aspect_ratio,
                 }
+
+                if model_id:
+                    node_data["model"] = model_id
+                    node_data["modelId"] = model_id
+
+                if model_params:
+                    node_data["modelParams"] = model_params
+
+                if reference_mode:
+                    node_data["referenceMode"] = reference_mode
+
+                if "count" in model_params:
+                    node_data["count"] = model_params.get("count")
+                elif "count" in action_data:
+                    node_data["count"] = action_data.get("count")
 
                 if gen_type == "video":
                     node_data["referenceImageUrls"] = reference_image_urls
-                    node_data["duration"] = 5
-                    node_data["model"] = "kling-v1"
+                    duration_value = model_params.get("duration") or action_data.get("duration") or 5
+                    try:
+                        node_data["duration"] = int(duration_value)
+                    except (TypeError, ValueError):
+                        node_data["duration"] = 5
 
                 pending_node = {
                     "id": asset_id,

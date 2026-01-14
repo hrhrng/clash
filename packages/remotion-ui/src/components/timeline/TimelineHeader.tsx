@@ -1,4 +1,6 @@
 import React from 'react';
+import { motion } from 'framer-motion';
+import { colors, timeline, typography, borderRadius, shadows } from './styles';
 import { formatTime } from './utils/timeFormatter';
 import { ZoomControl, SnapButton } from './TimelineControls';
 
@@ -23,29 +25,63 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   fps,
   zoom,
   snapEnabled,
+  autoFitEnabled = false,
   onZoomIn,
   onZoomOut,
+  onZoomToFit,
+  onZoomReset,
   onToggleSnap,
+  onToggleAutoFit,
   onZoomChange,
   zoomLimits,
 }) => {
-  const limits = zoomLimits || { min: 0.25, max: 5 };
+  const limits = zoomLimits || { min: timeline.zoomMin, max: timeline.zoomMax };
 
   return (
-    <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 shadow-sm sticky top-0 z-10">
+    <div
+        style={{
+          height: timeline.headerHeight,
+          backgroundColor: colors.bg.secondary,
+          borderBottom: `1px solid ${colors.border.default}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 16px',
+          boxShadow: shadows.sm,
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}
+      >
       {/* 左侧：标题和时间显示 */}
-      <div className="flex items-center gap-4">
-        <div className="text-lg font-semibold text-slate-900">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div
+          style={{
+            fontSize: typography.fontSize.lg,
+            fontWeight: typography.fontWeight.semibold,
+            color: colors.text.primary,
+          }}
+        >
           Timeline
         </div>
 
-        <div className="bg-slate-100 px-3 py-1.5 rounded-md font-mono text-sm text-slate-900 border border-slate-200 tabular-nums">
+        <div
+          style={{
+            backgroundColor: colors.bg.elevated,
+            padding: '6px 12px',
+            borderRadius: borderRadius.md,
+            fontFamily: typography.fontFamily.mono,
+            fontSize: typography.fontSize.sm,
+            color: colors.text.primary,
+            border: `1px solid ${colors.border.default}`,
+          }}
+        >
           {formatTime(currentFrame, fps)}
         </div>
       </div>
 
       {/* 中间：控制按钮 */}
-      <div className="flex items-center gap-5">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
         <ZoomControl
           zoom={zoom}
           min={limits.min}
@@ -56,7 +92,13 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
         />
 
         {/* 分隔线 */}
-        <div className="w-px h-5 bg-slate-200" />
+        <div
+          style={{
+            width: 1,
+            height: 20,
+            backgroundColor: colors.border.default,
+          }}
+        />
 
         <SnapButton
           enabled={snapEnabled}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { EditorProvider, useEditor } from '@master-clash/remotion-core';
+import { EditorProvider, useEditor, type EditorState } from '@master-clash/remotion-core';
 import { CanvasPreview } from './CanvasPreview';
 import { Timeline } from './Timeline';
 import { AssetPanel } from './AssetPanel';
@@ -29,9 +29,15 @@ const AssetInitializer = ({ assets }: { assets: any[] }) => {
   return null;
 };
 
-export const Editor: React.FC<{ initialAssets?: any[] }> = ({ initialAssets }) => {
+type EditorProps = {
+  initialAssets?: any[];
+  initialState?: Partial<EditorState>;
+  onStateChange?: (state: EditorState) => void;
+};
+
+export const Editor: React.FC<EditorProps> = ({ initialAssets, initialState, onStateChange }) => {
   return (
-    <EditorProvider>
+    <EditorProvider initialState={initialState} onStateChange={onStateChange}>
       <AssetInitializer assets={initialAssets || []} />
       <div className="w-full h-full flex flex-col bg-white font-sans text-slate-900">
         {/* Header removed as requested */}
@@ -45,9 +51,13 @@ export const Editor: React.FC<{ initialAssets?: any[] }> = ({ initialAssets }) =
           {/* Main Content Area */}
           <main className="flex-1 flex flex-col min-w-0 bg-slate-50/30">
             {/* Top Row - Preview and Properties */}
-            <div className="flex-1 flex min-h-0">
-              <div className="flex-1 min-h-0 p-4 flex items-center justify-center bg-slate-100/50">
-                <div className="w-full h-full shadow-lg rounded-lg overflow-hidden ring-1 ring-slate-900/5 bg-white">
+            <div className="flex-1 flex" style={{ minHeight: 0 }}>
+              {/* Preview Area */}
+              <div
+                className="flex-1 p-4 flex items-center justify-center bg-slate-100/50"
+                style={{ minHeight: 0 }}
+              >
+                <div className="w-full h-full rounded-lg overflow-hidden bg-white shadow-lg ring-1 ring-slate-900/5">
                   <CanvasPreview />
                 </div>
               </div>
@@ -56,8 +66,11 @@ export const Editor: React.FC<{ initialAssets?: any[] }> = ({ initialAssets }) =
               </aside>
             </div>
 
-            {/* Timeline Area - Full Width */}
-            <div className="h-[300px] shrink-0 border-t border-slate-200 bg-white z-0 relative">
+            {/* Timeline Area - Full Width with fixed height */}
+            <div
+              className="border-t border-slate-200 bg-white relative"
+              style={{ height: 300, flexShrink: 0 }}
+            >
               <Timeline />
             </div>
           </main>

@@ -12,7 +12,7 @@ graph TD
     
     Gateway -->|/| Web["Frontend (Next.js :3000)"]
     Gateway -->|/sync/*| Sync["Loro Sync Server (:8787)"]
-    Gateway -->|/api/*| API["Python API (:8000)"]
+    Gateway -->|/api/*| API["Python API (:8888)"]
     Gateway -->|/assets/*| R2[("R2 Assets")]
     
     subgraph "Infrastructure (Cloudflare)"
@@ -203,7 +203,7 @@ make dev-gateway-full
 | **统一入口** | `http://localhost:8788` |
 | 前端 | `http://localhost:3000` |
 | Loro Sync | `http://localhost:8787` |
-| Python API | `http://localhost:8000` |
+| Python API | `http://localhost:8888` |
 
 ---
 
