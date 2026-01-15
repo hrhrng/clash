@@ -92,6 +92,8 @@ export type Asset = {
   name: string;
   type: 'video' | 'audio' | 'image';
   src: string;
+  width?: number;
+  height?: number;
   duration?: number;
   thumbnail?: string;
   thumbnailFrameCount?: number; // Number of frames in the thumbnail strip

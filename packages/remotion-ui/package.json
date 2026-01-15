@@ -38,7 +38,8 @@
   },
   "dependencies": {
     "@master-clash/remotion-core": "workspace:*",
-    "@master-clash/remotion-components": "workspace:*"
+    "@master-clash/remotion-components": "workspace:*",
+    "react-moveable": "^0.56.0"
   },
   "devDependencies": {
     "@remotion/player": "^4.0.363",

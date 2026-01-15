@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item } from '@remotion-fast/core';
+import type { Item } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 import { colors } from '../../styles';
 

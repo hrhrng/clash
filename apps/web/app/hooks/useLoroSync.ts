@@ -11,6 +11,8 @@ interface LoroSyncOptions {
 }
 
 export interface UseLoroSyncReturn {
+  /** The project ID this sync is connected to */
+  projectId: string;
   doc: LoroDoc | null;
   connected: boolean;
   addNode: (nodeId: string, nodeData: any) => void;

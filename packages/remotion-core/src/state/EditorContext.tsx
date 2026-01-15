@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import type { EditorState, EditorAction, Item, Asset } from '../types';
+import type { EditorState, EditorAction, Track, Item, Asset } from '../types';
 
 // Initial state
-const defaultState: EditorState = {
+const initialState: EditorState = {
   tracks: [],
   selectedItemId: null,
   selectedTrackId: null,
@@ -15,16 +15,6 @@ const defaultState: EditorState = {
   fps: 30,
   durationInFrames: 1500, // 50 seconds at 30fps
 };
-
-function normalizeInitialState(state?: Partial<EditorState>): EditorState {
-  if (!state) return defaultState;
-  return {
-    ...defaultState,
-    ...state,
-    tracks: state.tracks ?? defaultState.tracks,
-    assets: state.assets ?? defaultState.assets,
-  };
-}
 
 // Reducer function
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -106,11 +96,11 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         tracks: state.tracks.map((t) =>
           t.id === action.payload.trackId
             ? {
-              ...t,
-              items: t.items.map((i) =>
-                i.id === action.payload.itemId ? ({ ...i, ...action.payload.updates } as Item) : i
-              ),
-            }
+                ...t,
+                items: t.items.map((i) =>
+                  i.id === action.payload.itemId ? ({ ...i, ...action.payload.updates } as Item) : i
+                ),
+              }
             : t
         ),
       };
@@ -163,8 +153,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
               // 素材的天然边界会自动限制扩展范围
               ...(item.type === 'video' || item.type === 'audio'
                 ? {
-                  sourceStartInFrames: currentOffset,
-                }
+                    sourceStartInFrames: currentOffset,
+                  }
                 : {}),
             };
 
@@ -180,8 +170,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
               // 素材的天然边界会自动限制扩展范围
               ...(item.type === 'video' || item.type === 'audio'
                 ? {
-                  sourceStartInFrames: newSourceOffset,
-                }
+                    sourceStartInFrames: newSourceOffset,
+                  }
                 : {}),
               // Mark as justInserted so TimelineItem will regenerate thumbnail
               justInserted: item.type === 'video',
@@ -228,22 +218,11 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
     case 'SET_ZOOM':
       return { ...state, zoom: action.payload };
 
-    case 'ADD_ASSET': {
-      const existingIndex = state.assets.findIndex((a) => a.id === action.payload.id);
-      if (existingIndex !== -1) {
-        // Update existing asset
-        const newAssets = [...state.assets];
-        newAssets[existingIndex] = action.payload;
-        return {
-          ...state,
-          assets: newAssets,
-        };
-      }
+    case 'ADD_ASSET':
       return {
         ...state,
         assets: [...state.assets, action.payload],
       };
-    }
 
     case 'REMOVE_ASSET':
       return {
@@ -274,6 +253,32 @@ type EditorContextType = {
 
 const EditorContext = createContext<EditorContextType | undefined>(undefined);
 
+// Default state for normalization
+const defaultState = initialState;
+
+// Normalize initial state by merging with defaults
+function normalizeInitialState(providedState?: Partial<EditorState>): EditorState {
+  if (!providedState) return defaultState;
+  const merged = { ...defaultState, ...providedState };
+
+  if (!merged.fps || merged.fps < 1) {
+    merged.fps = defaultState.fps;
+  }
+
+  if (!merged.durationInFrames || merged.durationInFrames < 1) {
+    let maxEnd = 0;
+    for (const track of merged.tracks) {
+      for (const item of track.items) {
+        const end = item.from + item.durationInFrames;
+        if (end > maxEnd) maxEnd = end;
+      }
+    }
+    merged.durationInFrames = maxEnd > 0 ? maxEnd : defaultState.durationInFrames;
+  }
+
+  return merged;
+}
+
 type EditorProviderProps = {
   children: ReactNode;
   initialState?: Partial<EditorState>;
@@ -281,81 +286,36 @@ type EditorProviderProps = {
 };
 
 // Provider
-export function EditorProvider({ children, initialState, onStateChange }: EditorProviderProps) {
-  const [state, dispatch] = useReducer(editorReducer, initialState, normalizeInitialState);
+export function EditorProvider({ children, initialState: providedInitialState, onStateChange }: EditorProviderProps) {
+  const [state, dispatch] = useReducer(
+    editorReducer,
+    providedInitialState,
+    (init) => normalizeInitialState(init)
+  );
 
-  // Listen for window messages
-  useMessageListener(dispatch);
-
-  // Only call onStateChange when persistable fields change (not currentFrame/playing/selectedItemId)
-  // This prevents re-renders during playback
+  // Legacy onStateChange support - prefer using stateRef in Editor component instead
+  // This still has some overhead, but much less than before (only runs on persistable changes)
   const prevPersistableRef = React.useRef<string | null>(null);
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
+
+  const { tracks, compositionWidth, compositionHeight, fps, durationInFrames, assets, zoom } = state;
+
   React.useEffect(() => {
-    if (onStateChange) {
-      // Extract only the fields that need to be persisted
-      const persistable = {
-        tracks: state.tracks,
-        compositionWidth: state.compositionWidth,
-        compositionHeight: state.compositionHeight,
-        fps: state.fps,
-        durationInFrames: state.durationInFrames,
-        assets: state.assets,
-        zoom: state.zoom,
-      };
-      const persistableJson = JSON.stringify(persistable);
-      if (prevPersistableRef.current !== persistableJson) {
-        prevPersistableRef.current = persistableJson;
-        onStateChange(state);
-      }
+    if (!onStateChange) return;
+
+    const persistableJson = JSON.stringify({ tracks, compositionWidth, compositionHeight, fps, durationInFrames, assets, zoom });
+    if (prevPersistableRef.current !== persistableJson) {
+      prevPersistableRef.current = persistableJson;
+      onStateChange(stateRef.current);
     }
-  }, [onStateChange, state]);
+  }, [onStateChange, tracks, compositionWidth, compositionHeight, fps, durationInFrames, assets, zoom]);
 
   return (
     <EditorContext.Provider value={{ state, dispatch }}>
       {children}
     </EditorContext.Provider>
   );
-}
-
-// Message Listener Hook
-function useMessageListener(dispatch: React.Dispatch<EditorAction>) {
-  React.useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      // Security check: validate origin if deployed
-      // if (event.origin !== 'http://localhost:3000') return;
-
-      if (event.data?.type === 'INIT_ASSETS') {
-        console.log('Received assets from parent:', event.data.payload);
-        const assets = event.data.payload;
-        if (Array.isArray(assets)) {
-          assets.forEach((asset: any) => {
-            // Map incoming asset format to Editor's Asset type if necessary
-            // Assuming payload matches Asset interface for now, or simple mapping
-            const newAsset: Asset = {
-              id: asset.id || `asset-${Date.now()}-${Math.random()}`,
-              type: asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : 'audio',
-              src: asset.src || asset.url,
-              name: asset.name || 'Imported Asset',
-              createdAt: Date.now(),
-              readOnly: true,
-            };
-            dispatch({ type: 'ADD_ASSET', payload: newAsset });
-          });
-        }
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-
-    // Notify parent that editor is ready
-    if (window.opener) {
-      window.opener.postMessage({ type: 'EDITOR_READY' }, '*');
-    }
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
-  }, [dispatch]);
 }
 
 // Hook

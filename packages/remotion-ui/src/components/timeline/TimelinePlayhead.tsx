@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { colors, timeline, zIndex, shadows, animations } from './styles';
 import { formatTime, frameToPixels } from './utils/timeFormatter';
@@ -11,16 +11,15 @@ interface TimelinePlayheadProps {
   onSeek: (frame: number) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
-  // Horizontal scroll sync from tracks viewport
   scrollLeft?: number;
-  // Additional left offset in pixels to account for when the
-  // playhead is rendered relative to a container that does not start at
-  // the very left edge of the overall timeline (e.g., when placing the
-  // playhead only inside the right pane). Default 0.
   leftOffset?: number;
+  /** Max frame to stop at */
+  durationInFrames?: number;
+  /** Called when playhead reaches end */
+  onPlayEnd?: () => void;
 }
 
-export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
+export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(({
   currentFrame,
   pixelsPerFrame,
   fps,
@@ -30,15 +29,41 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
   onDragEnd,
   scrollLeft = 0,
   leftOffset = 0,
+  durationInFrames = Infinity,
+  onPlayEnd,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
-  const position = frameToPixels(currentFrame, pixelsPerFrame);
-  // 播放头中心轴（不再加半线宽，线和手柄都围绕它对齐）
-  const centerX = leftOffset + position - scrollLeft;
-  const lineLeft = centerX - timeline.playheadWidth / 2;
-  const triangleLeft = centerX - timeline.playheadTriangleSize / 2;
+  // Refs for direct DOM manipulation during playback
+  const lineRef = useRef<HTMLDivElement>(null);
+  const triangleRef = useRef<HTMLDivElement>(null);
+
+  // Refs for stable access in RAF loop without restarting effect
+  const scrollLeftRef = useRef(scrollLeft);
+  const pixelsPerFrameRef = useRef(pixelsPerFrame);
+  const leftOffsetRef = useRef(leftOffset);
+
+  // Update refs on render
+  scrollLeftRef.current = scrollLeft;
+  pixelsPerFrameRef.current = pixelsPerFrame;
+  leftOffsetRef.current = leftOffset;
+
+  // Direct DOM update for static position
+  // We use useLayoutEffect to ensure it updates immediately after render
+  React.useLayoutEffect(() => {
+    const pos = frameToPixels(currentFrame, pixelsPerFrame);
+    const cX = leftOffset + pos - scrollLeft;
+    const lL = cX - timeline.playheadWidth / 2;
+    const tL = cX - timeline.playheadTriangleSize / 2;
+
+    if (lineRef.current) {
+      lineRef.current.style.left = `${lL}px`;
+    }
+    if (triangleRef.current) {
+      triangleRef.current.style.left = `${tL}px`;
+    }
+  }, [currentFrame, pixelsPerFrame, leftOffset, scrollLeft]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -91,9 +116,11 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
     >
       {/* 竖线：始终渲染。通过 label 面板更高的 z-index 进行遮挡 */}
       <div
+        ref={lineRef}
         style={{
           position: 'absolute',
-          left: lineLeft,
+          // REMOVED 'left' from here completely to allow direct DOM manipulation via refs
+          // Both static (useLayoutEffect) and dynamic (RAF) updates use the ref.
           top: 0,
           bottom: 0,
           width: timeline.playheadWidth,
@@ -105,6 +132,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
 
       {/* 顶部三角形拖拽手柄 */}
       <motion.div
+        ref={triangleRef}
         onMouseDown={handleMouseDown}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
@@ -114,8 +142,7 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
         transition={animations.springGentle}
         style={{
           position: 'absolute',
-          // 三角以中心轴定位，使尖端与竖线中心对齐
-          left: triangleLeft,
+          // REMOVED 'left' from here completely
           top: -1,
           width: 0,
           height: 0,
@@ -159,4 +186,4 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = ({
       </motion.div>
     </div>
   );
-};
+});

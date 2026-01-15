@@ -2,8 +2,8 @@ import React, { useState, useCallback, useEffect, useRef, CSSProperties } from '
 import { useDraggable } from '@dnd-kit/core';
 import { CSS as DndCSS } from '@dnd-kit/utilities';
 import { motion } from 'framer-motion';
-import type { Item, Asset, Track } from '@remotion-fast/core';
-import { useEditor } from '@remotion-fast/core';
+import type { Item, Asset, Track } from '@master-clash/remotion-core';
+import { useEditor } from '@master-clash/remotion-core';
 import { colors, timeline, typography, shadows, animations, borderRadius } from './styles';
 import { getItemColor, withOpacity } from './styles';
 import { frameToPixels, secondsToFrames } from './utils/timeFormatter';

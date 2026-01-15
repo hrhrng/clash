@@ -43,7 +43,7 @@ import GroupNode from './nodes/GroupNode';
 import VideoEditorNode from './nodes/VideoEditorNode';
 import { MediaViewerProvider } from './MediaViewerContext';
 import { ProjectProvider } from './ProjectContext';
-import { VideoEditorProvider } from './VideoEditorContext';
+import { VideoEditorProvider, useVideoEditor } from './VideoEditorContext';
 import { getLayoutedElements } from '@/lib/utils/elkLayout';
 import { LayoutActionsProvider } from './LayoutActionsContext';
 import {
@@ -76,6 +76,25 @@ const CHILD_NODE_Z_INDEX_BASE = 1000;
 interface ProjectEditorProps {
     project: Project & { messages: Message[] };
     initialPrompt?: string;
+}
+
+/**
+ * Wrapper component that hides content when video editor is open.
+ * Uses visibility:hidden to preserve layout and avoid re-renders on close.
+ */
+function HideWhenEditorOpen({ children }: { children: React.ReactNode }) {
+    const { isOpen } = useVideoEditor();
+    return (
+        <div
+            style={{
+                visibility: isOpen ? 'hidden' : 'visible',
+                pointerEvents: isOpen ? 'none' : 'auto',
+            }}
+            className="contents"
+        >
+            {children}
+        </div>
+    );
 }
 
 const nodeTypes = {
@@ -589,6 +608,8 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 type: sourceNode.type,
                                 src: resolveAssetUrl(sourceNode.data.src),
                                 name: sourceNode.data.label || sourceNode.type,
+                                width: sourceNode.data.naturalWidth,
+                                height: sourceNode.data.naturalHeight,
                                 // Add other fields if needed
                             };
                         }
@@ -1068,16 +1089,41 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         }
     };
 
-    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (file && pendingNodeType) {
-            // Generate a unique ID for tracking the placeholder node
-            const placeholderId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const addAssetEdgeToEditor = useCallback((assetNodeId: string, editorNodeId: string) => {
+        setEdges((eds) => {
+            const exists = eds.some(
+                (edge) =>
+                    edge.source === assetNodeId &&
+                    edge.target === editorNodeId &&
+                    edge.targetHandle === 'assets'
+            );
+            if (exists) return eds;
 
-            // Create local preview URL for immediate display
+            const edgeId = `edge-${assetNodeId}-${editorNodeId}-assets`;
+            const newEdge: Edge = {
+                id: edgeId,
+                source: assetNodeId,
+                target: editorNodeId,
+                targetHandle: 'assets',
+            };
+
+            if (loroSync.connected) {
+                loroSync.addEdge(edgeId, newEdge);
+            }
+
+            return [...eds, newEdge];
+        });
+    }, [setEdges, loroSync]);
+
+    const uploadFileAsAssetNode = useCallback(
+        async (
+            file: File,
+            assetType: 'image' | 'video' | 'audio',
+            options?: { connectToVideoEditorId?: string }
+        ): Promise<{ id: string; type: 'image' | 'video' | 'audio'; src: string; name: string; width?: number; height?: number } | null> => {
+            const placeholderId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
             const localPreviewUrl = URL.createObjectURL(file);
 
-            // Read media dimensions before creating node
             let mediaWidth: number | undefined;
             let mediaHeight: number | undefined;
 
@@ -1087,7 +1133,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                         const img = new Image();
                         img.onload = () => {
                             resolve({ width: img.naturalWidth, height: img.naturalHeight });
-                            URL.revokeObjectURL(img.src); // Clean up temporary URL
+                            URL.revokeObjectURL(img.src);
                         };
                         img.onerror = reject;
                         img.src = localPreviewUrl;
@@ -1117,22 +1163,24 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             }
 
-            // Create placeholder node with 'uploading' status, local preview, and dimensions
-            addNode(pendingNodeType, {
+            addNode(assetType, {
                 id: placeholderId,
                 label: file.name,
                 status: 'uploading',
-                src: localPreviewUrl,  // Show local preview during upload
-                // Store actual media dimensions for correct node sizing
+                src: localPreviewUrl,
                 naturalWidth: mediaWidth,
                 naturalHeight: mediaHeight,
             });
-            
+
+            if (options?.connectToVideoEditorId) {
+                addAssetEdgeToEditor(placeholderId, options.connectToVideoEditorId);
+            }
+
             try {
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('projectId', project.id);
-                formData.append('type', pendingNodeType);
+                formData.append('type', assetType);
 
                 const res = await fetch('/api/upload/asset', {
                     method: 'POST',
@@ -1145,8 +1193,8 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
 
                 const { url, storageKey } = await res.json();
-                
-                // Update the placeholder node with the uploaded URL
+                const finalSrc = storageKey || url;
+
                 setNodes((nds) =>
                     nds.map((node) =>
                         node.id === placeholderId
@@ -1154,7 +1202,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 ...node,
                                 data: {
                                     ...node.data,
-                                    src: storageKey || url,
+                                    src: finalSrc,
                                     storageKey,
                                     status: 'completed',
                                 },
@@ -1162,20 +1210,26 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             : node
                     )
                 );
-                
-                // Sync to Loro
+
                 if (loroSync.connected) {
                     loroSync.updateNode(placeholderId, {
                         data: {
-                            src: storageKey || url,
+                            src: finalSrc,
                             storageKey,
                             status: 'completed',
                         }
                     });
                 }
+                return {
+                    id: placeholderId,
+                    type: assetType,
+                    src: finalSrc,
+                    name: file.name,
+                    width: mediaWidth,
+                    height: mediaHeight,
+                };
             } catch (err) {
                 console.error('Failed to upload file to R2', err);
-                // Update node to show failed status
                 setNodes((nds) =>
                     nds.map((node) =>
                         node.id === placeholderId
@@ -1189,6 +1243,22 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             : node
                     )
                 );
+                if (loroSync.connected) {
+                    loroSync.updateNode(placeholderId, {
+                        data: { status: 'failed' },
+                    });
+                }
+                return null;
+            }
+        },
+        [addNode, addAssetEdgeToEditor, loroSync, project.id, setNodes]
+    );
+
+    const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file && pendingNodeType) {
+            try {
+                await uploadFileAsAssetNode(file, pendingNodeType as 'image' | 'video' | 'audio');
             } finally {
                 setPendingNodeType(null);
                 if (event.target) {
@@ -1197,6 +1267,18 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             }
         }
     };
+
+    const handleEditorAssetAdded = useCallback(
+        async (
+            file: File,
+            type: 'image' | 'video' | 'audio',
+            editorNodeId: string
+        ) => {
+            if (!type || !editorNodeId) return null;
+            return uploadFileAsAssetNode(file, type, { connectToVideoEditorId: editorNodeId });
+        },
+        [uploadFileAsAssetNode]
+    );
 
 
     const handleCommand = useCallback(async (command: any) => {
@@ -1302,7 +1384,14 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     return (
         <ProjectProvider projectId={project.id}>
             <LoroSyncProvider loroSync={loroSync}>
-                <VideoEditorProvider>
+                <VideoEditorProvider
+                    onAssetAddedToCanvas={handleEditorAssetAdded}
+                    onCanvasAssetLinked={(asset, editorNodeId) => {
+                        if (!asset.sourceNodeId) return;
+                        addAssetEdgeToEditor(asset.sourceNodeId, editorNodeId);
+                    }}
+                >
+                    <HideWhenEditorOpen>
                     <MediaViewerProvider>
                         <LayoutActionsProvider value={{ relayoutParent }}>
                         <div className="flex h-screen w-full flex-col bg-white overflow-hidden">
@@ -1514,6 +1603,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                         </div>
                         </LayoutActionsProvider>
                     </MediaViewerProvider>
+                    </HideWhenEditorOpen>
                 </VideoEditorProvider>
             </LoroSyncProvider>
         </ProjectProvider >

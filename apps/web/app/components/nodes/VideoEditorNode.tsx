@@ -1,13 +1,15 @@
 
 import React, { memo, useCallback } from 'react';
-import { Handle, Position, NodeProps } from 'reactflow';
+import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
 import { FilmSlate, Play, ArrowSquareOut } from '@phosphor-icons/react';
 import { useVideoEditor } from '../VideoEditorContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
+import { resolveAssetUrl } from '../../../lib/utils/assets';
 
 const VideoEditorNode = ({ data, id }: NodeProps) => {
     const { openEditor } = useVideoEditor();
     const loroSync = useOptionalLoroSyncContext();
+    const reactFlow = useReactFlow();
 
     const handleOpenEditor = useCallback(() => {
         // Collect assets from data
@@ -18,8 +20,38 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
             timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
         }
         console.log('Opening editor with assets:', assets);
-        openEditor(assets, id, timelineDsl);
-    }, [data.inputs, data.timelineDsl, id, loroSync, openEditor]);
+        const nodes = reactFlow.getNodes();
+        const edges = reactFlow.getEdges();
+        const connectedAssetIds = new Set(
+            edges
+                .filter((edge) => edge.target === id && edge.targetHandle === 'assets')
+                .map((edge) => edge.source)
+        );
+        const inputSrcs = new Set(
+            (assets || []).map((asset: any) => asset?.src).filter(Boolean)
+        );
+        const seenKeys = new Set<string>();
+        const availableAssets = nodes
+            .filter((node) => ['image', 'video', 'audio'].includes(node.type || ''))
+            .filter((node) => node.data?.src && !connectedAssetIds.has(node.id))
+            .map((node) => ({
+                id: node.id,
+                type: node.type as 'image' | 'video' | 'audio',
+                src: resolveAssetUrl(node.data.src),
+                name: node.data?.label || node.type,
+                width: node.data?.naturalWidth,
+                height: node.data?.naturalHeight,
+                sourceNodeId: node.id,
+            }))
+            .filter((asset) => {
+                if (inputSrcs.has(asset.src)) return false;
+                const key = asset.sourceNodeId || asset.src;
+                if (seenKeys.has(key)) return false;
+                seenKeys.add(key);
+                return true;
+            });
+        openEditor(assets, id, timelineDsl, availableAssets);
+    }, [data.inputs, data.timelineDsl, id, loroSync, openEditor, reactFlow]);
 
     return (
         <div

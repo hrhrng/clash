@@ -1,4 +1,4 @@
-import type { Item, Track } from '@remotion-fast/core';
+import type { Item, Track } from '@master-clash/remotion-core';
 import { timeline as timelineStyles } from '../../timeline/styles';
 import { calculateSnapForItemRange, getAllSnapTargets } from '../utils/snapCalculator';
 

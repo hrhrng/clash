@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import Moveable from 'react-moveable';
 import { Player, PlayerRef } from '@remotion/player';
-import { VideoComposition } from '@remotion-fast/remotion-components';
-import type { Track, Item, ItemProperties } from '@remotion-fast/core';
+import { VideoComposition } from '@master-clash/remotion-components';
+import type { Track, Item, ItemProperties } from '@master-clash/remotion-core';
 import { findTopItemAtPoint } from './canvas/hitTest';
 
 interface InteractiveCanvasProps {
@@ -15,20 +16,7 @@ interface InteractiveCanvasProps {
   onUpdateItem: (trackId: string, itemId: string, updates: Partial<Item>) => void;
   onSelectItem?: (itemId: string | null) => void;
   playing?: boolean;
-  onSeek?: (frame: number) => void;
-  onFrameUpdate?: (frame: number) => void;
-  onPlayingChange?: (playing: boolean) => void;
-}
-
-type DragMode = 'move' | 'rotate' | 'scale-tl' | 'scale-tr' | 'scale-bl' | 'scale-br' | null;
-
-interface DragState {
-  mode: DragMode;
-  startX: number;
-  startY: number;
-  startProperties: ItemProperties;
-  item: Item;
-  trackId: string;
+  onRequestPause?: () => void;
 }
 
 export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
@@ -42,22 +30,34 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   onUpdateItem,
   onSelectItem,
   playing = false,
-  onSeek,
-  onFrameUpdate,
-  onPlayingChange,
+  onRequestPause,
 }) => {
+  const shouldDebugAlign =
+    typeof window !== 'undefined' && (window as any).__DEBUG_CANVAS_ALIGN__;
   const playerRef = useRef<PlayerRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const playerStageRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const selectionBoxRef = useRef<HTMLDivElement>(null);
   const itemsDomMapRef = useRef<Map<string, HTMLElement>>(new Map());
-  const itemBoundsCache = useRef<Map<string, DOMRect>>(new Map());
-  const [dragState, setDragState] = useState<DragState | null>(null);
-  const [hoverHandle, setHoverHandle] = useState<DragMode>(null);
+  const moveableRef = useRef<Moveable | null>(null);
+  const moveableSessionRef = useRef<{
+    trackId: string;
+    itemId: string;
+    startProperties: ItemProperties;
+    startRect: { left: number; top: number; width: number; height: number };
+    startRotation: number;
+  } | null>(null);
+  const isInteractingRef = useRef(false);
+  const rafUpdateRef = useRef<number | null>(null);
+  const [moveableTarget, setMoveableTarget] = useState<HTMLElement | null>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [, forceUpdate] = useState({});
+  const prevPlayingRef = useRef(playing);
+  const mediaAspectRatioRef = useRef<Map<string, number>>(new Map());
 
   // 找到选中的 item
   const selectedItemData = selectedItemId
@@ -65,6 +65,64 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
         .flatMap((t) => t.items.map((i) => ({ trackId: t.id, item: i })))
         .find((x) => x.item.id === selectedItemId)
     : null;
+
+  const getMediaAspectRatio = useCallback(async (item: Item): Promise<number | null> => {
+    if (!('src' in item)) return null;
+    const src = (item as any).src as string;
+    const cached = mediaAspectRatioRef.current.get(src);
+    if (cached) return cached;
+
+    const el = itemsDomMapRef.current.get(item.id);
+    if (el instanceof HTMLImageElement && el.naturalWidth && el.naturalHeight) {
+      const ratio = el.naturalWidth / el.naturalHeight;
+      mediaAspectRatioRef.current.set(src, ratio);
+      return ratio;
+    }
+    if (el instanceof HTMLVideoElement && el.videoWidth && el.videoHeight) {
+      const ratio = el.videoWidth / el.videoHeight;
+      mediaAspectRatioRef.current.set(src, ratio);
+      return ratio;
+    }
+
+    if (typeof window === 'undefined') return null;
+    if (item.type === 'image') {
+      const ratio = await new Promise<number | null>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null);
+        img.onerror = () => resolve(null);
+        img.src = src;
+      });
+      if (ratio) mediaAspectRatioRef.current.set(src, ratio);
+      return ratio;
+    }
+    if (item.type === 'video') {
+      const ratio = await new Promise<number | null>((resolve) => {
+        const video = document.createElement('video');
+        const cleanup = () => {
+          video.removeAttribute('src');
+          video.load();
+        };
+        video.addEventListener('loadedmetadata', () => {
+          const r = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null;
+          cleanup();
+          resolve(r);
+        });
+        video.addEventListener('error', () => {
+          cleanup();
+          resolve(null);
+        });
+        video.src = src;
+      });
+      if (ratio) mediaAspectRatioRef.current.set(src, ratio);
+      return ratio;
+    }
+    return null;
+  }, []);
+
+  useEffect(() => {
+    isInteractingRef.current = false;
+    moveableSessionRef.current = null;
+  }, [selectedItemData?.item.id]);
 
   // 自动初始化 properties（如果不存在）
   useEffect(() => {
@@ -83,6 +141,35 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       });
     }
   }, [selectedItemData, onUpdateItem]);
+
+  useEffect(() => {
+    const syncAspectRatio = async () => {
+      if (isInteractingRef.current) return;
+      if (!selectedItemData?.item.properties) return;
+      if (!['image', 'video'].includes(selectedItemData.item.type)) return;
+      const ratio = await getMediaAspectRatio(selectedItemData.item);
+      if (!ratio) return;
+      const props = selectedItemData.item.properties;
+      const targetWidth = props.height * ratio * (compositionHeight / compositionWidth);
+      const currentRatio = (props.width * compositionWidth) / (props.height * compositionHeight);
+      if (Math.abs(currentRatio - ratio) < 0.01) return;
+      const next = {
+        ...props,
+        width: Math.min(1, Math.max(0.01, targetWidth)),
+      };
+      if (shouldDebugAlign) {
+        console.log('[InteractiveCanvas] syncAspectRatio', {
+          currentRatio,
+          ratio,
+          next,
+        });
+      }
+      onUpdateItem(selectedItemData.trackId, selectedItemData.item.id, {
+        properties: next,
+      });
+    };
+    void syncAspectRatio();
+  }, [selectedItemData, compositionWidth, compositionHeight, getMediaAspectRatio, onUpdateItem, shouldDebugAlign]);
 
   // 检查 item 是否在当前帧可见
   const isItemVisible = selectedItemData
@@ -115,56 +202,22 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
 
   // 同步播放状态
   useEffect(() => {
-    if (playerRef.current) {
-      if (playing) {
-        playerRef.current.play();
-      } else {
-        playerRef.current.pause();
-      }
+    if (!playerRef.current) return;
+    const wasPlaying = prevPlayingRef.current;
+    if (playing && !wasPlaying) {
+      playerRef.current.play();
+    } else if (!playing && wasPlaying) {
+      playerRef.current.pause();
     }
+    prevPlayingRef.current = playing;
   }, [playing]);
 
-  // 同步当前帧
+  // 同步当前帧（仅在暂停时对齐）
   useEffect(() => {
     if (playerRef.current && !playing) {
       playerRef.current.seekTo(currentFrame);
     }
   }, [currentFrame, playing]);
-
-  // 监听 Player 事件
-  useEffect(() => {
-    const player = playerRef.current as any;
-    if (!player) return;
-
-    const handleFrame = () => {
-      const frame = player.getCurrentFrame();
-      if (onFrameUpdate) {
-        onFrameUpdate(frame);
-      }
-    };
-
-    const handlePlay = () => {
-      if (onPlayingChange) {
-        onPlayingChange(true);
-      }
-    };
-
-    const handlePause = () => {
-      if (onPlayingChange) {
-        onPlayingChange(false);
-      }
-    };
-
-    player.addEventListener('frameupdate', handleFrame);
-    player.addEventListener('play', handlePlay);
-    player.addEventListener('pause', handlePause);
-
-    return () => {
-      player.removeEventListener('frameupdate', handleFrame);
-      player.removeEventListener('play', handlePlay);
-      player.removeEventListener('pause', handlePause);
-    };
-  }, [onFrameUpdate, onPlayingChange]);
 
   // 处理缩放
   const handleZoomIn = useCallback(() => {
@@ -203,53 +256,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       container.removeEventListener('wheel', handleWheel);
     };
   }, [handleWheel]);
-
-  // 监听窗口 resize，强制更新 bounds
-  useEffect(() => {
-    const handleResize = () => {
-      forceUpdate({});
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, []);
-
-  // 坐标转换：从屏幕坐标到 composition 坐标
-  const screenToComposition = useCallback(
-    (screenX: number, screenY: number): { x: number; y: number } => {
-      if (!containerRef.current) return { x: 0, y: 0 };
-
-      const rect = containerRef.current.getBoundingClientRect();
-      const aspectRatio = compositionWidth / compositionHeight;
-
-      // 计算 Player 的实际尺寸（按宽高比居中）
-      let playerWidth, playerHeight, playerOffsetX, playerOffsetY;
-      if (aspectRatio > rect.width / rect.height) {
-        playerWidth = rect.width;
-        playerHeight = rect.width / aspectRatio;
-        playerOffsetX = 0;
-        playerOffsetY = (rect.height - playerHeight) / 2;
-      } else {
-        playerHeight = rect.height;
-        playerWidth = rect.height * aspectRatio;
-        playerOffsetX = (rect.width - playerWidth) / 2;
-        playerOffsetY = 0;
-      }
-      
-      // 相对于容器的坐标
-      const relX = screenX - rect.left;
-      const relY = screenY - rect.top;
-
-      // 相对于 Player 中心的像素偏移
-      const centerX = relX - playerOffsetX - playerWidth / 2;
-      const centerY = relY - playerOffsetY - playerHeight / 2;
-
-      return { x: centerX, y: centerY };
-    },
-    [compositionWidth, compositionHeight]
-  );
 
   // 处理画布平移
   const handleCanvasPan = useCallback(
@@ -294,189 +300,248 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
     }
   }, [isPanning, handlePanMove, handlePanEnd]);
 
-  // 处理鼠标按下
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent, mode: DragMode) => {
-      if (!selectedItemData) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      const { x, y } = screenToComposition(e.clientX, e.clientY);
-
-      setDragState({
-        mode,
-        startX: x,
-        startY: y,
-        startProperties: {
-          x: selectedItemData.item.properties?.x ?? 0,
-          y: selectedItemData.item.properties?.y ?? 0,
-          width: selectedItemData.item.properties?.width ?? 1,
-          height: selectedItemData.item.properties?.height ?? 1,
-          rotation: selectedItemData.item.properties?.rotation ?? 0,
-          opacity: selectedItemData.item.properties?.opacity ?? 1,
-        },
-        item: selectedItemData.item,
-        trackId: selectedItemData.trackId,
-      });
-    },
-    [selectedItemData, screenToComposition]
-  );
-
-  // 处理鼠标移动
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!dragState) return;
-
-      const { x, y } = screenToComposition(e.clientX, e.clientY);
-      const deltaX = x - dragState.startX;
-      const deltaY = y - dragState.startY;
-
-      const newProperties: Partial<ItemProperties> = { ...dragState.startProperties };
-
-      switch (dragState.mode) {
-        case 'move':
-          // 移动
-          newProperties.x = dragState.startProperties.x + deltaX;
-          newProperties.y = dragState.startProperties.y + deltaY;
-          break;
-
-        case 'scale-tl':
-        case 'scale-tr':
-        case 'scale-bl':
-        case 'scale-br':
-          // 缩放（简化版，等比缩放）
-          const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-          const direction = dragState.mode.includes('br') || dragState.mode.includes('tr') ? 1 : -1;
-          const scaleFactor = 1 + (direction * distance) / 200;
-          newProperties.width = Math.max(0.1, dragState.startProperties.width * scaleFactor);
-          newProperties.height = Math.max(0.1, dragState.startProperties.height * scaleFactor);
-          break;
-
-        case 'rotate':
-          // 旋转
-          const angle = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
-          newProperties.rotation = angle;
-          break;
-      }
-
-      // 更新 item properties
-      onUpdateItem(dragState.trackId, dragState.item.id, {
-        properties: newProperties as ItemProperties,
-      });
-    },
-    [dragState, screenToComposition, onUpdateItem]
-  );
-
-  // 处理鼠标释放
-  const handleMouseUp = useCallback(() => {
-    setDragState(null);
+  useEffect(() => {
+    forceUpdate({});
   }, []);
 
-  // 绑定全局鼠标事件
-  useEffect(() => {
-    if (dragState) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+  // 坐标转换：从屏幕坐标到 composition 坐标
+  const screenToComposition = useCallback(
+    (screenX: number, screenY: number): { x: number; y: number } => {
+      const rect = playerStageRef.current?.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+
+      const relX = screenX - rect.left;
+      const relY = screenY - rect.top;
+      const scaleX = compositionWidth / rect.width;
+      const scaleY = compositionHeight / rect.height;
+
+      return {
+        x: (relX - rect.width / 2) * scaleX,
+        y: (relY - rect.height / 2) * scaleY,
       };
-    }
-  }, [dragState, handleMouseMove, handleMouseUp]);
+    },
+    [compositionWidth, compositionHeight]
+  );
 
-  // 直接从 DOM 获取选择框的位置
-  const getItemBounds = useCallback(() => {
-    if (!selectedItemData || !selectionBoxRef.current || !containerRef.current) return null;
-    if (!isItemVisible) return null;
-
-    const props = selectedItemData.item.properties;
-    if (!props) return null;
-
-    // 获取选择框和容器的视口坐标
-    const rect = selectionBoxRef.current.getBoundingClientRect();
-    const containerRect = containerRef.current.getBoundingClientRect();
-    
-    // 转换为相对于容器的坐标
-    const left = rect.left - containerRect.left;
-    const top = rect.top - containerRect.top;
-    const centerX = left + rect.width / 2;
-    const centerY = top + rect.height / 2;
-
-    console.log('[getItemBounds]:', { 
-      left, 
-      top, 
-      width: rect.width, 
-      height: rect.height,
-      centerX,
-      centerY,
-      rotation: props.rotation ?? 0,
-    });
-
+  const getStageMetrics = useCallback(() => {
+    const stage = playerStageRef.current;
+    if (!stage) return null;
+    const width = stage.offsetWidth;
+    const height = stage.offsetHeight;
+    if (width <= 0 || height <= 0) return null;
     return {
-      left,
-      top,
-      width: rect.width,
-      height: rect.height,
-      centerX,
-      centerY,
-      rotation: props.rotation ?? 0,
+      width,
+      height,
+      scaleX: width / compositionWidth,
+      scaleY: height / compositionHeight,
+    };
+  }, [compositionWidth, compositionHeight]);
+
+  const applyOverlayRect = useCallback((rect: { left: number; top: number; width: number; height: number }, rotation: number) => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    overlay.style.left = `${rect.left}px`;
+    overlay.style.top = `${rect.top}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
+    overlay.style.transform = `rotate(${rotation}deg)`;
+    overlay.style.transformOrigin = 'center center';
+  }, []);
+
+  const getStageRect = useCallback(() => {
+    const stage = playerStageRef.current;
+    if (!stage) return null;
+    return stage.getBoundingClientRect();
+  }, []);
+
+  const getOverlayRect = useCallback(() => {
+    const overlay = overlayRef.current;
+    const stageRect = getStageRect();
+    if (!overlay || !stageRect) return null;
+    const overlayRect = overlay.getBoundingClientRect();
+    return {
+      left: (overlayRect.left - stageRect.left) / zoom,
+      top: (overlayRect.top - stageRect.top) / zoom,
+      width: overlayRect.width / zoom,
+      height: overlayRect.height / zoom,
+    };
+  }, [getStageRect, zoom]);
+
+  const getSelectionBoxRect = useCallback(() => {
+    const selection = selectionBoxRef.current;
+    const stageRect = getStageRect();
+    if (!selection || !stageRect) return null;
+    const selectionRect = selection.getBoundingClientRect();
+    return {
+      left: (selectionRect.left - stageRect.left) / zoom,
+      top: (selectionRect.top - stageRect.top) / zoom,
+      width: selectionRect.width / zoom,
+      height: selectionRect.height / zoom,
+    };
+  }, [getStageRect, zoom]);
+
+  const getSelectedItemRect = useCallback(() => {
+    if (!selectedItemData) return null;
+    const el = itemsDomMapRef.current.get(selectedItemData.item.id);
+    const stageRect = getStageRect();
+    if (!el || !stageRect) return null;
+    const rect = el.getBoundingClientRect();
+    return {
+      left: (rect.left - stageRect.left) / zoom,
+      top: (rect.top - stageRect.top) / zoom,
+      width: rect.width / zoom,
+      height: rect.height / zoom,
+    };
+  }, [getStageRect, selectedItemData, zoom]);
+
+  const rectToProperties = useCallback(
+    (
+      rect: { left: number; top: number; width: number; height: number },
+      rotation: number,
+      base: ItemProperties
+    ): ItemProperties | null => {
+      const metrics = getStageMetrics();
+      const stageRect = getStageRect();
+      if (!metrics || !stageRect) return null;
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const width = rect.width;
+      const height = rect.height;
+      const next = {
+        ...base,
+        x: (centerX - metrics.width / 2) / metrics.scaleX,
+        y: (centerY - metrics.height / 2) / metrics.scaleY,
+        width: width / metrics.width,
+        height: height / metrics.height,
+        rotation,
+      };
+      if (shouldDebugAlign) {
+        console.log('[InteractiveCanvas] rectToProperties', {
+          rect,
+          stageRect: {
+            width: stageRect.width,
+            height: stageRect.height,
+          },
+          next,
+        });
+      }
+      return next;
+    },
+    [getStageMetrics, getStageRect, shouldDebugAlign]
+  );
+
+  const scheduleUpdate = useCallback(
+    (trackId: string, itemId: string, next: ItemProperties) => {
+      if (rafUpdateRef.current) {
+        window.cancelAnimationFrame(rafUpdateRef.current);
+      }
+      rafUpdateRef.current = window.requestAnimationFrame(() => {
+        onUpdateItem(trackId, itemId, {
+          properties: next,
+        });
+        rafUpdateRef.current = null;
+      });
+    },
+    [onUpdateItem]
+  );
+
+  useEffect(() => {
+    if (!selectedItemData || !isItemVisible) {
+      setMoveableTarget(null);
+      return;
+    }
+
+    let rafId: number | null = null;
+    let attempts = 0;
+
+    const resolveTarget = () => {
+      const nextTarget = overlayRef.current;
+      if (nextTarget) {
+        setMoveableTarget(nextTarget);
+        return;
+      }
+      if (attempts < 6) {
+        attempts += 1;
+        rafId = window.requestAnimationFrame(resolveTarget);
+      }
+    };
+
+    resolveTarget();
+
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
     };
   }, [selectedItemData, isItemVisible]);
 
-  // 使用真实 DOM 位置计算（与 getItemBounds 完全一致）
-  const getItemScreenPosition = useCallback((item: Item) => {
-    if (!item?.id) return null;
-    const containerEl = containerRef.current;
-    if (!containerEl) return null;
+  useEffect(() => {
+    moveableRef.current?.updateRect();
+  }, [moveableTarget, zoom, panOffset.x, panOffset.y]);
 
-    // 直接拿子层回填的真实 DOM
-    const el = itemsDomMapRef.current.get(item.id);
-    if (!el) return null;
+  useEffect(() => {
+    if (!selectedItemData?.item.properties || !isItemVisible) return;
+    if (isInteractingRef.current) return;
+    const selectionRect = getSelectionBoxRect();
+    const itemRect = selectionRect ?? getSelectedItemRect();
+    if (itemRect) {
+      if (shouldDebugAlign) {
+        console.log('[InteractiveCanvas] applyOverlayRect from selection', {
+          selectionRect: itemRect,
+          props: selectedItemData.item.properties,
+        });
+      }
+      applyOverlayRect(itemRect, selectedItemData.item.properties.rotation ?? 0);
+      return;
+    }
+    const metrics = getStageMetrics();
+    if (!metrics) return;
+    const width = (selectedItemData.item.properties.width ?? 1) * metrics.width;
+    const height = (selectedItemData.item.properties.height ?? 1) * metrics.height;
+    const left =
+      metrics.width / 2 +
+      (selectedItemData.item.properties.x ?? 0) * metrics.scaleX -
+      width / 2;
+    const top =
+      metrics.height / 2 +
+      (selectedItemData.item.properties.y ?? 0) * metrics.scaleY -
+      height / 2;
+    applyOverlayRect({ left, top, width, height }, selectedItemData.item.properties.rotation ?? 0);
+  }, [
+    selectedItemData,
+    isItemVisible,
+    getSelectedItemRect,
+    getSelectionBoxRect,
+    getStageMetrics,
+    applyOverlayRect,
+  ]);
 
-    const rect = el.getBoundingClientRect();
-    const containerRect = containerEl.getBoundingClientRect();
-
-    const left = rect.left - containerRect.left;
-    const top = rect.top - containerRect.top;
-    const width = rect.width;
-    const height = rect.height;
-
-    return {
-      left,
-      top,
-      width,
-      height,
-      centerX: left + width / 2,
-      centerY: top + height / 2,
-      rotation: item.properties?.rotation ?? 0, // 仅记录；AABB 已含旋转效果
-    };
-  }, [itemsDomMapRef]);
-
-  const bounds = getItemBounds();
-
-  // 统一的指针按下处理（同时处理选中和拖动）
+  // 统一的指针按下处理（处理选中）
   const handlePointerDown = useCallback(
     (e: React.MouseEvent) => {
       if (!onSelectItem) return;
-      
-      // 如果点击的是控制手柄或缩放按钮，跳过
+
       const target = e.target as HTMLElement;
-      if (target.closest('.control-handle') || target.closest('.zoom-controls')) {
+      if (
+        target.closest('.moveable-control-box') ||
+        target.closest('.moveable-control') ||
+        target.closest('.moveable-line') ||
+        target.closest('.zoom-controls')
+      ) {
         return;
       }
 
-      // 只处理直接点击 Player 区域的事件
-      // 排除点击其他 UI 元素（如按钮等）
       if (target.tagName === 'BUTTON' || target.closest('button')) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.shiftKey) {
         return;
       }
 
       const { x, y } = screenToComposition(e.clientX, e.clientY);
-      
+
       console.log('[InteractiveCanvas] Click at:', { x, y });
-      
-      // 查找点击位置最上层的元素
+
       const hitTarget = findTopItemAtPoint(
         x,
         y,
@@ -487,39 +552,14 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       );
 
       if (hitTarget) {
-        // 找到元素：选中并准备拖动
         console.log('[InteractiveCanvas] Clicked item:', hitTarget.itemId);
         if (selectedItemId !== hitTarget.itemId) {
           onSelectItem(hitTarget.itemId);
         }
-        
-        // 查找完整的 item 数据准备拖动
-        const itemData = tracks
-          .flatMap((t) => t.items.map((i) => ({ trackId: t.id, item: i })))
-          .find((x) => x.item.id === hitTarget.itemId);
-        
-        if (itemData) {
-          e.preventDefault();
-          e.stopPropagation();
-          
-          setDragState({
-            mode: 'move',
-            startX: x,
-            startY: y,
-            startProperties: {
-              x: itemData.item.properties?.x ?? 0,
-              y: itemData.item.properties?.y ?? 0,
-              width: itemData.item.properties?.width ?? 1,
-              height: itemData.item.properties?.height ?? 1,
-              rotation: itemData.item.properties?.rotation ?? 0,
-              opacity: itemData.item.properties?.opacity ?? 1,
-            },
-            item: itemData.item,
-            trackId: itemData.trackId,
-          });
+        if (playing) {
+          onRequestPause?.();
         }
       } else {
-        // 没找到元素：取消选中
         console.log('[InteractiveCanvas] Clicked empty area, deselecting');
         onSelectItem(null);
       }
@@ -532,6 +572,8 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       selectedItemId,
       onSelectItem,
       screenToComposition,
+      playing,
+      onRequestPause,
     ]
   );
 
@@ -555,18 +597,15 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       </div>
 
       {/* Remotion Player - 底层渲染 */}
-      <div 
-        ref={containerRef} 
+      <div
+        ref={containerRef}
         style={{
           ...styles.playerWrapper,
           cursor: isPanning ? 'grabbing' : 'default',
         }}
         onMouseDown={(e) => {
           handleCanvasPan(e);
-          // 点击空白区域取消选中
-          // 如果点击的是元素或控制手柄，他们会 stopPropagation，不会到达这里
-          console.log('[InteractiveCanvas] Clicked empty area, deselecting');
-          onSelectItem?.(null);
+          handlePointerDown(e);
         }}
       >
         <div
@@ -580,6 +619,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
           }}
         >
           <div
+            ref={playerStageRef}
             style={{
               position: 'relative',
               width: aspectRatio > 1 ? '100%' : `${aspectRatio * 100}%`,
@@ -601,217 +641,172 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
               controls={false}
               loop={false}
             />
-            
+            {selectedItemData?.item.properties && isItemVisible && (
+              <div
+                ref={overlayRef}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: 0,
+                  height: 0,
+                  pointerEvents: 'auto',
+                }}
+              />
+            )}
           </div>
         </div>
-        
-        {/* 交互层1 - 所有可见元素的透明点击区域 */}
-        <svg 
-          className="canvas-items"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'all',
-            zIndex: 1000,
-          }}
-        >
-          {/* 全屏透明背景，用于捕获空白点击 */}
-          <rect
-            x="0"
-            y="0"
-            width="100%"
-            height="100%"
-            fill="transparent"
-            style={{ pointerEvents: 'all' }}
-            onMouseDown={(e) => {
-              console.log('[InteractiveCanvas] Clicked empty background, deselecting');
-              onSelectItem?.(null);
+        {moveableTarget && selectedItemData && (
+          <Moveable
+            ref={moveableRef}
+            target={moveableTarget}
+            container={containerRef.current ?? undefined}
+            origin={false}
+            draggable
+            resizable
+            rotatable
+            renderDirections={['nw', 'ne', 'sw', 'se']}
+            zoom={zoom}
+            keepRatio
+            onDragStart={() => {
+              if (playing) {
+                onRequestPause?.();
+              }
+              const rect = getOverlayRect();
+              if (!rect) return;
+              isInteractingRef.current = true;
+              moveableSessionRef.current = {
+                trackId: selectedItemData.trackId,
+                itemId: selectedItemData.item.id,
+                startProperties: {
+                  x: selectedItemData.item.properties?.x ?? 0,
+                  y: selectedItemData.item.properties?.y ?? 0,
+                  width: selectedItemData.item.properties?.width ?? 1,
+                  height: selectedItemData.item.properties?.height ?? 1,
+                  rotation: selectedItemData.item.properties?.rotation ?? 0,
+                  opacity: selectedItemData.item.properties?.opacity ?? 1,
+                },
+                startRect: rect,
+                startRotation: selectedItemData.item.properties?.rotation ?? 0,
+              };
+            }}
+            onDrag={(e) => {
+              const session = moveableSessionRef.current;
+              if (!session) return;
+              const [dx, dy] = e.beforeTranslate;
+              const nextRect = {
+                left: session.startRect.left + dx / zoom,
+                top: session.startRect.top + dy / zoom,
+                width: session.startRect.width,
+                height: session.startRect.height,
+              };
+              applyOverlayRect(nextRect, session.startRotation);
+              const next = rectToProperties(nextRect, session.startRotation, session.startProperties);
+              if (next) {
+                next.width = session.startProperties.width;
+                next.height = session.startProperties.height;
+                scheduleUpdate(session.trackId, session.itemId, next);
+              }
+            }}
+            onResizeStart={() => {
+              if (playing) {
+                onRequestPause?.();
+              }
+              const rect = getOverlayRect();
+              if (!rect) return;
+              isInteractingRef.current = true;
+              moveableSessionRef.current = {
+                trackId: selectedItemData.trackId,
+                itemId: selectedItemData.item.id,
+                startProperties: {
+                  x: selectedItemData.item.properties?.x ?? 0,
+                  y: selectedItemData.item.properties?.y ?? 0,
+                  width: selectedItemData.item.properties?.width ?? 1,
+                  height: selectedItemData.item.properties?.height ?? 1,
+                  rotation: selectedItemData.item.properties?.rotation ?? 0,
+                  opacity: selectedItemData.item.properties?.opacity ?? 1,
+                },
+                startRect: rect,
+                startRotation: selectedItemData.item.properties?.rotation ?? 0,
+              };
+            }}
+            onResize={(e) => {
+              const session = moveableSessionRef.current;
+              if (!session) return;
+              const [dx, dy] = e.drag.beforeTranslate;
+              const nextRect = {
+                left: session.startRect.left + dx / zoom,
+                top: session.startRect.top + dy / zoom,
+                width: Math.max(4, e.width / zoom),
+                height: Math.max(4, e.height / zoom),
+              };
+              applyOverlayRect(nextRect, session.startRotation);
+              const next = rectToProperties(nextRect, session.startRotation, session.startProperties);
+              if (next) {
+                scheduleUpdate(session.trackId, session.itemId, next);
+              }
+            }}
+            onRotateStart={() => {
+              if (playing) {
+                onRequestPause?.();
+              }
+              const rect = getOverlayRect();
+              if (!rect) return;
+              isInteractingRef.current = true;
+              moveableSessionRef.current = {
+                trackId: selectedItemData.trackId,
+                itemId: selectedItemData.item.id,
+                startProperties: {
+                  x: selectedItemData.item.properties?.x ?? 0,
+                  y: selectedItemData.item.properties?.y ?? 0,
+                  width: selectedItemData.item.properties?.width ?? 1,
+                  height: selectedItemData.item.properties?.height ?? 1,
+                  rotation: selectedItemData.item.properties?.rotation ?? 0,
+                  opacity: selectedItemData.item.properties?.opacity ?? 1,
+                },
+                startRect: rect,
+                startRotation: selectedItemData.item.properties?.rotation ?? 0,
+              };
+            }}
+            onRotate={(e) => {
+              const session = moveableSessionRef.current;
+              if (!session) return;
+              const rotation = session.startRotation + e.beforeRotate;
+              applyOverlayRect(session.startRect, rotation);
+              const next = rectToProperties(session.startRect, rotation, session.startProperties);
+              if (next) {
+                scheduleUpdate(session.trackId, session.itemId, next);
+              }
+            }}
+            onDragEnd={() => {
+              moveableSessionRef.current = null;
+              isInteractingRef.current = false;
+            }}
+            onResizeEnd={() => {
+              moveableSessionRef.current = null;
+              isInteractingRef.current = false;
+            }}
+            onRotateEnd={() => {
+              moveableSessionRef.current = null;
+              isInteractingRef.current = false;
             }}
           />
-          
-          {/* 为每个可见元素渲染透明点击区域 */}
-          {tracks.flatMap((track) =>
-            track.items
-              .filter((item) => 
-                item.properties &&
-                currentFrame >= item.from &&
-                currentFrame < item.from + item.durationInFrames
-              )
-              .map((item) => {
-                if (!item.properties) return null;
-                
-                // 使用统一的计算逻辑
-                const itemBounds = getItemScreenPosition(item);
-                if (!itemBounds) return null;
-                
-                return (
-                  <rect
-                    key={item.id}
-                    className="item-clickable"
-                    x={itemBounds.left}
-                    y={itemBounds.top}
-                    width={itemBounds.width}
-                    height={itemBounds.height}
-                    fill="transparent"
-                    style={{
-                      pointerEvents: 'all',
-                      cursor: 'pointer',
-                      // 不要再加旋转，因为 DOM 已经旋转过了！
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      
-                      // 选中该元素（如果未选中）
-                      if (onSelectItem && selectedItemId !== item.id) {
-                        onSelectItem(item.id);
-                      }
-                      
-                      // 准备拖动
-                      const { x, y } = screenToComposition(e.clientX, e.clientY);
-                      setDragState({
-                        mode: 'move',
-                        startX: x,
-                        startY: y,
-                        startProperties: {
-                          x: item.properties?.x ?? 0,
-                          y: item.properties?.y ?? 0,
-                          width: item.properties?.width ?? 1,
-                          height: item.properties?.height ?? 1,
-                          rotation: item.properties?.rotation ?? 0,
-                          opacity: item.properties?.opacity ?? 1,
-                        },
-                        item: item,
-                        trackId: track.id,
-                      });
-                    }}
-                  />
-                );
-              })
-          )}
-        </svg>
-        
-        {/* 交互层2 - 选中元素的蓝框和控制手柄 */}
-        {bounds && selectedItemData && (
-          <svg 
-            className="canvas-controls"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              zIndex: 1001,
-            }}
-          >
-          {/* 蓝色边框 */}
-          <rect
-            className="control-handle"
-            x={bounds.left}
-            y={bounds.top}
-            width={bounds.width}
-            height={bounds.height}
-            fill="none"
-            stroke="#0066ff"
-            strokeWidth="2"
-            style={{
-              pointerEvents: 'none',
-            }}
-          />
-          
-          {/* 透明的拖拽区域（选中时覆盖在透明层上方，优先响应） */}
-          <rect
-            className="control-handle"
-            x={bounds.left}
-            y={bounds.top}
-            width={bounds.width}
-            height={bounds.height}
-            fill="transparent"
-            style={{
-              transform: `rotate(${bounds.rotation}deg)`,
-              transformOrigin: `${bounds.centerX}px ${bounds.centerY}px`,
-              cursor: 'move',
-              pointerEvents: 'all',
-            }}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleMouseDown(e as any, 'move');
-            }}
-          />
-
-            {/* 四个角的缩放手柄 */}
-            {[
-              { pos: 'tl', x: bounds.left, y: bounds.top },
-              { pos: 'tr', x: bounds.left + bounds.width, y: bounds.top },
-              { pos: 'bl', x: bounds.left, y: bounds.top + bounds.height },
-              { pos: 'br', x: bounds.left + bounds.width, y: bounds.top + bounds.height },
-            ].map(({ pos, x, y }) => (
-              <circle
-                key={pos}
-                className="control-handle"
-                cx={x}
-                cy={y}
-                r="6"
-                fill="#ffffff"
-                stroke="#0066ff"
-                strokeWidth="2"
-                style={{
-                  pointerEvents: 'all',
-                  cursor: `${pos.includes('t') ? 'n' : 's'}${pos.includes('l') ? 'w' : 'e'}-resize`,
-                  transform: `rotate(${bounds.rotation}deg)`,
-                  transformOrigin: `${bounds.centerX}px ${bounds.centerY}px`,
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  handleMouseDown(e as any, `scale-${pos}` as DragMode);
-                }}
-                onMouseEnter={() => setHoverHandle(`scale-${pos}` as DragMode)}
-                onMouseLeave={() => setHoverHandle(null)}
-              />
-            ))}
-
-            {/* 旋转手柄 */}
-            <circle
-              className="control-handle"
-              cx={bounds.centerX}
-              cy={bounds.top - 30}
-              r="6"
-              fill="#ffffff"
-              stroke="#0066ff"
-              strokeWidth="2"
-              style={{
-                pointerEvents: 'all',
-                cursor: 'crosshair',
-                transform: `rotate(${bounds.rotation}deg)`,
-                transformOrigin: `${bounds.centerX}px ${bounds.centerY}px`,
-              }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                handleMouseDown(e as any, 'rotate');
-              }}
-              onMouseEnter={() => setHoverHandle('rotate')}
-              onMouseLeave={() => setHoverHandle(null)}
-            />
-            <line
-              className="control-handle"
-              x1={bounds.centerX}
-              y1={bounds.top}
-              x2={bounds.centerX}
-              y2={bounds.top - 30}
-              stroke="#0066ff"
-              strokeWidth="2"
-              style={{
-                transform: `rotate(${bounds.rotation}deg)`,
-                transformOrigin: `${bounds.centerX}px ${bounds.centerY}px`,
-                pointerEvents: 'none',
-              }}
-            />
-          </svg>
+        )}
+        {moveableTarget && (
+          <style jsx global>{`
+            .moveable-control-box {
+              border: 2px solid #0066ff;
+            }
+            .moveable-line {
+              background: #0066ff;
+            }
+            .moveable-control {
+              width: 12px;
+              height: 12px;
+              border: 2px solid #0066ff;
+              background: #ffffff;
+            }
+          `}</style>
         )}
       </div>
     </div>

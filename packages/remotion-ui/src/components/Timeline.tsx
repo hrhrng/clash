@@ -13,8 +13,8 @@ import {
   DragMoveEvent,
 } from '@dnd-kit/core';
 import { restrictToWindowEdges } from '@dnd-kit/modifiers';
-import { useEditor } from '@remotion-fast/core';
-import type { Item } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Item } from '@master-clash/remotion-core';
 import { TimelineHeader } from './timeline/TimelineHeader';
 import { TimelineRuler } from './timeline/TimelineRuler';
 import { TimelineTracksContainer } from './timeline/TimelineTracksContainer';
@@ -46,6 +46,8 @@ export const Timeline: React.FC = () => {
     durationInFrames,
     assets,
     playing,
+    compositionWidth,
+    compositionHeight,
   } = state;
 
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -705,13 +707,27 @@ export const Timeline: React.FC = () => {
   // 创建素材项的辅助函数
   const createItemFromAsset = useCallback((asset: any, frame: number): Item | null => {
     const baseId = `item-${Date.now()}`;
-    
-    // 默认变换属性：画布中心 (0, 0)、全尺寸
+    const canvasRatio = compositionWidth / compositionHeight;
+    const assetRatio =
+      asset?.width && asset?.height ? asset.width / asset.height : null;
+    let width = 1;
+    let height = 1;
+    if (assetRatio) {
+      if (assetRatio >= canvasRatio) {
+        width = 1;
+        height = canvasRatio / assetRatio;
+      } else {
+        height = 1;
+        width = assetRatio / canvasRatio;
+      }
+    }
+
+    // 默认变换属性：画布中心 (0, 0)、按素材比例
     const defaultProperties = {
       x: 0,          // 中心X (像素，相对于画布中心)
       y: 0,          // 中心Y (像素，相对于画布中心)
-      width: 1,      // 全宽 (0-1)
-      height: 1,     // 全高 (0-1)
+      width,         // 宽度比例 (0-1)
+      height,        // 高度比例 (0-1)
       rotation: 0,   // 无旋转
       opacity: 1,    // 完全不透明
     };
@@ -752,7 +768,7 @@ export const Timeline: React.FC = () => {
       default:
         return null;
     }
-  }, []);
+  }, [compositionWidth, compositionHeight]);
 
   // 处理拖放到空白时间轴区域（自动创建轨道）
   const handleTimelineDrop = useCallback(
@@ -1108,6 +1124,8 @@ export const Timeline: React.FC = () => {
       <TimelineHeader
         currentFrame={currentFrame}
         fps={fps}
+        durationInFrames={contentEndInFrames > 0 ? contentEndInFrames : durationInFrames}
+        playing={playing}
         zoom={zoom}
         snapEnabled={snapEnabled}
         onZoomIn={handleZoomIn}
@@ -1115,6 +1133,7 @@ export const Timeline: React.FC = () => {
         onZoomToFit={handleZoomToFit}
         onZoomReset={handleZoomReset}
         onToggleSnap={() => setSnapEnabled(!snapEnabled)}
+        onTogglePlay={() => dispatch({ type: 'SET_PLAYING', payload: !playing })}
         onZoomChange={handleZoomChange}
         zoomLimits={getSmartZoomLimits()}
       />
@@ -1280,6 +1299,8 @@ export const Timeline: React.FC = () => {
               onSeek={handleSeek}
               scrollLeft={scrollLeft}
               leftOffset={contentInsetLeftPx}
+              durationInFrames={durationInFrames}
+              onPlayEnd={() => dispatch({ type: 'SET_PLAYING', payload: false })}
             />
           </div>
         </div>

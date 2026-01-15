@@ -10,22 +10,12 @@ import {
 } from 'remotion';
 import type { Track, Item } from '@master-clash/remotion-core';
 
-console.log('🎬 VideoComposition.tsx module loaded!');
-(window as any).REMOTION_DEBUG = true;
+// Debug logging disabled for performance
+// console.log('🎬 VideoComposition.tsx module loaded!');
 
 // Component to render individual items
 const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFrom?: number; endFrame?: number; globalEndFrame?: number; trackZIndex: number; itemsDomMapRef?: React.RefObject<Map<string, HTMLElement>> }> = ({ item, durationInFrames, visibleFrom, endFrame, globalEndFrame, trackZIndex, itemsDomMapRef }) => {
   const frame = useCurrentFrame();
-  
-  console.log('📦 ItemComponent render', {
-    type: item.type,
-    id: item.id,
-    frame,
-    from: item.from,
-    duration: durationInFrames,
-    visibleFrom,
-    endFrame
-  });
 
   // Apply transform properties
   const applyTransform = (baseStyle: React.CSSProperties = {}): React.CSSProperties => {
@@ -139,16 +129,19 @@ const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFro
   if (item.type === 'image') {
     return (
       <AbsoluteFill
-        ref={(el) => {
-          if (!itemsDomMapRef?.current || !el) return;
-          itemsDomMapRef.current.set(item.id, el as HTMLElement);
-        }}
         style={applyTransform({
           justifyContent: 'center',
           alignItems: 'center',
         })}
       >
-        <Img src={item.src} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+        <Img
+          src={item.src}
+          ref={(el) => {
+            if (!itemsDomMapRef?.current || !el) return;
+            itemsDomMapRef.current.set(item.id, el as HTMLElement);
+          }}
+          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+        />
       </AbsoluteFill>
     );
   }
@@ -223,16 +216,12 @@ const TrackComponent: React.FC<{ track: Track; globalEndFrame: number; trackZInd
 };
 
 // Main composition component
-export const VideoComposition: React.FC<{ tracks: Track[]; selectedItemId?: string | null; selectionBoxRef?: React.RefObject<HTMLDivElement | null>; itemsDomMapRef?: React.RefObject<Map<string, HTMLElement>> }> = ({ tracks, selectedItemId, selectionBoxRef, itemsDomMapRef }) => {
-  console.log('🎬 VideoComposition render', {
-    trackCount: tracks.length,
-    tracks: tracks.map(t => ({
-      id: t.id,
-      hidden: t.hidden,
-      itemCount: t.items.length,
-      items: t.items.map(i => ({ type: i.type, id: i.id, from: i.from, duration: i.durationInFrames }))
-    }))
-  });
+export const VideoComposition: React.FC<{
+  tracks: Track[];
+  selectedItemId?: string | null;
+  selectionBoxRef?: React.RefObject<HTMLDivElement | null>;
+  itemsDomMapRef?: React.RefObject<Map<string, HTMLElement>>;
+}> = ({ tracks, selectedItemId, selectionBoxRef, itemsDomMapRef }) => {
 
   // 计算全局最后一帧（与上面的 TrackComponent 用到的 globalEndFrame 保持一致）
   const globalEndFrame = React.useMemo(() => {

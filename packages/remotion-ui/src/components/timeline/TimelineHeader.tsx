@@ -1,5 +1,4 @@
 import React from 'react';
-import { motion } from 'framer-motion';
 import { colors, timeline, typography, borderRadius, shadows } from './styles';
 import { formatTime } from './utils/timeFormatter';
 import { ZoomControl, SnapButton } from './TimelineControls';
@@ -7,6 +6,8 @@ import { ZoomControl, SnapButton } from './TimelineControls';
 interface TimelineHeaderProps {
   currentFrame: number;
   fps: number;
+  durationInFrames: number;
+  playing: boolean;
   zoom: number;
   snapEnabled: boolean;
   autoFitEnabled?: boolean;
@@ -16,6 +17,7 @@ interface TimelineHeaderProps {
   onZoomReset?: () => void;
   onToggleSnap: () => void;
   onToggleAutoFit?: () => void;
+  onTogglePlay: () => void;
   onZoomChange: (zoom: number) => void;
   zoomLimits?: { min: number; max: number };
 }
@@ -23,6 +25,8 @@ interface TimelineHeaderProps {
 export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   currentFrame,
   fps,
+  durationInFrames,
+  playing,
   zoom,
   snapEnabled,
   autoFitEnabled = false,
@@ -32,6 +36,7 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
   onZoomReset,
   onToggleSnap,
   onToggleAutoFit,
+  onTogglePlay,
   onZoomChange,
   zoomLimits,
 }) => {
@@ -53,18 +58,8 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
           zIndex: 10,
         }}
       >
-      {/* 左侧：标题和时间显示 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <div
-          style={{
-            fontSize: typography.fontSize.lg,
-            fontWeight: typography.fontWeight.semibold,
-            color: colors.text.primary,
-          }}
-        >
-          Timeline
-        </div>
-
+      {/* 左侧：时间显示 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div
           style={{
             backgroundColor: colors.bg.elevated,
@@ -78,9 +73,56 @@ export const TimelineHeader: React.FC<TimelineHeaderProps> = ({
         >
           {formatTime(currentFrame, fps)}
         </div>
+        <div style={{ color: colors.text.secondary, fontFamily: typography.fontFamily.mono, fontSize: typography.fontSize.sm }}>
+          /
+        </div>
+        <div
+          style={{
+            backgroundColor: colors.bg.elevated,
+            padding: '6px 12px',
+            borderRadius: borderRadius.md,
+            fontFamily: typography.fontFamily.mono,
+            fontSize: typography.fontSize.sm,
+            color: colors.text.primary,
+            border: `1px solid ${colors.border.default}`,
+          }}
+        >
+          {formatTime(durationInFrames, fps)}
+        </div>
       </div>
 
-      {/* 中间：控制按钮 */}
+      {/* 中间：播放按钮 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+        <button
+          onClick={onTogglePlay}
+          aria-label={playing ? 'Pause' : 'Play'}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 9999,
+            backgroundColor: colors.accent.primary,
+            border: 'none',
+            color: colors.text.primary,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: shadows.sm,
+          }}
+        >
+          {playing ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          )}
+        </button>
+      </div>
+
+      {/* 右侧：控制按钮 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
         <ZoomControl
           zoom={zoom}

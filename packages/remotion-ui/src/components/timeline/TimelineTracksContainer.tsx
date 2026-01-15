@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
-import { useEditor } from '@remotion-fast/core';
-import type { Track, Asset, Item } from '@remotion-fast/core';
+import { useEditor } from '@master-clash/remotion-core';
+import type { Track, Asset, Item } from '@master-clash/remotion-core';
 import { colors, timeline, spacing, shadows, getItemColor, withOpacity, borderRadius } from './styles';
 import { secondsToFrames } from './utils/timeFormatter';
 import { TimelineItem } from './TimelineItem';
@@ -817,10 +817,10 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
                       onUpdate={(itemId, updates) => onUpdateItem(track.id, itemId, updates)}
                       onDragStart={(e) => onItemDragStart(e, track.id, item)}
                       onDragEnd={onItemDragEnd}
-                      hasAdjacentItemOnLeft={isInRollEditLeft}
-                      hasAdjacentItemOnRight={isInRollEditRight}
-                      shouldHighlightLeft={shouldHighlightLeft}
-                      shouldHighlightRight={shouldHighlightRight}
+                      hasAdjacentItemOnLeft={isInRollEditLeft || undefined}
+                      hasAdjacentItemOnRight={isInRollEditRight || undefined}
+                      shouldHighlightLeft={shouldHighlightLeft || undefined}
+                      shouldHighlightRight={shouldHighlightRight || undefined}
                       onHoverChange={(isHovered) => setHoveredItemId(isHovered ? item.id : null)}
                       onResize={(edge, deltaFrames) => {
                         // 获取素材总帧数

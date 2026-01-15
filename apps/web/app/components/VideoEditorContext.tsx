@@ -1,8 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, ReactNode, useRef, useEffect } from 'react';
-import { X } from '@phosphor-icons/react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { EditorState } from '@master-clash/remotion-core';
 import { useOptionalLoroSyncContext } from './LoroSyncContext';
@@ -26,114 +24,116 @@ type TimelineDsl = Pick<
 
 interface VideoEditorContextType {
     isOpen: boolean;
-    openEditor: (assets: Asset[], nodeId: string, timelineDsl?: TimelineDsl | null) => void;
+    openEditor: (
+        assets: Asset[],
+        nodeId: string,
+        timelineDsl?: TimelineDsl | null,
+        availableAssets?: Array<Asset & { sourceNodeId?: string }>
+    ) => void;
     closeEditor: () => void;
 }
 
 const VideoEditorContext = createContext<VideoEditorContextType | undefined>(undefined);
 
-export function VideoEditorProvider({ children }: { children: ReactNode }) {
+export function VideoEditorProvider({
+    children,
+    onAssetAddedToCanvas,
+    onCanvasAssetLinked,
+}: {
+    children: ReactNode;
+    onAssetAddedToCanvas?: (
+        file: File,
+        type: 'video' | 'image' | 'audio',
+        editorNodeId: string
+    ) => Promise<Asset | null> | Asset | null;
+    onCanvasAssetLinked?: (asset: Asset & { sourceNodeId?: string }, editorNodeId: string) => void;
+}) {
     const loroSync = useOptionalLoroSyncContext();
     const [isOpen, setIsOpen] = useState(false);
     const [assets, setAssets] = useState<Asset[]>([]);
+    const [availableAssets, setAvailableAssets] = useState<Array<Asset & { sourceNodeId?: string }>>([]);
     const [timelineDsl, setTimelineDsl] = useState<TimelineDsl | null>(null);
     const [editorNodeId, setEditorNodeId] = useState<string | null>(null);
-    const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const openEditor = useCallback((newAssets: Asset[], nodeId: string, nextTimelineDsl?: TimelineDsl | null) => {
+    // Ref to read editor state on close - no callbacks during playback
+    const editorStateRef = useRef<EditorState | null>(null);
+
+    const openEditor = useCallback((
+        newAssets: Asset[],
+        nodeId: string,
+        nextTimelineDsl?: TimelineDsl | null,
+        nextAvailableAssets: Array<Asset & { sourceNodeId?: string }> = []
+    ) => {
         setAssets(newAssets);
         setEditorNodeId(nodeId);
         setTimelineDsl(nextTimelineDsl ?? null);
+        setAvailableAssets(nextAvailableAssets);
         setIsOpen(true);
     }, []);
 
     const closeEditor = useCallback(() => {
+        // Save state on close - read from ref
+        if (editorNodeId && editorStateRef.current && loroSync?.connected) {
+            const state = editorStateRef.current;
+            const finalDsl: TimelineDsl = {
+                tracks: state.tracks,
+                compositionWidth: state.compositionWidth,
+                compositionHeight: state.compositionHeight,
+                fps: state.fps,
+                durationInFrames: state.durationInFrames,
+            };
+            loroSync.updateNode(editorNodeId, {
+                data: { timelineDsl: finalDsl },
+            });
+        }
+
         setIsOpen(false);
         setAssets([]);
+        setAvailableAssets([]);
         setTimelineDsl(null);
         setEditorNodeId(null);
-    }, []);
-
-    // Track previous DSL to avoid unnecessary updates during playback
-    const prevDslRef = useRef<TimelineDsl | null>(null);
-
-    const persistTimelineDsl = useCallback((state: EditorState) => {
-        if (!editorNodeId) return;
-
-        const nextDsl: TimelineDsl = {
-            tracks: state.tracks,
-            compositionWidth: state.compositionWidth,
-            compositionHeight: state.compositionHeight,
-            fps: state.fps,
-            durationInFrames: state.durationInFrames,
-        };
-
-        // Skip update if only currentFrame/playing changed (not in TimelineDsl)
-        // Compare by JSON to detect actual content changes
-        const prevJson = prevDslRef.current ? JSON.stringify(prevDslRef.current) : null;
-        const nextJson = JSON.stringify(nextDsl);
-        if (prevJson === nextJson) {
-            return; // No actual DSL change, skip re-render
-        }
-        prevDslRef.current = nextDsl;
-
-        setTimelineDsl(nextDsl);
-
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
-        saveTimeoutRef.current = setTimeout(() => {
-            if (loroSync?.connected) {
-                loroSync.updateNode(editorNodeId, {
-                    data: { timelineDsl: nextDsl },
-                });
-            }
-        }, 400);
+        editorStateRef.current = null;
     }, [editorNodeId, loroSync]);
 
-    useEffect(() => {
-        return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-        };
-    }, []);
+    const handleAssetUpload = useCallback(
+        async (file: File, type: 'video' | 'image' | 'audio') => {
+            if (!editorNodeId || !onAssetAddedToCanvas) return;
+            const result = await onAssetAddedToCanvas(file, type, editorNodeId);
+            if (!result) return;
+            setAssets((current) => {
+                const exists = current.some((asset) => asset.id === result.id || asset.src === result.src);
+                return exists ? current : [...current, result];
+            });
+        },
+        [editorNodeId, onAssetAddedToCanvas]
+    );
+
+    const handleAssetPicked = useCallback(
+        (asset: Asset & { sourceNodeId?: string }) => {
+            if (!editorNodeId || !onCanvasAssetLinked) return;
+            onCanvasAssetLinked(asset, editorNodeId);
+        },
+        [editorNodeId, onCanvasAssetLinked]
+    );
 
     return (
         <VideoEditorContext.Provider value={{ isOpen, openEditor, closeEditor }}>
             {children}
-            <AnimatePresence>
-                {isOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-                        onClick={closeEditor}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            className="relative w-[95vw] h-[90vh] bg-white rounded-xl overflow-hidden shadow-2xl border border-slate-200"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <button
-                                onClick={closeEditor}
-                                className="absolute top-4 right-4 z-[60] p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900 rounded-full transition-colors"
-                            >
-                                    <X size={20} />
-                                </button>
-
-                            <Editor
-                                initialAssets={assets}
-                                initialState={timelineDsl ?? undefined}
-                                onStateChange={persistTimelineDsl}
-                            />
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* Full-screen editor overlay - no animation for performance */}
+            {isOpen && (
+                <div className="fixed inset-0 z-[100] bg-[#1a1a1a]">
+                    <Editor
+                        initialAssets={assets}
+                        initialState={timelineDsl ?? undefined}
+                        stateRef={editorStateRef}
+                        onBack={closeEditor}
+                        backLabel="返回"
+                        onAssetUpload={handleAssetUpload}
+                        availableAssets={availableAssets}
+                        onAssetPicked={handleAssetPicked}
+                    />
+                </div>
+            )}
         </VideoEditorContext.Provider>
     );
 }

@@ -19,7 +19,15 @@ import ReactMarkdown from 'react-markdown';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { thumbnailCache } from '@/lib/utils/thumbnailCache';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8888';
+const resolveApiBaseUrl = () => {
+    if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+    if (typeof window === 'undefined') return 'http://localhost:8888';
+    const { hostname, origin } = window.location;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+    return isLocal ? 'http://localhost:8888' : origin;
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 
 interface Message {
