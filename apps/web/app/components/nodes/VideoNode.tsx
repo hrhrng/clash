@@ -197,6 +197,28 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 const video = e.target as HTMLVideoElement;
                                 const naturalWidth = video.videoWidth || 0;
                                 const naturalHeight = video.videoHeight || 0;
+                                const duration = video.duration || 0;
+
+                                // Always update duration in data (even if dimensions haven't changed)
+                                if (duration > 0 && data.duration !== duration) {
+                                    setNodes((nds) =>
+                                        nds.map((node) => {
+                                            if (node.id !== id) return node;
+                                            return {
+                                                ...node,
+                                                data: {
+                                                    ...node.data,
+                                                    duration: duration,
+                                                },
+                                            };
+                                        })
+                                    );
+
+                                    if (loroSync?.connected) {
+                                        loroSync.updateNode(id, { duration });
+                                    }
+                                }
+
                                 if (naturalWidth && naturalHeight) {
                                     // Calculate dimensions maintaining the aspect ratio
                                     const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));

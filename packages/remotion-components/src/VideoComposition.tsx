@@ -108,7 +108,7 @@ const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFro
         <AbsoluteFill style={{ opacity: hidden ? 0 : 1, width: '100%', height: '100%' }}>
           <OffthreadVideo
             src={item.src}
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            style={{ width: '100%', height: '100%', objectFit: 'fill' }}
             startFrom={sourceStart}
             pauseWhenBuffering={false}
             acceptableTimeShiftInSeconds={0.25}
@@ -140,7 +140,7 @@ const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFro
             if (!itemsDomMapRef?.current || !el) return;
             itemsDomMapRef.current.set(item.id, el as HTMLElement);
           }}
-          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+          style={{ width: '100%', height: '100%', objectFit: 'fill' }}
         />
       </AbsoluteFill>
     );

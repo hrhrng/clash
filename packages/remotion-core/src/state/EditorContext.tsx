@@ -219,6 +219,7 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       return { ...state, zoom: action.payload };
 
     case 'ADD_ASSET':
+      console.log('[editorReducer] ADD_ASSET called with:', action.payload.id, 'Current assets count:', state.assets.length);
       return {
         ...state,
         assets: [...state.assets, action.payload],
@@ -259,7 +260,11 @@ const defaultState = initialState;
 // Normalize initial state by merging with defaults
 function normalizeInitialState(providedState?: Partial<EditorState>): EditorState {
   if (!providedState) return defaultState;
-  const merged = { ...defaultState, ...providedState };
+  // Filter out undefined values to prevent overwriting defaults
+  const filteredState = Object.fromEntries(
+    Object.entries(providedState).filter(([_, value]) => value !== undefined)
+  ) as Partial<EditorState>;
+  const merged = { ...defaultState, ...filteredState };
 
   if (!merged.fps || merged.fps < 1) {
     merged.fps = defaultState.fps;
@@ -287,6 +292,7 @@ type EditorProviderProps = {
 
 // Provider
 export function EditorProvider({ children, initialState: providedInitialState, onStateChange }: EditorProviderProps) {
+  console.log('[EditorProvider] Rendering with initialState:', providedInitialState?.assets?.map(a => ({ id: a.id, name: a.name })));
   const [state, dispatch] = useReducer(
     editorReducer,
     providedInitialState,

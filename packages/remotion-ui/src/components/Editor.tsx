@@ -4,43 +4,194 @@ import { CanvasPreview } from './CanvasPreview';
 import { Timeline } from './Timeline';
 import { AssetPanel } from './AssetPanel';
 import { PropertiesPanel } from './PropertiesPanel';
+import { thumbnailCache, generateVideoThumbnail } from '../utils/thumbnailCache';
 
 const AssetInitializer = ({ assets }: { assets: any[] }) => {
   const { dispatch, state } = useEditor();
+  const initializedRef = React.useRef(false);
+  const addedAssetsRef = React.useRef<Set<string>>(new Set());
+
   React.useEffect(() => {
-    if (assets && assets.length > 0) {
-      // Clear existing assets first? Maybe not, or maybe yes.
-      // For now, just add.
-      assets.forEach(asset => {
-        const normalizedType = asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : 'audio';
-        const existingById = state.assets.find((a) => a.id === asset.id);
-        const existingBySrc = state.assets.find((a) => a.src === (asset.src || asset.url));
-        const existingByNameType = state.assets.find(
-          (a) => a.name === (asset.name || 'Imported Asset') && a.type === normalizedType
-        );
+    console.log('[AssetInitializer] Effect triggered, assets:', assets.length, assets);
+    if (!assets || assets.length === 0) return;
 
-        if (existingById || existingBySrc) return;
+    // Prevent double-initialization (React Strict Mode or re-renders)
+    if (initializedRef.current) {
+      console.log('[AssetInitializer] Already initialized, skipping');
+      return;
+    }
+    initializedRef.current = true;
+    console.log('[AssetInitializer] Initializing assets...');
 
-        if (existingByNameType && !existingByNameType.readOnly) {
-          dispatch({ type: 'REMOVE_ASSET', payload: existingByNameType.id });
+    // Add the fresh assets (deduplication prevents duplicates)
+    // Note: Since we use editorKey to force remount, state.assets is always empty on mount
+    assets.forEach(asset => {
+      const normalizedType = asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : 'audio';
+      const assetKey = asset.sourceNodeId || asset.id;
+
+      // Check if already added in this session
+      if (addedAssetsRef.current.has(assetKey)) {
+        return;
+      }
+
+      const existingById = state.assets.find((a) => a.id === asset.id);
+      const existingBySrc = state.assets.find((a) => a.src === (asset.src || asset.url));
+      const existingBySourceNode = state.assets.find((a) =>
+        asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId
+      );
+      const existingByNameType = state.assets.find(
+        (a) => a.name === (asset.name || 'Imported Asset') && a.type === normalizedType
+      );
+
+      if (existingById || existingBySrc || existingBySourceNode) {
+        return;
+      }
+
+      if (existingByNameType && !existingByNameType.readOnly) {
+        dispatch({ type: 'REMOVE_ASSET', payload: existingByNameType.id });
+      }
+
+      addedAssetsRef.current.add(assetKey);
+      const assetId = asset.id || `asset-${Date.now()}-${Math.random()}`;
+      const assetSrc = asset.src || asset.url;
+
+      // For video assets, check cache first, then generate thumbnail if needed
+      if (normalizedType === 'video' && assetSrc) {
+        // Step 1: Check if we already have a cached thumbnail
+        const cachedThumbnail = thumbnailCache.get(assetSrc);
+
+        // Step 2: Check if asset already has thumbnail or duration
+        const hasThumbnail = asset.thumbnail || cachedThumbnail;
+        const hasDuration = asset.duration;
+
+        // If we have everything from cache or asset data, add directly
+        if (hasThumbnail && hasDuration) {
+          dispatch({
+            type: 'ADD_ASSET',
+            payload: {
+              id: assetId,
+              type: normalizedType,
+              src: assetSrc,
+              name: asset.name || 'Imported Asset',
+              width: asset.width,
+              height: asset.height,
+              duration: asset.duration,
+              thumbnail: asset.thumbnail || cachedThumbnail || undefined,
+              createdAt: Date.now(),
+              readOnly: true,
+              sourceNodeId: asset.sourceNodeId,
+            }
+          });
+          return;
         }
 
+        // Step 3: Need to load video metadata or generate thumbnail
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.crossOrigin = 'anonymous';
+
+        video.onloadedmetadata = () => {
+          const duration = video.duration || 0;
+          const needsThumbnail = !hasThumbnail;
+
+          if (!needsThumbnail && hasDuration) {
+            // Already have duration and thumbnail from cache, just update
+            return;
+          }
+
+          // Generate thumbnail if needed (async)
+          if (needsThumbnail) {
+            generateVideoThumbnail(assetSrc).then(thumbnail => {
+              if (thumbnail) {
+                // Cache the generated thumbnail for future use
+                thumbnailCache.set(assetSrc, thumbnail);
+              }
+
+              // Remove and re-add with duration and thumbnail
+              dispatch({ type: 'REMOVE_ASSET', payload: assetId });
+              dispatch({
+                type: 'ADD_ASSET',
+                payload: {
+                  id: assetId,
+                  type: normalizedType,
+                  src: assetSrc,
+                  name: asset.name || 'Imported Asset',
+                  width: asset.width,
+                  height: asset.height,
+                  duration: duration,
+                  thumbnail: thumbnail || cachedThumbnail || undefined,
+                  createdAt: Date.now(),
+                  readOnly: true,
+                  sourceNodeId: asset.sourceNodeId,
+                }
+              });
+            });
+          } else {
+            // Just update duration
+            dispatch({ type: 'REMOVE_ASSET', payload: assetId });
+            dispatch({
+              type: 'ADD_ASSET',
+              payload: {
+                id: assetId,
+                type: normalizedType,
+                src: assetSrc,
+                name: asset.name || 'Imported Asset',
+                width: asset.width,
+                height: asset.height,
+                duration: duration,
+                thumbnail: cachedThumbnail || undefined,
+                createdAt: Date.now(),
+                readOnly: true,
+                sourceNodeId: asset.sourceNodeId,
+              }
+            });
+          }
+        };
+
+        video.onerror = () => {
+          // If video fails to load, still add the asset with cached thumbnail if available
+          dispatch({
+            type: 'ADD_ASSET',
+            payload: {
+              id: assetId,
+              type: normalizedType,
+              src: assetSrc,
+              name: asset.name || 'Imported Asset',
+              width: asset.width,
+              height: asset.height,
+              duration: asset.duration,
+              thumbnail: cachedThumbnail || undefined,
+              createdAt: Date.now(),
+              readOnly: true,
+              sourceNodeId: asset.sourceNodeId,
+            }
+          });
+        };
+
+        video.src = assetSrc;
+      } else {
+        // For non-video assets, add directly
+        console.log('[AssetInitializer] Dispatching ADD_ASSET for non-video:', normalizedType, assetId);
         dispatch({
           type: 'ADD_ASSET',
           payload: {
-            id: asset.id || `asset-${Date.now()}-${Math.random()}`,
+            id: assetId,
             type: normalizedType,
-            src: asset.src || asset.url,
+            src: assetSrc,
             name: asset.name || 'Imported Asset',
             width: asset.width,
             height: asset.height,
+            duration: asset.duration,
+            thumbnail: asset.thumbnail,
             createdAt: Date.now(),
             readOnly: true,
+            sourceNodeId: asset.sourceNodeId,
           }
         });
-      });
-    }
-  }, [assets, dispatch, state.assets]);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets]);
   return null;
 };
 
@@ -105,8 +256,18 @@ const PlaybackController = () => {
       return;
     }
 
+    // 检查是否需要从头开始播放
+    // 如果当前帧已经到达或超过结束帧，重置到第0帧
+    const duration = durationRef.current;
+    const shouldResetToStart = state.currentFrame >= duration;
+
     startTimeRef.current = performance.now();
-    startFrameRef.current = state.currentFrame;
+    startFrameRef.current = shouldResetToStart ? 0 : state.currentFrame;
+
+    // 如果需要重置，先设置当前帧为0
+    if (shouldResetToStart) {
+      dispatch({ type: 'SET_CURRENT_FRAME', payload: 0 });
+    }
 
     const tick = () => {
       const fps = fpsRef.current;
@@ -141,7 +302,7 @@ const PlaybackController = () => {
         rafRef.current = null;
       }
     };
-  }, [state.playing, dispatch]);
+  }, [state.playing, dispatch, state.currentFrame]);
 
   return null;
 };
@@ -174,6 +335,8 @@ type EditorProps = {
     height?: number;
     sourceNodeId?: string;
   }) => void;
+  /** Unique key to force remount when opening different editors */
+  editorKey?: string;
 };
 
 export const Editor: React.FC<EditorProps> = ({
@@ -186,9 +349,13 @@ export const Editor: React.FC<EditorProps> = ({
   onAssetUpload,
   availableAssets,
   onAssetPicked,
+  editorKey,
 }) => {
+  // DO NOT include assets in initialState - they are managed by AssetInitializer
+  const cleanInitialState = { ...initialState, assets: undefined };
+
   return (
-    <EditorProvider initialState={initialState} onStateChange={onStateChange}>
+    <EditorProvider initialState={cleanInitialState} onStateChange={onStateChange} key={editorKey}>
       {stateRef && <StateSyncer stateRef={stateRef} />}
       <PlaybackController />
       <AssetInitializer assets={initialAssets || []} />

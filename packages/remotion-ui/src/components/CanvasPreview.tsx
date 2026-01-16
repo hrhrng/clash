@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { useEditor } from "@master-clash/remotion-core";
-import { InteractiveCanvas } from "./InteractiveCanvas";
+import { InteractiveCanvas } from "./InteractiveCanvasV2";
 
 export const CanvasPreview: React.FC = React.memo(() => {
   const { state, dispatch } = useEditor();
@@ -43,13 +43,23 @@ export const CanvasPreview: React.FC = React.memo(() => {
             });
           }}
           playing={state.playing}
-          onRequestPause={() => {
-            if (state.playing) {
-              dispatch({
-                type: "SET_PLAYING",
-                payload: false,
-              });
-            }
+          onPlayingChange={(playing) => {
+            dispatch({
+              type: "SET_PLAYING",
+              payload: playing,
+            });
+          }}
+          onFrameUpdate={(frame) => {
+            dispatch({
+              type: "SET_CURRENT_FRAME",
+              payload: Math.round(frame),
+            });
+          }}
+          onSeek={(frame) => {
+            dispatch({
+              type: "SET_CURRENT_FRAME",
+              payload: frame,
+            });
           }}
         />
       </div>

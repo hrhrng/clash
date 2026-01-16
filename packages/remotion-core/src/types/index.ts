@@ -101,6 +101,8 @@ export type Asset = {
   waveform?: number[]; // Normalized audio peaks (0-1) for waveform visualization
   createdAt: number;
   readOnly?: boolean;
+  /** ID of the source node when asset is linked from canvas (for deduplication) */
+  sourceNodeId?: string;
 };
 
 // Editor state

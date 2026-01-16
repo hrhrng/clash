@@ -12,14 +12,13 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
     const reactFlow = useReactFlow();
 
     const handleOpenEditor = useCallback(() => {
-        // Collect assets from data
         const assets = data.inputs || [];
+        console.log('[VideoEditorNode] handleOpenEditor called with assets:', assets.length, assets);
         let timelineDsl = data.timelineDsl;
         if (loroSync?.doc) {
             const loroNode = loroSync.doc.getMap('nodes').get(id) as any;
             timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
         }
-        console.log('Opening editor with assets:', assets);
         const nodes = reactFlow.getNodes();
         const edges = reactFlow.getEdges();
         const connectedAssetIds = new Set(
@@ -41,6 +40,7 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
                 name: node.data?.label || node.type,
                 width: node.data?.naturalWidth,
                 height: node.data?.naturalHeight,
+                duration: node.data?.duration,
                 sourceNodeId: node.id,
             }))
             .filter((asset) => {

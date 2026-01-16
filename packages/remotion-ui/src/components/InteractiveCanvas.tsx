@@ -32,8 +32,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   playing = false,
   onRequestPause,
 }) => {
-  const shouldDebugAlign =
-    typeof window !== 'undefined' && (window as any).__DEBUG_CANVAS_ALIGN__;
   const playerRef = useRef<PlayerRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerStageRef = useRef<HTMLDivElement>(null);
@@ -127,7 +125,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   // 自动初始化 properties（如果不存在）
   useEffect(() => {
     if (selectedItemData && !selectedItemData.item.properties) {
-      console.log('[InteractiveCanvas] Auto-initializing properties for item:', selectedItemData.item.id);
       const defaultProperties: ItemProperties = {
         x: 0,
         y: 0,
@@ -157,40 +154,18 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
         ...props,
         width: Math.min(1, Math.max(0.01, targetWidth)),
       };
-      if (shouldDebugAlign) {
-        console.log('[InteractiveCanvas] syncAspectRatio', {
-          currentRatio,
-          ratio,
-          next,
-        });
-      }
       onUpdateItem(selectedItemData.trackId, selectedItemData.item.id, {
         properties: next,
       });
     };
     void syncAspectRatio();
-  }, [selectedItemData, compositionWidth, compositionHeight, getMediaAspectRatio, onUpdateItem, shouldDebugAlign]);
+  }, [selectedItemData, compositionWidth, compositionHeight, getMediaAspectRatio, onUpdateItem]);
 
   // 检查 item 是否在当前帧可见
   const isItemVisible = selectedItemData
     ? currentFrame >= selectedItemData.item.from &&
       currentFrame < selectedItemData.item.from + selectedItemData.item.durationInFrames
     : false;
-
-  // 调试日志
-  useEffect(() => {
-    if (selectedItemData) {
-      console.log('[InteractiveCanvas] Selected item:', {
-        id: selectedItemData.item.id,
-        from: selectedItemData.item.from,
-        to: selectedItemData.item.from + selectedItemData.item.durationInFrames,
-        currentFrame,
-        isVisible: isItemVisible,
-        hasProperties: !!selectedItemData.item.properties,
-        properties: selectedItemData.item.properties,
-      });
-    }
-  }, [selectedItemData, currentFrame, isItemVisible]);
 
   // 准备 Player 的 inputProps
   const inputProps = React.useMemo(() => ({
@@ -415,19 +390,9 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
         height: height / metrics.height,
         rotation,
       };
-      if (shouldDebugAlign) {
-        console.log('[InteractiveCanvas] rectToProperties', {
-          rect,
-          stageRect: {
-            width: stageRect.width,
-            height: stageRect.height,
-          },
-          next,
-        });
-      }
       return next;
     },
-    [getStageMetrics, getStageRect, shouldDebugAlign]
+    [getStageMetrics, getStageRect]
   );
 
   const scheduleUpdate = useCallback(
@@ -485,12 +450,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
     const selectionRect = getSelectionBoxRect();
     const itemRect = selectionRect ?? getSelectedItemRect();
     if (itemRect) {
-      if (shouldDebugAlign) {
-        console.log('[InteractiveCanvas] applyOverlayRect from selection', {
-          selectionRect: itemRect,
-          props: selectedItemData.item.properties,
-        });
-      }
       applyOverlayRect(itemRect, selectedItemData.item.properties.rotation ?? 0);
       return;
     }
@@ -540,8 +499,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
 
       const { x, y } = screenToComposition(e.clientX, e.clientY);
 
-      console.log('[InteractiveCanvas] Click at:', { x, y });
-
       const hitTarget = findTopItemAtPoint(
         x,
         y,
@@ -552,7 +509,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       );
 
       if (hitTarget) {
-        console.log('[InteractiveCanvas] Clicked item:', hitTarget.itemId);
         if (selectedItemId !== hitTarget.itemId) {
           onSelectItem(hitTarget.itemId);
         }
@@ -560,7 +516,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
           onRequestPause?.();
         }
       } else {
-        console.log('[InteractiveCanvas] Clicked empty area, deselecting');
         onSelectItem(null);
       }
     },
@@ -708,12 +663,16 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
                 scheduleUpdate(session.trackId, session.itemId, next);
               }
             }}
-            onResizeStart={() => {
+            onResizeStart={(e) => {
               if (playing) {
                 onRequestPause?.();
               }
               const rect = getOverlayRect();
               if (!rect) return;
+              const inputEvent = e.inputEvent as MouseEvent | undefined;
+              const startPointer = inputEvent
+                ? screenToComposition(inputEvent.clientX, inputEvent.clientY)
+                : undefined;
               isInteractingRef.current = true;
               moveableSessionRef.current = {
                 trackId: selectedItemData.trackId,
@@ -728,6 +687,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
                 },
                 startRect: rect,
                 startRotation: selectedItemData.item.properties?.rotation ?? 0,
+                startPointer,
               };
             }}
             onResize={(e) => {
@@ -741,6 +701,40 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
                 height: Math.max(4, e.height / zoom),
               };
               applyOverlayRect(nextRect, session.startRotation);
+              const inputEvent = e.inputEvent as MouseEvent | undefined;
+              const direction = e.direction as [number, number] | undefined;
+              if (inputEvent && session.startPointer && direction) {
+                const currentPointer = screenToComposition(inputEvent.clientX, inputEvent.clientY);
+                const deltaX = currentPointer.x - session.startPointer.x;
+                const deltaY = currentPointer.y - session.startPointer.y;
+                const [dirX, dirY] = direction;
+                const baseWidth = (session.startProperties.width ?? 1) * compositionWidth;
+                const baseHeight = (session.startProperties.height ?? 1) * compositionHeight;
+                const startVector = {
+                  x: (baseWidth / 2) * (dirX === 0 ? 1 : dirX),
+                  y: (baseHeight / 2) * (dirY === 0 ? 1 : dirY),
+                };
+                const currentVector = {
+                  x: startVector.x + deltaX,
+                  y: startVector.y + deltaY,
+                };
+                const startDist = Math.hypot(startVector.x, startVector.y);
+                const currentDist = Math.hypot(currentVector.x, currentVector.y);
+                const scale = startDist > 0 ? currentDist / startDist : 1;
+                const nextWidth = Math.max(4, baseWidth * scale);
+                const nextHeight = Math.max(4, baseHeight * scale);
+                const deltaWidth = nextWidth - baseWidth;
+                const deltaHeight = nextHeight - baseHeight;
+                const next = {
+                  ...session.startProperties,
+                  width: nextWidth / compositionWidth,
+                  height: nextHeight / compositionHeight,
+                  x: (session.startProperties.x ?? 0) + (deltaWidth / 2) * (dirX || 0),
+                  y: (session.startProperties.y ?? 0) + (deltaHeight / 2) * (dirY || 0),
+                };
+                scheduleUpdate(session.trackId, session.itemId, next);
+                return;
+              }
               const next = rectToProperties(nextRect, session.startRotation, session.startProperties);
               if (next) {
                 scheduleUpdate(session.trackId, session.itemId, next);

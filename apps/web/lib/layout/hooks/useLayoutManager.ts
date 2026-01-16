@@ -13,6 +13,89 @@ import {
     type AutoInsertResult,
 } from '../auto-insert';
 
+/**
+ * Maximum dimension for media nodes (matches VideoNode.MAX_MEDIA_DIMENSION)
+ */
+const MAX_MEDIA_DIMENSION = 500;
+
+/**
+ * Calculate scaled dimensions from natural width/height to fit within MAX_MEDIA_DIMENSION
+ * Matches VideoNode.calculateScaledDimensions logic
+ */
+function calculateScaledDimensions(naturalWidth: number, naturalHeight: number): Size {
+    if (!naturalWidth || !naturalHeight) {
+        return { width: 400, height: 400 };
+    }
+
+    const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
+    return {
+        width: Math.round(naturalWidth * scale),
+        height: Math.round(naturalHeight * scale),
+    };
+}
+
+/**
+ * Calculate node dimensions from aspect ratio
+ * Used to pre-size media nodes correctly on creation
+ */
+function calculateDimensionsFromAspectRatio(aspectRatio?: string): Size {
+    if (!aspectRatio) {
+        return { width: 400, height: 400 }; // Default square
+    }
+
+    const parts = aspectRatio.split(':');
+    if (parts.length !== 2) {
+        return { width: 400, height: 400 };
+    }
+
+    const widthRatio = parseFloat(parts[0]);
+    const heightRatio = parseFloat(parts[1]);
+
+    if (!widthRatio || !heightRatio) {
+        return { width: 400, height: 400 };
+    }
+
+    // Calculate dimensions that fit within MAX_MEDIA_DIMENSION
+    if (widthRatio >= heightRatio) {
+        // Landscape or square
+        const width = MAX_MEDIA_DIMENSION;
+        const height = Math.round((heightRatio / widthRatio) * MAX_MEDIA_DIMENSION);
+        return { width, height };
+    } else {
+        // Portrait
+        const height = MAX_MEDIA_DIMENSION;
+        const width = Math.round((widthRatio / heightRatio) * MAX_MEDIA_DIMENSION);
+        return { width, height };
+    }
+}
+
+/**
+ * Get the appropriate size for a node with multiple fallback strategies
+ *
+ * Priority for media nodes:
+ * 1. naturalWidth/naturalHeight (actual video/image dimensions)
+ * 2. aspectRatio (calculated dimensions)
+ * 3. Default size
+ */
+function getNodeSizeWithData(nodeType: string, nodeData?: any): Size {
+    const defaultSize = getNodeSize(nodeType);
+
+    // For media nodes, try multiple strategies to get correct dimensions
+    if (nodeType === 'video' || nodeType === 'image') {
+        // Strategy 1: Use actual natural dimensions if available (most accurate)
+        if (nodeData?.naturalWidth && nodeData?.naturalHeight) {
+            return calculateScaledDimensions(nodeData.naturalWidth, nodeData.naturalHeight);
+        }
+
+        // Strategy 2: Use aspect ratio if available
+        if (nodeData?.aspectRatio) {
+            return calculateDimensionsFromAspectRatio(nodeData.aspectRatio);
+        }
+    }
+
+    return defaultSize;
+}
+
 const DEFAULT_CONFIG: LayoutManagerConfig = {
     mesh: {
         cellWidth: 50,
@@ -282,7 +365,8 @@ export function useLayoutManager(
         targetPosition: Point,
         parentId?: string
     ): Node => {
-        const nodeSize = getNodeSize(newNode.type);
+        // Get node size considering aspectRatio data
+        const nodeSize = getNodeSizeWithData(newNode.type, newNode.data);
 
         // Find non-overlapping position
         const position = findNonOverlappingPosition(targetPosition, nodeSize, parentId);

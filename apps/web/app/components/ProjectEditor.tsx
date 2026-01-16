@@ -610,11 +610,13 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 name: sourceNode.data.label || sourceNode.type,
                                 width: sourceNode.data.naturalWidth,
                                 height: sourceNode.data.naturalHeight,
-                                // Add other fields if needed
+                                duration: sourceNode.data.duration, // Video/audio duration in seconds
+                                sourceNodeId: sourceNode.id, // For deduplication
                             };
                         }
                         return null;
                     }).filter(Boolean); // Remove nulls
+
 
                     // Compare with existing inputs to avoid unnecessary updates
                     const currentInputs = node.data.inputs || [];
@@ -1126,6 +1128,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
             let mediaWidth: number | undefined;
             let mediaHeight: number | undefined;
+            let videoDuration: number | undefined;
 
             if (file.type.startsWith('image/')) {
                 try {
@@ -1146,20 +1149,24 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             } else if (file.type.startsWith('video/')) {
                 try {
-                    const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+                    const videoInfo = await new Promise<{ width: number; height: number; duration: number }>((resolve, reject) => {
                         const video = document.createElement('video');
                         video.preload = 'metadata';
                         video.onloadedmetadata = () => {
-                            resolve({ width: video.videoWidth, height: video.videoHeight });
+                            resolve({
+                                width: video.videoWidth,
+                                height: video.videoHeight,
+                                duration: video.duration || 0
+                            });
                         };
                         video.onerror = () => reject(new Error('Failed to read video metadata'));
                         video.src = localPreviewUrl;
                     });
-                    mediaWidth = dimensions.width;
-                    mediaHeight = dimensions.height;
-                    console.log(`[Upload] Video dimensions: ${mediaWidth}x${mediaHeight}`);
+                    mediaWidth = videoInfo.width;
+                    mediaHeight = videoInfo.height;
+                    videoDuration = videoInfo.duration;
                 } catch (err) {
-                    console.warn('[Upload] Failed to read video dimensions:', err);
+                    console.warn('[Upload] Failed to read video metadata:', err);
                 }
             }
 
@@ -1170,6 +1177,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 src: localPreviewUrl,
                 naturalWidth: mediaWidth,
                 naturalHeight: mediaHeight,
+                duration: videoDuration,
             });
 
             if (options?.connectToVideoEditorId) {
@@ -1205,6 +1213,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                     src: finalSrc,
                                     storageKey,
                                     status: 'completed',
+                                    duration: videoDuration,
                                 },
                             }
                             : node
@@ -1217,6 +1226,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             src: finalSrc,
                             storageKey,
                             status: 'completed',
+                            duration: videoDuration,
                         }
                     });
                 }

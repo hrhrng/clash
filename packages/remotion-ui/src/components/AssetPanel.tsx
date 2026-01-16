@@ -192,7 +192,12 @@ export const AssetPanel: React.FC<AssetPanelProps> = ({
     height?: number;
     sourceNodeId?: string;
   }) => {
-    const exists = state.assets.some((a) => a.id === asset.id || a.src === asset.src);
+    const exists = state.assets.some((a) =>
+      a.id === asset.id ||
+      a.src === asset.src ||
+      (asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId)
+    );
+
     if (!exists) {
       dispatch({
         type: 'ADD_ASSET',
@@ -205,6 +210,7 @@ export const AssetPanel: React.FC<AssetPanelProps> = ({
           height: asset.height,
           createdAt: Date.now(),
           readOnly: true,
+          sourceNodeId: asset.sourceNodeId,
         },
       });
     }

@@ -12,6 +12,26 @@ import type { Point, Rect } from './types';
 import { getAbsoluteRect, getNodeSize, rectOverlaps } from './core/geometry';
 
 /**
+ * Maximum dimension for media nodes (matches VideoNode.MAX_MEDIA_DIMENSION)
+ */
+const MAX_MEDIA_DIMENSION = 500;
+
+/**
+ * Calculate scaled dimensions from natural width/height
+ */
+function calculateScaledDimensions(naturalWidth: number, naturalHeight: number): { width: number; height: number } {
+    if (!naturalWidth || !naturalHeight) {
+        return { width: 400, height: 400 };
+    }
+
+    const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
+    return {
+        width: Math.round(naturalWidth * scale),
+        height: Math.round(naturalHeight * scale),
+    };
+}
+
+/**
  * Special position value indicating a node needs auto-layout
  * Python backend should use this value when adding nodes
  */
@@ -27,6 +47,9 @@ const DEFAULT_GAP = 80;
  * Check if a node needs auto-layout based on its position
  */
 export function needsAutoLayout(node: Node): boolean {
+    // Guard against undefined position - treat as needing layout
+    if (!node.position) return true;
+
     return (
         node.position.x === NEEDS_LAYOUT_POSITION.x &&
         node.position.y === NEEDS_LAYOUT_POSITION.y
@@ -72,16 +95,23 @@ function normalizeDimension(value: unknown): number | undefined {
 }
 
 /**
- * Get the actual height of a node, considering measured, explicit, style, and default sizes
+ * Get the actual height of a node, considering explicit dimensions, natural dimensions, style, and default
+ *
+ * IMPORTANT: We DON'T use measured dimensions here because:
+ * 1. measured dimensions can fluctuate during layout updates
+ * 2. For media nodes, height should be based on actual dimensions (stored in node.height or node.data.naturalHeight)
+ * 3. Using measured can cause nodes to resize when other nodes are added
  */
 function getNodeHeight(node: Node): number {
     const defaultSize = getNodeSize(node.type || 'default');
-    const measured = (node as any).measured;
 
-    // Priority: measured > node.height > node.style.height > default
+    // Priority: node.height > calculated from naturalWidth/naturalHeight > node.style.height > default
+    // Explicitly ignore measured.height to prevent size fluctuations
     return (
-        normalizeDimension(measured?.height) ??
         normalizeDimension(node.height) ??
+        (node.data?.naturalWidth && node.data?.naturalHeight
+            ? calculateScaledDimensions(node.data.naturalWidth, node.data.naturalHeight).height
+            : undefined) ??
         normalizeDimension(node.style?.height) ??
         defaultSize.height
     );
@@ -92,13 +122,14 @@ function getNodeHeight(node: Node): number {
  */
 export function findBottomY(parentId: string | undefined, nodes: Node[]): number {
     const siblings = nodes.filter(
-        (n) => n.parentId === parentId && n.position.x !== NEEDS_LAYOUT_POSITION.x
+        (n) => n.parentId === parentId && n.position?.x !== NEEDS_LAYOUT_POSITION.x
     );
 
     if (siblings.length === 0) return DEFAULT_GAP;
 
     let maxBottom = 0;
     for (const sibling of siblings) {
+        if (!sibling.position) continue;
         const height = getNodeHeight(sibling);
         const bottom = sibling.position.y + height;
         if (bottom > maxBottom) maxBottom = bottom;
@@ -108,16 +139,23 @@ export function findBottomY(parentId: string | undefined, nodes: Node[]): number
 }
 
 /**
- * Get the actual width of a node, considering measured, explicit, style, and default sizes
+ * Get the actual width of a node, considering explicit dimensions, natural dimensions, style, and default
+ *
+ * IMPORTANT: We DON'T use measured dimensions here because:
+ * 1. measured dimensions can fluctuate during layout updates
+ * 2. For media nodes, width should be based on actual dimensions (stored in node.width or node.data.naturalWidth)
+ * 3. Using measured can cause nodes to resize when other nodes are added
  */
 function getNodeWidth(node: Node): number {
     const defaultSize = getNodeSize(node.type || 'default');
-    const measured = (node as any).measured;
 
-    // Priority: measured > node.width > node.style.width > default
+    // Priority: node.width > calculated from naturalWidth/naturalHeight > node.style.width > default
+    // Explicitly ignore measured.width to prevent size fluctuations
     return (
-        normalizeDimension(measured?.width) ??
         normalizeDimension(node.width) ??
+        (node.data?.naturalWidth && node.data?.naturalHeight
+            ? calculateScaledDimensions(node.data.naturalWidth, node.data.naturalHeight).width
+            : undefined) ??
         normalizeDimension(node.style?.width) ??
         defaultSize.width
     );
@@ -136,8 +174,8 @@ export function calculateInsertPosition(
         const refWidth = getNodeWidth(referenceNode);
 
         return {
-            x: referenceNode.position.x + refWidth + DEFAULT_GAP,
-            y: referenceNode.position.y,
+            x: (referenceNode.position?.x ?? 0) + refWidth + DEFAULT_GAP,
+            y: referenceNode.position?.y ?? 0,
         };
     } else {
         // No reference: place at bottom
@@ -163,7 +201,7 @@ export function getOverlappingSiblings(
         if (n.id === nodeId) return false;
         if (n.parentId !== parentId) return false;
         if (n.type === 'group') return false; // Don't push groups, let them resize
-        if (n.position.x === NEEDS_LAYOUT_POSITION.x) return false; // Skip nodes waiting for layout
+        if (!n.position || n.position.x === NEEDS_LAYOUT_POSITION.x) return false; // Skip nodes waiting for layout
 
         const siblingWidth = getNodeWidth(n);
         const siblingHeight = getNodeHeight(n);
@@ -198,6 +236,8 @@ export function chainPushRight(
     // Build working copy of positions
     const workingPositions = new Map<string, Point>();
     for (const node of nodes) {
+        // Skip nodes without position - they'll be auto-laid out separately
+        if (!node.position) continue;
         workingPositions.set(node.id, { ...node.position });
     }
 

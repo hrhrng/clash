@@ -15,6 +15,10 @@ interface Asset {
     type: 'video' | 'image' | 'audio';
     src: string;
     name?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    sourceNodeId?: string;
 }
 
 type TimelineDsl = Pick<
@@ -64,7 +68,19 @@ export function VideoEditorProvider({
         nextTimelineDsl?: TimelineDsl | null,
         nextAvailableAssets: Array<Asset & { sourceNodeId?: string }> = []
     ) => {
-        setAssets(newAssets);
+        console.log('[VideoEditorContext] openEditor called with newAssets:', newAssets.length, newAssets);
+        // Deduplicate assets before setting
+        const seenKeys = new Set<string>();
+        const deduplicatedAssets = newAssets.filter(asset => {
+            const key = asset.sourceNodeId || asset.id;
+            if (seenKeys.has(key)) {
+                return false;
+            }
+            seenKeys.add(key);
+            return true;
+        });
+
+        setAssets(deduplicatedAssets);
         setEditorNodeId(nodeId);
         setTimelineDsl(nextTimelineDsl ?? null);
         setAvailableAssets(nextAvailableAssets);
@@ -101,7 +117,11 @@ export function VideoEditorProvider({
             const result = await onAssetAddedToCanvas(file, type, editorNodeId);
             if (!result) return;
             setAssets((current) => {
-                const exists = current.some((asset) => asset.id === result.id || asset.src === result.src);
+                const exists = current.some((asset) =>
+                    asset.id === result.id ||
+                    asset.src === result.src ||
+                    (result.sourceNodeId && asset.sourceNodeId === result.sourceNodeId)
+                );
                 return exists ? current : [...current, result];
             });
         },
@@ -131,6 +151,7 @@ export function VideoEditorProvider({
                         onAssetUpload={handleAssetUpload}
                         availableAssets={availableAssets}
                         onAssetPicked={handleAssetPicked}
+                        editorKey={editorNodeId ?? undefined}
                     />
                 </div>
             )}

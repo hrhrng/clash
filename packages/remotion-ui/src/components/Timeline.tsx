@@ -112,9 +112,6 @@ export const Timeline: React.FC = () => {
     if (!data || !data.item) return;
     const item = data.item as Item;
     const trackId = data.trackId as string;
-    // eslint-disable-next-line no-console
-    console.log('[DND] onDragStart', { id: item.id, trackId, rect: event.active.rect.current });
-
     setDraggedItem({ trackId, item });
     // Do not set window.currentDraggedItem for dnd-kit flow; keep it for native drag only
 
@@ -132,8 +129,6 @@ export const Timeline: React.FC = () => {
       previewFrame: item.from,
       rawPreviewFrame: item.from,
     };
-    // eslint-disable-next-line no-console
-    console.log('[DND] init preview', nextPreview);
     setDragPreview(nextPreview);
   }, []);
 
@@ -157,21 +152,6 @@ export const Timeline: React.FC = () => {
     const topY = (topOnViewport - viewportRect.top) + viewportEl.scrollTop;
 
     const insertThresholdPx = Math.min(12, Math.floor(timelineStyles.trackHeight * 0.15));
-    // Debug: log decision landmarks relative to source track boundaries
-    const H = heightPx;
-    const q1 = topY + H / 3;
-    const q2 = topY + (2 * H) / 3;
-    const srcIdx = Math.max(0, tracks.findIndex((t) => t.id === dragPreview.originalTrackId));
-    const srcTop = srcIdx * timelineStyles.trackHeight;
-    const srcBottom = (srcIdx + 1) * timelineStyles.trackHeight;
-    // eslint-disable-next-line no-console
-    console.log('[DND][landmarks]', {
-      topY: Math.round(topY),
-      q1: Math.round(q1),
-      q2: Math.round(q2),
-      srcTop: Math.round(srcTop),
-      srcBottom: Math.round(srcBottom),
-    });
     const preview = buildItemDragPreview({
       leftWithinTracksPx: leftWithinTracks,
       itemTopY: topY,
@@ -227,13 +207,6 @@ export const Timeline: React.FC = () => {
     }
 
     const { item, originalTrackId } = dragPreview;
-    // eslint-disable-next-line no-console
-    console.log('[DND] onDragEnd', {
-      itemId: item.id,
-      fromTrack: originalTrackId,
-      toTrack: dragPreview.previewTrackId,
-      frame: dragPreview.previewFrame,
-    });
     const drop = finalizeItemDrop(
       {
         previewTrackId: dragPreview.previewTrackId,
@@ -246,15 +219,6 @@ export const Timeline: React.FC = () => {
       tracks,
       originalTrackId
     );
-    
-    console.log('[DND] Drop action:', drop.type, {
-      originalTrackId,
-      targetTrackId: 'targetTrackId' in drop ? drop.targetTrackId : 'N/A',
-      frame: drop.frame,
-      tracksCount: tracks.length,
-      itemsInOriginal: tracks.find(t => t.id === originalTrackId)?.items.length,
-      itemsInTarget: 'targetTrackId' in drop ? tracks.find(t => t.id === drop.targetTrackId)?.items.length : 'N/A',
-    });
 
     if (drop.type === 'create-track') {
       const newTrack = {
@@ -539,18 +503,7 @@ export const Timeline: React.FC = () => {
     // 使用导入的 currentDraggedAsset
     const draggedAsset = currentDraggedAsset;
 
-    console.log('[Timeline.handleDragOver] Drag data:', {
-      assetId,
-      isQuickAdd,
-      quickAddType,
-      draggedAsset,
-      currentDraggedAssetFromImport: currentDraggedAsset,
-      hasDraggedItem: !!draggedItem,
-      dataTransferTypes: Array.from(e.dataTransfer.types),
-    });
-
     if (!assetId && !isQuickAdd && !draggedAsset) {
-      console.log('[Timeline.handleDragOver] No asset data, clearing preview');
       if (assetDragPreview) setAssetDragPreview(null);
       return;
     }
@@ -570,19 +523,6 @@ export const Timeline: React.FC = () => {
     const snapResult = calculateSnap(rawFrame, tracks, null, currentFrame, snapEnabled, timelineStyles.snapThreshold);
     const frame = Math.max(0, snapResult.snappedFrame);
 
-    console.log('[Timeline.handleDragOver] Position calc:', {
-      mouseX: e.clientX,
-      rectLeft: rect.left,
-      scrollLeft: viewportEl.scrollLeft,
-      contentInsetLeftPx,
-      currentAssetDragOffset,
-      mouseXInViewport: mouseX,
-      assetLeftX,
-      rawFrame,
-      frame,
-      pixelsPerFrame,
-    });
-    
     const trackIndex = Math.floor(y / timelineStyles.trackHeight);
     const relativeY = y % timelineStyles.trackHeight;
     const threshold = 20;
@@ -689,12 +629,6 @@ export const Timeline: React.FC = () => {
         durationInFrames: duration,
       } as Item;
     }
-    
-    console.log('[Timeline.handleDragOver] Setting asset drag preview:', {
-      previewItem,
-      targetTrackId,
-      frame,
-    });
 
     setAssetDragPreview({
       item: previewItem,
@@ -977,16 +911,6 @@ export const Timeline: React.FC = () => {
       const assetLeftX = mouseX - currentAssetDragOffset;
       const rawFrame = pixelsToFrame(assetLeftX, pixelsPerFrame);
 
-      console.log('[Timeline.handleDrop] Drop position calc:', {
-        mouseX: e.clientX,
-        rectLeft: rect.left,
-        currentAssetDragOffset,
-        mouseXRelative: mouseX,
-        assetLeftX,
-        rawFrame,
-        pixelsPerFrame,
-      });
-
       // 应用吸附
       const snapResult = calculateSnap(
         rawFrame,
@@ -998,12 +922,6 @@ export const Timeline: React.FC = () => {
       );
 
       const frame = Math.max(0, snapResult.snappedFrame);
-
-      console.log('[Timeline.handleDrop] Final position:', {
-        rawFrame,
-        snappedFrame: frame,
-        trackId,
-      });
 
       let newItem: Item | null = null;
 
