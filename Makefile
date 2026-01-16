@@ -1,11 +1,11 @@
 .PHONY: install dev dev-web dev-api dev-sync dev-gateway dev-collab dev-full build test lint clean format setup db-web-local db-sync-local check-tools help
 
+# Use interactive shell to load .zshrc environment
+SHELL := /bin/zsh -i
+
 #==============================================================================
 # Configuration
 #==============================================================================
-
-# Ensure critical tools are in PATH (exported for all subprocesses)
-export PATH = /opt/homebrew/bin:/opt/homebrew/sbin:$(HOME)/.langflow/uv:$(HOME)/.local/bin:$(HOME)/.bun/bin:$(HOME)/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 
 # Proxy settings (can be overridden via environment or CLI)
 HTTP_PROXY ?= http://127.0.0.1:7897
