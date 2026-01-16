@@ -4,16 +4,17 @@ Provides functions to set and check interrupt flags stored in D1/SQLite,
 enabling graceful session interruption across serverless instances.
 """
 
-import json
+import asyncio
 import logging
 import time
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.load import dumpd
 
-from master_clash.database.checkpointer import get_checkpointer
+from master_clash.database.checkpointer import get_async_checkpointer
 from master_clash.database.di import get_database
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +262,22 @@ class InterruptFlagCache:
         return self._cached_value
 
 
-def get_session_history(thread_id: str) -> list[dict[str, Any]]:
+async def _get_checkpoint_tuple(checkpointer: Any, config: dict[str, Any]):
+    aget = getattr(checkpointer, "aget_tuple", None)
+    if callable(aget):
+        try:
+            return await aget(config)
+        except NotImplementedError:
+            pass
+
+    get_tuple = getattr(checkpointer, "get_tuple", None)
+    if callable(get_tuple):
+        return await asyncio.to_thread(get_tuple, config)
+
+    return None
+
+
+async def get_session_history(thread_id: str) -> list[dict[str, Any]]:
     """Retrieve structured message history for a session from LangGraph checkpoints.
 
     Maps LangGraph messages to ChatbotCopilot display items (message, thinking, tool_call, agent_card).
@@ -274,10 +290,10 @@ def get_session_history(thread_id: str) -> list[dict[str, Any]]:
     """
     logger.info(f"[SessionHistory] Fetching structured history for thread_id={thread_id}")
 
-    checkpointer = get_checkpointer()
+    checkpointer = await get_async_checkpointer()
     config = {"configurable": {"thread_id": thread_id}}
 
-    checkpoint_tuple = checkpointer.get(config)
+    checkpoint_tuple = await _get_checkpoint_tuple(checkpointer, config)
     if not checkpoint_tuple:
         logger.warning(f"[SessionHistory] No checkpoint found for thread_id={thread_id}")
         return []
@@ -495,52 +511,6 @@ async def generate_and_update_title(thread_id: str, first_message: Any) -> str:
         return f"Session {thread_id[-6:]}"
 
 
-class SessionEventEncoder(json.JSONEncoder):
-    """Custom JSON encoder for session events to handle LangChain messages and complex objects.
-
-    Uses LangChain's dumpd for proper serialization of LangChain objects.
-    """
-
-    def default(self, obj: Any) -> Any:
-        # LangChain message objects (HumanMessage/AIMessage/ToolMessage/etc.)
-        # Use LangChain's official serialization method
-        if isinstance(obj, BaseMessage):
-            try:
-                return dumpd(obj)
-            except Exception as e:
-                logger.warning(f"Failed to serialize BaseMessage with dumpd: {e}")
-                # Fallback to simple dict representation
-                return {
-                    "type": getattr(obj, "type", "message"),
-                    "content": str(getattr(obj, "content", "")),
-                }
-
-        # Pydantic v2 / v1 and similar objects
-        if hasattr(obj, "model_dump") and callable(obj.model_dump):
-            try:
-                return obj.model_dump()
-            except Exception:
-                pass
-        if hasattr(obj, "dict") and callable(obj.dict):
-            try:
-                return obj.dict()
-            except Exception:
-                pass
-
-        # Handle bytes
-        if isinstance(obj, bytes):
-            try:
-                return obj.decode("utf-8")
-            except Exception:
-                return obj.hex()
-
-        # Last resort: convert to string
-        try:
-            return super().default(obj)
-        except TypeError:
-            return str(obj)
-
-
 def log_session_event(thread_id: str, event_type: str, payload: dict[str, Any]) -> None:
     """Log a streaming event to the database for history replay.
 
@@ -553,7 +523,7 @@ def log_session_event(thread_id: str, event_type: str, payload: dict[str, Any]) 
     try:
         db.execute(
             "INSERT INTO session_events (thread_id, event_type, payload) VALUES (?, ?, ?)",
-            (thread_id, event_type, json.dumps(payload, cls=SessionEventEncoder)),
+            (thread_id, event_type, json_dumps(payload)),
         )
         db.commit()
     except Exception as e:
@@ -590,7 +560,7 @@ def get_session_events(thread_id: str) -> list[dict[str, Any]]:
                 events.append(
                     {
                         "event_type": etype,
-                        "payload": json.loads(pay) if isinstance(pay, str) else pay,
+                        "payload": json_loads(pay) if isinstance(pay, str) else pay,
                         "created_at": crea,
                     }
                 )
@@ -601,7 +571,7 @@ def get_session_events(thread_id: str) -> list[dict[str, Any]]:
         db.close()
 
 
-def get_session_history_from_events(thread_id: str) -> list[dict[str, Any]]:
+async def get_session_history_from_events(thread_id: str) -> list[dict[str, Any]]:
     """Reconstruct session history by replaying logged stream events.
 
     This provides high fidelity history including partial thinking, logs, and UI state
@@ -610,7 +580,7 @@ def get_session_history_from_events(thread_id: str) -> list[dict[str, Any]]:
     events = get_session_events(thread_id)
     if not events:
         # Fallback to checkpoint-based history
-        return get_session_history(thread_id)
+        return await get_session_history(thread_id)
 
     display_items = []
 

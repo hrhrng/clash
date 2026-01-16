@@ -14,7 +14,6 @@ Task Types:
 
 import asyncio
 import base64
-import json
 import logging
 import uuid
 from datetime import datetime
@@ -23,6 +22,8 @@ from typing import Literal
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
 from master_clash.services import d1, genai, generation_models, r2
 from master_clash.services.generation_models import (
     ImageGenerationRequest,
@@ -96,7 +97,7 @@ async def create_task(
             created_at, updated_at, max_retries)
            VALUES (?, ?, ?, 'python', ?, ?, ?, ?, 3)""",
         [task_id, project_id, task_type, STATUS_PENDING, 
-         json.dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
+         json_dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
     )
 
 
@@ -136,7 +137,7 @@ async def complete_task(task_id: str, result_url: str = None, result_data: dict 
         """UPDATE aigc_tasks 
            SET status = ?, result_url = ?, result_data = ?, updated_at = ?, completed_at = ?
            WHERE task_id = ?""",
-        [STATUS_COMPLETED, result_url, json.dumps(result_data) if result_data else None, now, now, task_id]
+        [STATUS_COMPLETED, result_url, json_dumps(result_data) if result_data else None, now, now, task_id]
     )
 
 
@@ -575,8 +576,8 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
-    params = json.loads(task.get("params", "{}"))
-    result_data = json.loads(task.get("result_data") or "{}")
+    params = json_loads(task.get("params", "{}"))
+    result_data = json_loads(task.get("result_data") or "{}")
     
     return TaskStatusResponse(
         task_id=task_id,

@@ -6,7 +6,6 @@ Endpoints:
 - GET /api/describe/{task_id} - Get task status
 """
 
-import json
 import logging
 import uuid
 from datetime import datetime
@@ -14,6 +13,8 @@ from datetime import datetime
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
 from master_clash.services import r2, d1, genai
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class DescribeStatusResponse(BaseModel):
 async def create_task(task_id: str, project_id: str, node_id: str, r2_key: str, mime_type: str) -> None:
     """Create task in D1."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    params = json.dumps({"r2_key": r2_key, "mime_type": mime_type, "node_id": node_id})
+    params = json_dumps({"r2_key": r2_key, "mime_type": mime_type, "node_id": node_id})
     
     await d1.execute(
         """INSERT INTO aigc_tasks 
@@ -77,7 +78,7 @@ async def update_task(task_id: str, status: str, result_data: dict = None, error
             """UPDATE aigc_tasks 
                SET status = ?, result_data = ?, updated_at = ?, completed_at = ?
                WHERE task_id = ?""",
-            [status, json.dumps(result_data), now, now, task_id]
+            [status, json_dumps(result_data), now, now, task_id]
         )
     elif status == STATUS_FAILED and error:
         await d1.execute(
@@ -142,8 +143,8 @@ async def get_description_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
-    params = json.loads(task.get("params", "{}"))
-    result_data = json.loads(task.get("result_data") or "{}")
+    params = json_loads(task.get("params", "{}"))
+    result_data = json_loads(task.get("result_data") or "{}")
     
     return DescribeStatusResponse(
         task_id=task_id,

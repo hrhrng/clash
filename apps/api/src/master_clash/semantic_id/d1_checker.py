@@ -5,7 +5,8 @@ Matches the existing asset table schema where semantic_id is stored in the 'id' 
 """
 
 import contextlib
-import json
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
 
 from master_clash.config import get_settings
 from master_clash.database.adapters.d1_adapter import D1Database
@@ -104,7 +105,7 @@ class D1IDChecker:
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """
 
-        metadata_json = json.dumps(metadata) if metadata else None
+        metadata_json = json_dumps(metadata) if metadata else None
 
         params = [
             semantic_id,
@@ -184,7 +185,7 @@ class D1IDChecker:
                 # Parse metadata JSON if present
                 if asset.get("metadata"):
                     with contextlib.suppress(json.JSONDecodeError, TypeError):
-                        asset["metadata"] = json.loads(asset["metadata"])
+                        asset["metadata"] = json_loads(asset["metadata"])
 
                 return asset
 

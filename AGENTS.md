@@ -1,5 +1,5 @@
 # ALWAYS And MUST do
-1. after a task, run cicd for compile、lint and other check.（do not build because this project is hot-built） which maintain in Makefile
+1. after a task, run ci/cd process for compile、lint and other check.（do not build because this project is hot-built） which maintain in Makefile
 
 # Shared Configuration Pattern
 

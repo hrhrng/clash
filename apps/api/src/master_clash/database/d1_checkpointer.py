@@ -4,7 +4,6 @@ Cloudflare D1 Checkpointer for LangGraph.
 Stores workflow checkpoint state in Cloudflare D1 database via HTTP API.
 """
 
-import json
 from collections.abc import Sequence
 from typing import Any
 
@@ -16,6 +15,8 @@ from langgraph.checkpoint.base import (
     CheckpointTuple,
 )
 
+from master_clash.json_utils import dumpb as json_dumpb
+from master_clash.json_utils import loads as json_loads
 
 class D1Checkpointer(BaseCheckpointSaver):
     """
@@ -142,8 +143,8 @@ class D1Checkpointer(BaseCheckpointSaver):
         parent_id = config["configurable"].get("checkpoint_id")
 
         # Serialize checkpoint and metadata
-        checkpoint_blob = json.dumps(checkpoint).encode("utf-8")
-        metadata_blob = json.dumps(metadata).encode("utf-8")
+        checkpoint_blob = json_dumpb(checkpoint)
+        metadata_blob = json_dumpb(metadata)
 
         # Insert/update checkpoint
         sql = """
@@ -191,8 +192,8 @@ class D1Checkpointer(BaseCheckpointSaver):
         checkpoint_id = checkpoint["id"]
         parent_id = config["configurable"].get("checkpoint_id")
 
-        checkpoint_blob = json.dumps(checkpoint).encode("utf-8")
-        metadata_blob = json.dumps(metadata).encode("utf-8")
+        checkpoint_blob = json_dumpb(checkpoint)
+        metadata_blob = json_dumpb(metadata)
 
         sql = """
         INSERT INTO checkpoints (
@@ -269,8 +270,8 @@ class D1Checkpointer(BaseCheckpointSaver):
         checkpoint_data = bytes.fromhex(row["checkpoint"])
         metadata_data = bytes.fromhex(row["metadata"])
 
-        checkpoint = json.loads(checkpoint_data)
-        metadata = json.loads(metadata_data)
+        checkpoint = json_loads(checkpoint_data)
+        metadata = json_loads(metadata_data)
 
         return CheckpointTuple(
             config={
@@ -328,8 +329,8 @@ class D1Checkpointer(BaseCheckpointSaver):
         checkpoint_data = bytes.fromhex(row["checkpoint"])
         metadata_data = bytes.fromhex(row["metadata"])
 
-        checkpoint = json.loads(checkpoint_data)
-        metadata = json.loads(metadata_data)
+        checkpoint = json_loads(checkpoint_data)
+        metadata = json_loads(metadata_data)
 
         return CheckpointTuple(
             config={

@@ -1,9 +1,9 @@
 import asyncio
-import json
 import logging
 import uuid
 
 from master_clash.context import ProjectContext
+from master_clash.json_utils import dumps as json_dumps
 
 
 logger = logging.getLogger(__name__)
@@ -21,11 +21,7 @@ class StreamEmitter:
 
             log_session_event(thread_id, event_type, data)
 
-        # Use the same encoder as session event logging so LangChain messages (e.g. HumanMessage)
-        # don't crash SSE with "not JSON serializable".
-        from master_clash.services.session_interrupt import SessionEventEncoder
-
-        return f"event: {event_type}\ndata: {json.dumps(data, cls=SessionEventEncoder)}\n\n"
+        return f"event: {event_type}\ndata: {json_dumps(data)}\n\n"
 
     def text(
         self,

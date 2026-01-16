@@ -4,61 +4,13 @@ import { Image as ImageIcon, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
-
 import { resolveAssetUrl } from '../../../lib/utils/assets';
-
-// Maximum dimension for images to keep canvas manageable
-const MAX_MEDIA_DIMENSION = 500;
-
-/**
- * Calculate scaled dimensions from natural width/height to fit within MAX_MEDIA_DIMENSION
- */
-function calculateScaledDimensions(naturalWidth: number, naturalHeight: number): { width: number; height: number } {
-    if (!naturalWidth || !naturalHeight) {
-        return { width: 400, height: 400 };
-    }
-
-    const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
-    return {
-        width: Math.round(naturalWidth * scale),
-        height: Math.round(naturalHeight * scale),
-    };
-}
-
-/**
- * Parse aspect ratio string (e.g., "16:9", "1:1") and calculate dimensions
- * Returns width and height that fit within MAX_MEDIA_DIMENSION
- */
-function calculateDimensionsFromAspectRatio(aspectRatio?: string): { width: number; height: number } {
-    if (!aspectRatio) {
-        return { width: 400, height: 400 }; // Default square
-    }
-
-    const parts = aspectRatio.split(':');
-    if (parts.length !== 2) {
-        return { width: 400, height: 400 };
-    }
-
-    const widthRatio = parseFloat(parts[0]);
-    const heightRatio = parseFloat(parts[1]);
-
-    if (!widthRatio || !heightRatio) {
-        return { width: 400, height: 400 };
-    }
-
-    // Calculate dimensions that fit within MAX_MEDIA_DIMENSION
-    if (widthRatio >= heightRatio) {
-        // Landscape or square
-        const width = MAX_MEDIA_DIMENSION;
-        const height = Math.round((heightRatio / widthRatio) * MAX_MEDIA_DIMENSION);
-        return { width, height };
-    } else {
-        // Portrait
-        const height = MAX_MEDIA_DIMENSION;
-        const width = Math.round((widthRatio / heightRatio) * MAX_MEDIA_DIMENSION);
-        return { width, height };
-    }
-}
+import {
+    calculateDimensionsFromAspectRatio,
+    calculateScaledDimensions,
+    hasValidMeasuredSize,
+    resolveInitialMediaSize,
+} from './assetNodeSizing';
 
 const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Image Node');
@@ -70,7 +22,8 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [imageUrl, setImageUrl] = useState<string | undefined>(data.src);
     const [description, setDescription] = useState(data.description || '');
     const [showDescription, setShowDescription] = useState(false);
-    const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const initialSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const didInitSizeRef = useRef(false);
 
     // Get current node dimensions
     const currentNode = nodes.find((n) => n.id === id);
@@ -83,29 +36,23 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
         ? calculateScaledDimensions(data.naturalWidth, data.naturalHeight)
         : null;
 
-    // Priority: measured dimensions > natural dimensions > aspect ratio dimensions > default
-    // For generating, always use aspect ratio dimensions
-    // For uploading with natural dimensions, use those immediately
     const hasPreview = Boolean(imageUrl);
-    const useAspectRatioOnly = status === 'generating' || (status === 'uploading' && !hasPreview && !naturalDimensions) || (!hasPreview && !naturalDimensions);
     const measuredWidth = currentNode?.width ?? currentNode?.style?.width;
     const measuredHeight = currentNode?.height ?? currentNode?.style?.height;
 
-    // Determine node dimensions based on priority
-    let nodeWidth: number;
-    let nodeHeight: number;
-
-    if (useAspectRatioOnly) {
-        nodeWidth = aspectRatioDimensions.width;
-        nodeHeight = aspectRatioDimensions.height;
-    } else if (naturalDimensions && status === 'uploading') {
-        // Use pre-calculated natural dimensions during upload
-        nodeWidth = naturalDimensions.width;
-        nodeHeight = naturalDimensions.height;
-    } else {
-        nodeWidth = (measuredWidth as number) ?? naturalDimensions?.width ?? aspectRatioDimensions.width;
-        nodeHeight = (measuredHeight as number) ?? naturalDimensions?.height ?? aspectRatioDimensions.height;
+    if (!initialSizeRef.current) {
+        initialSizeRef.current = resolveInitialMediaSize({
+            status,
+            hasPreview,
+            measuredWidth,
+            measuredHeight,
+            naturalDimensions,
+            aspectRatioDimensions,
+        });
     }
+
+    const nodeWidth = initialSizeRef.current.width;
+    const nodeHeight = initialSizeRef.current.height;
 
     // Sync state with props when they change (e.g. from Loro sync)
     useEffect(() => {
@@ -119,54 +66,33 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
 
     // Loro sync handles state updates - no polling needed
 
-    const updateNodeSizeFromImage = (naturalWidth: number, naturalHeight: number) => {
-        if (!naturalWidth || !naturalHeight) return;
-
-        // Calculate dimensions maintaining the aspect ratio
-        const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
-        const nextWidth = Math.round(naturalWidth * scale);
-        const nextHeight = Math.round(naturalHeight * scale);
-
-        // Check if size has changed to avoid unnecessary updates
-        const prev = lastSizeRef.current;
-        if (prev && prev.width === nextWidth && prev.height === nextHeight) return;
-        lastSizeRef.current = { width: nextWidth, height: nextHeight };
-
-        const currentWidth = currentNode?.width ?? currentNode?.style?.width;
-        const currentHeight = currentNode?.height ?? currentNode?.style?.height;
-        const currentWidthValue = typeof currentWidth === 'number' ? currentWidth : Number(currentWidth);
-        const currentHeightValue = typeof currentHeight === 'number' ? currentHeight : Number(currentHeight);
-
-        if (Number.isFinite(currentWidthValue) && Number.isFinite(currentHeightValue)) {
-            // Allow 2px tolerance to avoid tiny adjustments
-            if (Math.abs(currentWidthValue - nextWidth) < 2 && Math.abs(currentHeightValue - nextHeight) < 2) {
-                return;
-            }
-        }
-
-        setNodes((nds) =>
-            nds.map((node) => {
-                if (node.id !== id) return node;
-                return {
-                    ...node,
-                    width: nextWidth,
-                    height: nextHeight,
-                    style: {
-                        ...node.style,
+    useEffect(() => {
+        if (didInitSizeRef.current) return;
+        didInitSizeRef.current = true;
+        if (!hasValidMeasuredSize(measuredWidth, measuredHeight)) {
+            const nextWidth = nodeWidth;
+            const nextHeight = nodeHeight;
+            setNodes((nds) =>
+                nds.map((node) => {
+                    if (node.id !== id) return node;
+                    return {
+                        ...node,
                         width: nextWidth,
                         height: nextHeight,
-                    },
-                };
-            })
-        );
+                        style: {
+                            ...node.style,
+                            width: nextWidth,
+                            height: nextHeight,
+                        },
+                    };
+                })
+            );
 
-        if (loroSync?.connected) {
-            loroSync.updateNode(id, {
-                width: nextWidth,
-                height: nextHeight,
-            });
+            if (loroSync?.connected) {
+                loroSync.updateNode(id, { width: nextWidth, height: nextHeight });
+            }
         }
-    };
+    }, [id, loroSync, measuredHeight, measuredWidth, nodeHeight, nodeWidth, setNodes]);
 
     const handleDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -231,10 +157,6 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                                 height: '100%',
                                 objectFit: 'contain',
                             }}
-                            onLoad={(e) => {
-                                const img = e.currentTarget;
-                                updateNodeSizeFromImage(img.naturalWidth || 0, img.naturalHeight || 0);
-                            }}
                         />
                         {/* Top Right Controls */}
                         <div className="absolute top-2 right-2 flex gap-1 z-10">
@@ -254,19 +176,17 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                         <img
                             src={resolveAssetUrl(imageUrl)}
                             alt={label}
-                            className="block opacity-70"
+                            className="block"
                             style={{
                                 width: '100%',
                                 height: '100%',
-                                objectFit: 'contain',
-                            }}
-                            onLoad={(e) => {
-                                const img = e.currentTarget;
-                                updateNodeSizeFromImage(img.naturalWidth || 0, img.naturalHeight || 0);
+                                objectFit: 'cover',
+                                filter: 'blur(6px)',
+                                transform: 'scale(1.03)',
                             }}
                         />
-                        {/* Loading Overlay */}
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                        <div className="absolute inset-0 bg-black/25" />
+                        <div className="absolute inset-0 flex items-center justify-center backdrop-blur-[2px]">
                             <div className="flex flex-col items-center gap-2">
                                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
                                 <span className="text-xs font-medium text-white animate-pulse">Uploading...</span>

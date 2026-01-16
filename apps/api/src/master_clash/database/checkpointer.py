@@ -7,12 +7,15 @@ Priority: PostgreSQL > D1 > SQLite
 """
 
 
+import logging
+
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from master_clash.config import get_settings
 from master_clash.database.connection import get_db_connection, get_db_path, init_database
 
+logger = logging.getLogger(__name__)
 
 def get_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
     """Get a LangGraph checkpointer configured for PostgreSQL/SQLite/D1.
@@ -81,7 +84,15 @@ async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver
     # Priority 1: PostgreSQL (Neon)
     if settings.use_postgres_checkpointer:
         from master_clash.database.pg_checkpointer import get_async_checkpointer as get_async_pg_checkpointer
-        return await get_async_pg_checkpointer(initialize)
+        try:
+            return await get_async_pg_checkpointer(initialize)
+        except Exception as exc:
+            if settings.is_production:
+                raise
+            logger.warning(
+                "PostgreSQL checkpointer unavailable; falling back to non-PostgreSQL checkpointer.",
+                exc_info=exc,
+            )
 
     # Priority 2: D1 (Cloudflare) - DEPRECATED
     if settings.use_d1_checkpointer:

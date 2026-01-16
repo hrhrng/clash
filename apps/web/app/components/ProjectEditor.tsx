@@ -46,6 +46,7 @@ import { ProjectProvider } from './ProjectContext';
 import { VideoEditorProvider, useVideoEditor } from './VideoEditorContext';
 import { getLayoutedElements } from '@/lib/utils/elkLayout';
 import { LayoutActionsProvider } from './LayoutActionsContext';
+import { normalizeStatus, isActiveStatus } from '@/lib/assetStatus';
 import {
     getAbsoluteRect,
     getAbsolutePosition,
@@ -70,6 +71,7 @@ import { useLoroSync } from '../hooks/useLoroSync';
 import { LoroSyncProvider } from './LoroSyncContext';
 import { MODEL_CARDS } from '@clash/shared-types';
 import { applyLayoutPatchesToLoro, collectLayoutNodePatches } from '../lib/loroNodeSync';
+import { calculateScaledDimensions } from './nodes/assetNodeSizing';
 
 const CHILD_NODE_Z_INDEX_BASE = 1000;
 
@@ -603,6 +605,11 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
                         // Extract relevant data based on node type
                         if (['image', 'video', 'audio'].includes(sourceNode.type || '')) {
+                            const statusValue = sourceNode.data?.status;
+                            const isGeneratingVideo = sourceNode.type === 'video'
+                                && typeof statusValue === 'string'
+                                && isActiveStatus(normalizeStatus(statusValue));
+                            if (isGeneratingVideo) return null;
                             return {
                                 id: sourceNode.id,
                                 type: sourceNode.type,
@@ -818,24 +825,53 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
         setNodes((nds) => {
             // 1. Determine Dimensions FIRST
-            let defaultWidth = 300;
-            let defaultHeight = 300;
+            let defaultWidth: number | undefined = 300;
+            let defaultHeight: number | undefined = 300;
+            let layoutWidth = 300;
+            let layoutHeight = 300;
 
             if (nodeType === 'group') {
                 defaultWidth = 400;
                 defaultHeight = 400;
+                layoutWidth = 400;
+                layoutHeight = 400;
             } else if (nodeType === 'text') {
                 defaultWidth = 300;
                 defaultHeight = 400;
+                layoutWidth = 300;
+                layoutHeight = 400;
             } else if (nodeType === 'action-badge') {
                 defaultWidth = 320;
                 defaultHeight = 220;
+                layoutWidth = 320;
+                layoutHeight = 220;
             } else if (nodeType === 'prompt') {
                 defaultWidth = 300;
                 defaultHeight = 150;
+                layoutWidth = 300;
+                layoutHeight = 150;
             } else if (nodeType === 'video-editor') {
                 defaultWidth = 250;
                 defaultHeight = 200;
+                layoutWidth = 250;
+                layoutHeight = 200;
+            }
+            if (nodeType === 'image' || nodeType === 'video') {
+                defaultWidth = undefined;
+                defaultHeight = undefined;
+                layoutWidth = 300;
+                layoutHeight = 300;
+            }
+            if (
+                (nodeType === 'image' || nodeType === 'video') &&
+                Number.isFinite(extraData.naturalWidth) &&
+                Number.isFinite(extraData.naturalHeight)
+            ) {
+                const scaled = calculateScaledDimensions(extraData.naturalWidth, extraData.naturalHeight);
+                defaultWidth = scaled.width;
+                defaultHeight = scaled.height;
+                layoutWidth = scaled.width;
+                layoutHeight = scaled.height;
             }
 
             // 2. Determine Position with Collision Detection
@@ -902,7 +938,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                         // Calculate Target Position Relative to Parent Group
                         // We want the new node to be to the right of the upstream node
                         const targetAbsX = upstreamAbsPos.x + upstreamWidth + 80;
-                        const targetAbsY = upstreamCenterY - (defaultHeight / 2);
+                        const targetAbsY = upstreamCenterY - (layoutHeight / 2);
 
                         let relativeX = targetAbsX - parentAbsPos.x;
                         let relativeY = targetAbsY - parentAbsPos.y;
@@ -935,7 +971,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             const rightMostChild = children.reduce((prev, current) => {
                                 return (prev.position.x > current.position.x) ? prev : current;
                             });
-                            const childWidth = rightMostChild.width || Number(rightMostChild.style?.width) || defaultWidth;
+                            const childWidth = rightMostChild.width || Number(rightMostChild.style?.width) || layoutWidth;
 
                             targetPos = {
                                 x: rightMostChild.position.x + childWidth + 50,
@@ -985,13 +1021,13 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                     .map(n => getAbsoluteRect(n, nds));
                 position = mesh.findNonOverlappingPosition(
                     targetPos,
-                    { width: defaultWidth, height: defaultHeight },
+                    { width: layoutWidth, height: layoutHeight },
                     siblingRects
                 );
             } else {
                 // Root level: use the rightmost position directly
                 // Only adjust if there's a direct overlap at the exact position
-                const directRect = { x: targetPos.x, y: targetPos.y, width: defaultWidth, height: defaultHeight };
+                const directRect = { x: targetPos.x, y: targetPos.y, width: layoutWidth, height: layoutHeight };
                 const rootNodes = nds.filter(n => !n.parentId);
                 const hasDirectOverlap = rootNodes.some(n => {
                     const nodeRect = getAbsoluteRect(n, nds);
@@ -1000,8 +1036,14 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
                 if (hasDirectOverlap) {
                     // Shift right by default width + spacing to avoid overlap
-                    position = { x: targetPos.x + defaultWidth + 50, y: targetPos.y };
+                    position = { x: targetPos.x + layoutWidth + 50, y: targetPos.y };
                 }
+            }
+
+            const baseStyle: Record<string, number> = nodeType === 'group' ? { width: layoutWidth, height: layoutHeight, zIndex } : {};
+            if (defaultWidth && defaultHeight) {
+                baseStyle.width = defaultWidth;
+                baseStyle.height = defaultHeight;
             }
 
             const newNode: Node = {
@@ -1017,7 +1059,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 // This prevents the user from dragging the node OUT of the group to detach it.
                 // We want to allow dragging out, so we leave extent undefined.
                 extent: undefined,
-                style: nodeType === 'group' ? { width: defaultWidth, height: defaultHeight, zIndex } : { width: defaultWidth, height: defaultHeight },
+                style: baseStyle,
                 className: nodeType === 'group' ? 'group-node' : '',
             };
 
@@ -1136,7 +1178,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                         const img = new Image();
                         img.onload = () => {
                             resolve({ width: img.naturalWidth, height: img.naturalHeight });
-                            URL.revokeObjectURL(img.src);
                         };
                         img.onerror = reject;
                         img.src = localPreviewUrl;
@@ -1219,6 +1260,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             : node
                     )
                 );
+                URL.revokeObjectURL(localPreviewUrl);
 
                 if (loroSync.connected) {
                     loroSync.updateNode(placeholderId, {
@@ -1253,6 +1295,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             : node
                     )
                 );
+                URL.revokeObjectURL(localPreviewUrl);
                 if (loroSync.connected) {
                     loroSync.updateNode(placeholderId, {
                         data: { status: 'failed' },

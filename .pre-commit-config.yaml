@@ -1,7 +1,104 @@
+# Pre-commit hooks for Master Clash
+# Install: pip install pre-commit
+# Activate: pre-commit install
+# Update: pre-commit autoupdate
+
 repos:
+  #==========================================================================
+  # Python: Ruff (linter + formatter, very fast)
+  #==========================================================================
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.7.0
     hooks:
       - id: ruff
         args: ["--fix"]
+        types_or: [python, pyi, jupyter]
       - id: ruff-format
+        types_or: [python, pyi, jupyter]
+
+  #==========================================================================
+  # TypeScript/JavaScript: ESLint + Prettier
+  #==========================================================================
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, json, yaml, markdown, html, css]
+        additional_dependencies:
+          - prettier@3.1.0
+          - "@prettier/plugin-xml@2.2.0"
+        exclude: ^(pnpm-lock.yaml|package-lock.json|\.turbo/)
+
+  #==========================================================================
+  # General: File checks
+  #==========================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(\.git/|\.turbo/|node_modules/|\.venv/)
+      - id: end-of-file-fixer
+        exclude: ^(\.git/|\.turbo/|node_modules/|\.venv/)
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  #==========================================================================
+  # Security: Secret scanning
+  #==========================================================================
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: ^(package-lock.json|pnpm-lock.yaml|\.env\.example)
+
+  #==========================================================================
+  # Git: Commit message linting
+  #==========================================================================
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: 3.14.1
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  #==========================================================================
+  # Docker: Dockerfile linting
+  #==========================================================================
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: ["--ignore", "DL3008", "--ignore", "DL3013"]
+        types: [dockerfile]
+
+  #==========================================================================
+  # Markdown: Linting
+  #==========================================================================
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.39.0
+    hooks:
+      - id: markdownlint
+        args: ["--fix"]
+        exclude: ^(CHANGELOG\.md|node_modules/)
+
+# CI-specific configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ""
+  autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

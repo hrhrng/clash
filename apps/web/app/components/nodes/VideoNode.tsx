@@ -4,62 +4,14 @@ import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
-
 import { resolveAssetUrl } from '../../../lib/utils/assets';
 import { thumbnailCache } from '../../../lib/utils/thumbnailCache';
-
-// Maximum dimension for videos to keep canvas manageable
-const MAX_MEDIA_DIMENSION = 500;
-
-/**
- * Calculate scaled dimensions from natural width/height to fit within MAX_MEDIA_DIMENSION
- */
-function calculateScaledDimensions(naturalWidth: number, naturalHeight: number): { width: number; height: number } {
-    if (!naturalWidth || !naturalHeight) {
-        return { width: 400, height: 400 };
-    }
-
-    const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
-    return {
-        width: Math.round(naturalWidth * scale),
-        height: Math.round(naturalHeight * scale),
-    };
-}
-
-/**
- * Parse aspect ratio string (e.g., "16:9", "1:1") and calculate dimensions
- * Returns width and height that fit within MAX_MEDIA_DIMENSION
- */
-function calculateDimensionsFromAspectRatio(aspectRatio?: string): { width: number; height: number } {
-    if (!aspectRatio) {
-        return { width: 400, height: 400 }; // Default square
-    }
-
-    const parts = aspectRatio.split(':');
-    if (parts.length !== 2) {
-        return { width: 400, height: 400 };
-    }
-
-    const widthRatio = parseFloat(parts[0]);
-    const heightRatio = parseFloat(parts[1]);
-
-    if (!widthRatio || !heightRatio) {
-        return { width: 400, height: 400 };
-    }
-
-    // Calculate dimensions that fit within MAX_MEDIA_DIMENSION
-    if (widthRatio >= heightRatio) {
-        // Landscape or square
-        const width = MAX_MEDIA_DIMENSION;
-        const height = Math.round((heightRatio / widthRatio) * MAX_MEDIA_DIMENSION);
-        return { width, height };
-    } else {
-        // Portrait
-        const height = MAX_MEDIA_DIMENSION;
-        const width = Math.round((widthRatio / heightRatio) * MAX_MEDIA_DIMENSION);
-        return { width, height };
-    }
-}
+import {
+    calculateDimensionsFromAspectRatio,
+    calculateScaledDimensions,
+    hasValidMeasuredSize,
+    resolveInitialMediaSize,
+} from './assetNodeSizing';
 
 const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Video Node');
@@ -72,7 +24,11 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [description, setDescription] = useState(data.description || '');
     const [localThumbnail, setLocalThumbnail] = useState<string | null>(thumbnailCache.get(videoUrl));
     const posterUrl = data.referenceImageUrls?.[0] ? resolveAssetUrl(data.referenceImageUrls[0]) : undefined;
-    const lastSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const [isVideoReady, setIsVideoReady] = useState(false);
+    const videoRef = useRef<HTMLVideoElement | null>(null);
+    const lastReadyUrlRef = useRef<string | undefined>(undefined);
+    const initialSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const didInitSizeRef = useRef(false);
 
     // Get current node dimensions
     const currentNode = nodes.find((n) => n.id === id);
@@ -85,27 +41,23 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
         ? calculateScaledDimensions(data.naturalWidth, data.naturalHeight)
         : null;
 
-    // Priority: measured dimensions > natural dimensions > aspect ratio dimensions > default
-    // For generating, always use aspect ratio dimensions
-    // For uploading with natural dimensions, use those immediately
     const hasPreview = Boolean(videoUrl);
-    const useAspectRatioOnly = status === 'generating' || (status === 'uploading' && !hasPreview && !naturalDimensions) || (!hasPreview && !naturalDimensions);
     const measuredWidth = currentNode?.width ?? currentNode?.style?.width;
     const measuredHeight = currentNode?.height ?? currentNode?.style?.height;
 
-    let nodeWidth: number;
-    let nodeHeight: number;
-
-    if (useAspectRatioOnly) {
-        nodeWidth = aspectRatioDimensions.width;
-        nodeHeight = aspectRatioDimensions.height;
-    } else if (naturalDimensions && status === 'uploading') {
-        nodeWidth = naturalDimensions.width;
-        nodeHeight = naturalDimensions.height;
-    } else {
-        nodeWidth = (measuredWidth as number) ?? naturalDimensions?.width ?? aspectRatioDimensions.width;
-        nodeHeight = (measuredHeight as number) ?? naturalDimensions?.height ?? aspectRatioDimensions.height;
+    if (!initialSizeRef.current) {
+        initialSizeRef.current = resolveInitialMediaSize({
+            status,
+            hasPreview,
+            measuredWidth,
+            measuredHeight,
+            naturalDimensions,
+            aspectRatioDimensions,
+        });
     }
+
+    const nodeWidth = initialSizeRef.current.width;
+    const nodeHeight = initialSizeRef.current.height;
 
     // Load from cache if src changes
     useEffect(() => {
@@ -125,6 +77,87 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
         setVideoUrl((prev: string | undefined) => (data.src !== prev ? data.src : prev));
         setDescription((prev: string) => ((data.description || '') !== prev ? (data.description || '') : prev));
     }, [data.status, data.src, data.description]);
+
+    useEffect(() => {
+        if (!videoUrl) {
+            setIsVideoReady(false);
+            lastReadyUrlRef.current = undefined;
+            return;
+        }
+        if (videoUrl !== lastReadyUrlRef.current) {
+            setIsVideoReady(false);
+        }
+    }, [videoUrl]);
+
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video || !videoUrl) return;
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            setIsVideoReady(true);
+            lastReadyUrlRef.current = videoUrl;
+        }
+    }, [videoUrl]);
+
+    const captureThumbnail = (video: HTMLVideoElement, url: string | undefined) => {
+        if (!url || !video.videoWidth) return;
+        try {
+            const canvas = document.createElement('canvas');
+            const maxSize = 512;
+            const ratio = video.videoWidth / video.videoHeight;
+            const baseWidth = Math.min(maxSize, video.videoWidth || maxSize);
+            canvas.width = baseWidth;
+            canvas.height = Math.max(1, Math.round(baseWidth / ratio));
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            let totalBrightness = 0;
+            for (let i = 0; i < data.length; i += 40) {
+                totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+            }
+            const avgBrightness = totalBrightness / (data.length / 40);
+
+            const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+            if (!localThumbnail || avgBrightness > 20) {
+                thumbnailCache.set(url, thumbnail);
+                setLocalThumbnail(thumbnail);
+            }
+        } catch (err) {
+            console.warn('[VideoNode] Thumbnail capture failed:', err);
+        }
+    };
+
+    const posterImage = localThumbnail || posterUrl;
+
+    useEffect(() => {
+        if (didInitSizeRef.current) return;
+        didInitSizeRef.current = true;
+        if (!hasValidMeasuredSize(measuredWidth, measuredHeight)) {
+            const nextWidth = nodeWidth;
+            const nextHeight = nodeHeight;
+            setNodes((nds) =>
+                nds.map((node) => {
+                    if (node.id !== id) return node;
+                    return {
+                        ...node,
+                        width: nextWidth,
+                        height: nextHeight,
+                        style: {
+                            ...node.style,
+                            width: nextWidth,
+                            height: nextHeight,
+                        },
+                    };
+                })
+            );
+
+            if (loroSync?.connected) {
+                loroSync.updateNode(id, { width: nextWidth, height: nextHeight });
+            }
+        }
+    }, [id, loroSync, measuredHeight, measuredWidth, nodeHeight, nodeWidth, setNodes]);
 
     // Loro sync handles state updates - no polling needed
 
@@ -183,8 +216,9 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                 {(status === 'completed' || status === 'fin') && videoUrl ? (
                     <div className="relative">
                         <video
+                            ref={videoRef}
                             src={resolveAssetUrl(videoUrl)}
-                            poster={posterUrl}
+                            poster={!isVideoReady ? posterImage : undefined}
                             controls={false}
                             className="block pointer-events-none"
                             style={{
@@ -193,10 +227,10 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 objectFit: 'contain',
                             }}
                             crossOrigin="anonymous"
+                            preload="metadata"
+                            playsInline
                             onLoadedMetadata={(e) => {
                                 const video = e.target as HTMLVideoElement;
-                                const naturalWidth = video.videoWidth || 0;
-                                const naturalHeight = video.videoHeight || 0;
                                 const duration = video.duration || 0;
 
                                 // Always update duration in data (even if dimensions haven't changed)
@@ -219,99 +253,25 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                     }
                                 }
 
-                                if (naturalWidth && naturalHeight) {
-                                    // Calculate dimensions maintaining the aspect ratio
-                                    const scale = Math.min(1, MAX_MEDIA_DIMENSION / Math.max(naturalWidth, naturalHeight));
-                                    const nextWidth = Math.round(naturalWidth * scale);
-                                    const nextHeight = Math.round(naturalHeight * scale);
-
-                                    // Check if size has changed to avoid unnecessary updates
-                                    const prev = lastSizeRef.current;
-                                    if (prev && prev.width === nextWidth && prev.height === nextHeight) {
-                                        // Trigger thumbnail generation if needed
-                                        if (!localThumbnail) {
-                                            video.currentTime = 1.0;
-                                        }
-                                        return;
-                                    }
-                                    lastSizeRef.current = { width: nextWidth, height: nextHeight };
-
-                                    // Only update if the calculated dimensions differ from current dimensions
-                                    // This prevents unnecessary flickering when the aspect ratio already matches
-                                    const currentWidth = currentNode?.width ?? currentNode?.style?.width;
-                                    const currentHeight = currentNode?.height ?? currentNode?.style?.height;
-
-                                    // Allow 2px tolerance to avoid tiny adjustments
-                                    if (Math.abs(currentWidth - nextWidth) < 2 && Math.abs(currentHeight - nextHeight) < 2) {
-                                        // Trigger thumbnail generation if needed
-                                        if (!localThumbnail) {
-                                            video.currentTime = 1.0;
-                                        }
-                                        return;
-                                    }
-
-                                    setNodes((nds) =>
-                                        nds.map((node) => {
-                                            if (node.id !== id) return node;
-                                            return {
-                                                ...node,
-                                                width: nextWidth,
-                                                height: nextHeight,
-                                                style: {
-                                                    ...node.style,
-                                                    width: nextWidth,
-                                                    height: nextHeight,
-                                                },
-                                            };
-                                        })
-                                    );
-
-                                    if (loroSync?.connected) {
-                                        loroSync.updateNode(id, { width: nextWidth, height: nextHeight });
-                                    }
-                                }
-
                                 // Trigger thumbnail generation if needed
                                 if (!localThumbnail) {
                                     video.currentTime = 1.0;
                                 }
+                                setIsVideoReady(true);
+                                lastReadyUrlRef.current = videoUrl;
+                            }}
+                            onLoadedData={() => {
+                                setIsVideoReady(true);
+                                lastReadyUrlRef.current = videoUrl;
+                            }}
+                            onCanPlay={() => {
+                                setIsVideoReady(true);
+                                lastReadyUrlRef.current = videoUrl;
                             }}
                             onSeeked={(e) => {
                                 const video = e.target as HTMLVideoElement;
                                 if (video.videoWidth > 0) {
-                                    try {
-                                        const canvas = document.createElement('canvas');
-                                        const size = 160;
-                                        const ratio = video.videoWidth / video.videoHeight;
-                                        canvas.width = size;
-                                        canvas.height = size / ratio;
-                                        const ctx = canvas.getContext('2d');
-                                        if (ctx) {
-                                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                            
-                                            // Quick pixel check for "blackness"
-                                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                                            const data = imageData.data;
-                                            let totalBrightness = 0;
-                                            for (let i = 0; i < data.length; i += 40) {
-                                                totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
-                                            }
-                                            const avgBrightness = totalBrightness / (data.length / 40);
-                                            
-                                            if (avgBrightness < 15 && video.currentTime < 5 && video.currentTime < video.duration) {
-                                                video.currentTime += 1.0;
-                                                return;
-                                            }
-
-                                            const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
-                                            if (!localThumbnail || avgBrightness > 20) {
-                                                thumbnailCache.set(videoUrl, thumbnail);
-                                                setLocalThumbnail(thumbnail);
-                                            }
-                                        }
-                                    } catch (err) {
-                                        console.warn('[VideoNode] Thumbnail capture failed:', err);
-                                    }
+                                    captureThumbnail(video, videoUrl);
                                 }
                             }}
                         />
@@ -351,6 +311,21 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 <FilmSlate size={24} className="text-white" weight="fill" />
                             </div>
                         </div>
+                        {!isVideoReady && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/25 backdrop-blur-[2px]">
+                                {posterImage && (
+                                    <img
+                                        src={posterImage}
+                                        alt=""
+                                        className="absolute inset-0 h-full w-full object-cover"
+                                    />
+                                )}
+                                <div className="relative z-10 flex flex-col items-center gap-2">
+                                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/30 border-t-white" />
+                                    <span className="text-xs font-medium text-white animate-pulse">Loading...</span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ) : status === 'uploading' && videoUrl ? (
                     <div className="relative" style={{ width: '100%', height: '100%' }}>
@@ -362,6 +337,20 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 width: '100%',
                                 height: '100%',
                                 objectFit: 'contain',
+                            }}
+                            preload="metadata"
+                            playsInline
+                            onLoadedMetadata={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (!localThumbnail) {
+                                    video.currentTime = 1.0;
+                                }
+                            }}
+                            onSeeked={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (video.videoWidth > 0) {
+                                    captureThumbnail(video, videoUrl);
+                                }
                             }}
                         />
                         {/* Loading Overlay */}

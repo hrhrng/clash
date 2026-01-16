@@ -526,6 +526,26 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                 console.log('[ActionBadge] Image sources:', imageNodes.map(n => n?.data?.src));
                 console.log('[ActionBadge] Filtered reference URLs:', referenceImageUrls);
 
+                const resolveReferenceAspectRatio = () => {
+                    const referenceNode = imageNodes.find((n) => {
+                        const width = Number(n?.data?.naturalWidth);
+                        const height = Number(n?.data?.naturalHeight);
+                        return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
+                    });
+                    if (referenceNode) {
+                        const width = Number(referenceNode.data.naturalWidth);
+                        const height = Number(referenceNode.data.naturalHeight);
+                        const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+                        const ratio = gcd(Math.round(width), Math.round(height));
+                        return `${Math.round(width) / ratio}:${Math.round(height) / ratio}`;
+                    }
+                    const fallbackAspect = imageNodes.find((n) => typeof n?.data?.aspectRatio === 'string')?.data?.aspectRatio;
+                    return fallbackAspect || undefined;
+                };
+
+                const effectiveAspectRatio = modelParams.aspect_ratio || resolveReferenceAspectRatio();
+                const effectiveModelParams = modelParams;
+
                 // ============================================
                 // Create pending video node - Loro will handle generation
                 // Same pattern as image generation
@@ -556,9 +576,9 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                             duration: durationNumber,
                             model: modelId,
                             modelId,
-                            modelParams,
+                            modelParams: effectiveModelParams,
                             referenceMode,
-                            aspectRatio: modelParams.aspect_ratio,
+                            aspectRatio: effectiveAspectRatio,
                         },
                     },
                     id

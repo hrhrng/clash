@@ -117,7 +117,7 @@ async def get_session_history_endpoint(thread_id: str):
     """
     logger.info(f"[SessionAPI] Event-based history requested: thread_id={thread_id}")
     
-    messages = get_session_history_from_events(thread_id)
+    messages = await get_session_history_from_events(thread_id)
     
     return SessionHistoryResponse(
         thread_id=thread_id,

@@ -5,6 +5,7 @@ import { FilmSlate, Play, ArrowSquareOut } from '@phosphor-icons/react';
 import { useVideoEditor } from '../VideoEditorContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
+import { normalizeStatus, isActiveStatus } from '../../../lib/assetStatus';
 
 const VideoEditorNode = ({ data, id }: NodeProps) => {
     const { openEditor } = useVideoEditor();
@@ -33,6 +34,12 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
         const availableAssets = nodes
             .filter((node) => ['image', 'video', 'audio'].includes(node.type || ''))
             .filter((node) => node.data?.src && !connectedAssetIds.has(node.id))
+            .filter((node) => {
+                if (node.type !== 'video') return true;
+                const statusValue = node.data?.status;
+                if (typeof statusValue !== 'string') return true;
+                return !isActiveStatus(normalizeStatus(statusValue));
+            })
             .map((node) => ({
                 id: node.id,
                 type: node.type as 'image' | 'video' | 'audio',

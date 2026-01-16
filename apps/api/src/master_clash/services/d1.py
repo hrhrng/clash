@@ -4,7 +4,7 @@ Cloudflare D1 Database Service.
 Provides async interface to D1 via HTTP API.
 """
 
-import json
+import asyncio
 import logging
 from typing import Any
 
@@ -13,6 +13,52 @@ import httpx
 from master_clash.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _post_with_retries(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    timeout: float,
+    attempts: int = 3,
+) -> httpx.Response:
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            if response.status_code in {429} or response.status_code >= 500:
+                if attempt < attempts:
+                    backoff = 0.5 * (2 ** (attempt - 1))
+                    logger.warning(
+                        "[D1] Retrying after HTTP %s (attempt %s/%s)",
+                        response.status_code,
+                        attempt,
+                        attempts,
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+            return response
+        except httpx.RequestError as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                raise
+            backoff = 0.5 * (2 ** (attempt - 1))
+            logger.warning(
+                "[D1] Retrying after request error %s (attempt %s/%s)",
+                exc.__class__.__name__,
+                attempt,
+                attempts,
+            )
+            await asyncio.sleep(backoff)
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("D1 request failed without response")
 
 
 async def execute(sql: str, params: list = None) -> dict:
@@ -38,13 +84,14 @@ async def execute(sql: str, params: list = None) -> dict:
     )
     
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            url,
+        response = await _post_with_retries(
+            client=client,
+            url=url,
             headers={
                 "Authorization": f"Bearer {settings.cloudflare_api_token}",
                 "Content-Type": "application/json",
             },
-            json={"sql": sql, "params": params or []},
+            payload={"sql": sql, "params": params or []},
             timeout=30.0,
         )
         

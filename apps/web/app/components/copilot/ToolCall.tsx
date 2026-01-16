@@ -23,7 +23,7 @@ export function ToolCall({ toolName, args, result, status, isExpanded: initialEx
         failed: { icon: X, color: 'text-red-500', animate: false },
     };
 
-    const config = statusConfig[status];
+    const config = statusConfig[status as keyof typeof statusConfig] ?? statusConfig.pending;
     const StatusIcon = config.icon;
 
     return (

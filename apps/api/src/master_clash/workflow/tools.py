@@ -1,10 +1,10 @@
-import json
 import uuid
 from typing import Any
 
 from langchain_core.tools import tool
 
 from master_clash.context import find_node_by_id, get_asset_id, get_project_context
+from master_clash.json_utils import dumps as json_dumps
 from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
 
 
@@ -28,7 +28,7 @@ def list_node_info(project_id: str) -> str:
         }
         nodes_info.append(info)
 
-    return json.dumps(nodes_info, indent=2)
+    return json_dumps(nodes_info, indent=2)
 
 @tool
 def read_node(project_id: str, node_id: str) -> str:
@@ -44,7 +44,7 @@ def read_node(project_id: str, node_id: str) -> str:
         return f"Node {node_id} not found."
 
     # Return relevant data based on node type
-    return json.dumps(node.data, indent=2)
+    return json_dumps(node.data, indent=2)
 
 @tool
 def create_node(project_id: str, type: str, data: dict[str, Any], group_id: str | None = None, upstream_node_ids: list[str] | None = None) -> str:
@@ -119,7 +119,7 @@ def create_node(project_id: str, type: str, data: dict[str, Any], group_id: str 
 
     # We return the proposal as a JSON string.
     # The calling code (StreamEmitter adapter) needs to parse this and emit the event.
-    return json.dumps({
+    return json_dumps({
         "action": "create_node_proposal",
         "proposal": proposal
     })
@@ -152,7 +152,7 @@ def timeline_editor(project_id: str, action: str, params: dict[str, Any]) -> str
     Automated video editor tool.
     Actions: 'add_clip', 'set_duration', 'add_audio', 'render'.
     """
-    return json.dumps({
+    return json_dumps({
         "action": "timeline_edit",
         "edit_action": action,
         "params": params

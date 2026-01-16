@@ -5,7 +5,10 @@ This module provides checkpoint storage for LangGraph workflows using
 PostgreSQL (Neon serverless) for better reliability and official support.
 """
 
+import logging
+
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg import OperationalError
 from psycopg_pool import AsyncConnectionPool
 
 from master_clash.config import get_settings
@@ -13,6 +16,7 @@ from master_clash.config import get_settings
 
 # Global async connection pool
 _async_pool: AsyncConnectionPool | None = None
+logger = logging.getLogger(__name__)
 
 
 async def get_async_connection_pool() -> AsyncConnectionPool:
@@ -53,7 +57,22 @@ async def get_async_checkpointer(initialize: bool = True) -> AsyncPostgresSaver:
 
     # Setup tables (this is safe to call multiple times)
     if initialize:
-        await checkpointer.setup()
+        try:
+            await checkpointer.setup()
+        except OperationalError as exc:
+            await close_connection_pool()
+            logger.warning(
+                "PostgreSQL checkpointer setup failed; reset pool for retry.",
+                exc_info=exc,
+            )
+            raise
+        except Exception as exc:
+            await close_connection_pool()
+            logger.warning(
+                "PostgreSQL checkpointer setup failed; reset pool for retry.",
+                exc_info=exc,
+            )
+            raise
 
     return checkpointer
 
@@ -77,4 +96,3 @@ async def close_connection_pool():
     if _async_pool:
         await _async_pool.close()
         _async_pool = None
-
