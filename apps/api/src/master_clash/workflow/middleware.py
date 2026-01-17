@@ -90,8 +90,9 @@ class TimelineMiddleware(AgentMiddleware):
         """Add timeline tools to the model request."""
 
         timeline_prompt = """
-You can control the video timeline via the timeline_editor tool.
-- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+You can control the video timeline via the DSL tools.
+- read_dsl: Read the current timeline DSL file.
+- patch_dsl: Modify the timeline using JSON Patch operations.
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -104,8 +105,9 @@ You can control the video timeline via the timeline_editor tool.
         """Add timeline tools to the model request."""
 
         timeline_prompt = """
-You can control the video timeline via the timeline_editor tool.
-- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+You can control the video timeline via the DSL tools.
+- read_dsl: Read the current timeline DSL file.
+- patch_dsl: Modify the timeline using JSON Patch operations.
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -118,47 +120,83 @@ You can control the video timeline via the timeline_editor tool.
 
     def _generate_timeline_tools(self) -> list[BaseTool]:
         """Generate timeline tools."""
-        return [self._timeline_editor_tool()]
+        return [self._read_dsl_tool(), self._patch_dsl_tool()]
 
-    def _timeline_editor_tool(self) -> BaseTool:
-        """Create timeline_editor tool."""
+    def _read_dsl_tool(self) -> BaseTool:
+        """Create read_dsl tool."""
         from langchain_core.tools import tool
-        from langgraph.config import get_stream_writer
+        import os
 
-        class TimelineEditorInput(BaseModel):
-            action: str = Field(
-                description="Timeline action, e.g. add_clip, set_duration, render"
+        class ReadDSLInput(BaseModel):
+            file_path: str = Field(description="Path to the DSL file")
+
+        @tool(args_schema=ReadDSLInput)
+        def read_dsl(file_path: str, runtime: ToolRuntime) -> str:
+            """Read the content of a DSL file (JSON)."""
+            try:
+                # Security check: prevent traversing up
+                if ".." in file_path or file_path.startswith("/"):
+                    return "Error: Absolute paths and directory traversal are not allowed. Provide a path relative to the project root."
+
+                if not os.path.exists(file_path):
+                    return f"Error: File {file_path} does not exist."
+
+                with open(file_path, "r") as f:
+                    return f.read()
+            except Exception as e:
+                return f"Error reading DSL: {e}"
+
+        return read_dsl
+
+    def _patch_dsl_tool(self) -> BaseTool:
+        """Create patch_dsl tool."""
+        from langchain_core.tools import tool
+        import json
+        import jsonpatch
+        import os
+
+        class PatchDSLInput(BaseModel):
+            file_path: str = Field(description="Path to the DSL file")
+            patch: list[dict[str, Any]] = Field(
+                description="JSON Patch operations (RFC 6902). Example: [{'op': 'replace', 'path': '/version', 'value': '1.0.1'}, {'op': 'add', 'path': '/scenes/0/clips/-', 'value': {...}}]"
             )
-            params: dict[str, Any] = Field(description="Action parameters")
 
-        @tool(args_schema=TimelineEditorInput)
-        def timeline_editor(
-            action: str,
-            params: dict[str, Any],
+        @tool(args_schema=PatchDSLInput)
+        def patch_dsl(
+            file_path: str,
+            patch: list[dict[str, Any]],
             runtime: ToolRuntime,
         ) -> str:
-            """Automated video editor tool."""
-
-            project_id = runtime.state.get("project_id", "")
-
+            """Apply a JSON Patch to the DSL file."""
             try:
-                # Emit SSE event for timeline editing
-                writer = get_stream_writer()
-                writer(
-                    {
-                        "action": "timeline_edit",
-                        "edit_action": action,
-                        "params": params,
-                        "project_id": project_id,
-                    }
-                )
+                # Security check
+                if ".." in file_path or file_path.startswith("/"):
+                    return "Error: Absolute paths and directory traversal are not allowed. Provide a path relative to the project root."
 
-                return f"Timeline action '{action}' executed successfully"
+                if not os.path.exists(file_path):
+                    # If file doesn't exist, start with empty dict
+                    original: dict[str, Any] = {}
+                else:
+                    with open(file_path, "r") as f:
+                        content = f.read().strip()
+                        if not content:
+                            original = {}
+                        else:
+                            original = json.loads(content)
+
+                # Apply patch
+                patched = jsonpatch.apply_patch(original, patch)
+
+                # Write back
+                with open(file_path, "w") as f:
+                    json.dump(patched, f, indent=2)
+
+                return "Patch applied successfully"
 
             except Exception as e:
-                return f"Error in timeline editor: {e}"
+                return f"Error patching DSL: {e}"
 
-        return timeline_editor
+        return patch_dsl
 
 
 class CanvasMiddleware(AgentMiddleware):

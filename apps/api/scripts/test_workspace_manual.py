@@ -3,12 +3,12 @@
 Run this to test the new architecture with mock data.
 """
 
-from master_clash.context import NodeModel, Position, ProjectContext, set_project_context
+import asyncio
+from master_clash.context import NodeModel, ProjectContext, set_project_context
 from master_clash.workflow.backends import StateCanvasBackend
 from master_clash.workflow.middleware import (
     CanvasMiddleware,
     TimelineMiddleware,
-    TodoListMiddleware,
 )
 
 
@@ -21,7 +21,7 @@ def setup_mock_context():
             NodeModel(
                 id="story-outline-1",
                 type="text",
-                position=Position(x=100, y=100),
+                position={"x": 100, "y": 100},
                 data={
                     "label": "Story Outline",
                     "content": "A space explorer discovers an alien planet...",
@@ -31,7 +31,7 @@ def setup_mock_context():
             NodeModel(
                 id="character-bio-1",
                 type="text",
-                position=Position(x=100, y=200),
+                position={"x": 100, "y": 200},
                 data={
                     "label": "Character: Explorer",
                     "content": "Captain Sarah Chen, experienced astronaut...",
@@ -41,7 +41,7 @@ def setup_mock_context():
             NodeModel(
                 id="design-workspace-1",
                 type="group",
-                position=Position(x=300, y=100),
+                position={"x": 300, "y": 100},
                 data={
                     "label": "Visual Design Workspace",
                     "description": "Character and scene designs",
@@ -51,7 +51,7 @@ def setup_mock_context():
             NodeModel(
                 id="char-prompt-1",
                 type="prompt",
-                position=Position(x=320, y=120),
+                position={"x": 320, "y": 120},
                 data={
                     "label": "Character Design Prompt",
                     "content": "Futuristic space suit with helmet...",
@@ -68,7 +68,7 @@ def setup_mock_context():
     print("   - 1 group (workspace) created")
 
 
-def test_backend_operations():
+async def test_backend_operations():
     """Test backend operations."""
     print("\n🧪 Testing Backend Operations...")
 
@@ -131,7 +131,7 @@ def test_backend_operations():
 
     # Test 8: Wait for task (mock)
     print("\n8️⃣ Wait for task status:")
-    task_result = backend.wait_for_task("test-project", "char-prompt-1")
+    task_result = await backend.wait_for_task("test-project", "char-prompt-1")
     print(f"   - Status: {task_result.status}")
 
 
@@ -141,18 +141,11 @@ def test_middleware_tools():
 
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend=backend)
-    todo_middleware = TodoListMiddleware()
 
     # Test Canvas Middleware
     print("\n1️⃣ Canvas Middleware tools:")
     canvas_tools = canvas_middleware._generate_canvas_tools()
     for tool in canvas_tools:
-        print(f"   - {tool.name}: {tool.description[:60]}...")
-
-    # Test TodoList Middleware
-    print("\n2️⃣ TodoList Middleware tools:")
-    todo_tools = todo_middleware._generate_todo_tools()
-    for tool in todo_tools:
         print(f"   - {tool.name}: {tool.description[:60]}...")
 
 
@@ -166,13 +159,11 @@ def test_subagent_configuration():
     llm = create_default_llm()
     backend = StateCanvasBackend()
     canvas_middleware = CanvasMiddleware(backend=backend)
-    todo_middleware = TodoListMiddleware()
     timeline_middleware = TimelineMiddleware()
 
     subagents = create_specialist_agents(
         model=llm,
         canvas_middleware=canvas_middleware,
-        todo_middleware=todo_middleware,
         timeline_middleware=timeline_middleware,
     )
 
@@ -235,8 +226,8 @@ def test_workspace_scoping_scenario():
         print(f"      - {node.id} ({node.type}): {node.data.get('label')}")
 
 
-def main():
-    """Run all tests."""
+async def main_async():
+    """Run all tests asynchronously."""
     print("=" * 70)
     print("🧪 Master Clash Workspace Scoping Manual Test")
     print("=" * 70)
@@ -246,7 +237,7 @@ def main():
         setup_mock_context()
 
         # Run tests
-        test_backend_operations()
+        await test_backend_operations()
         test_middleware_tools()
         test_subagent_configuration()
         test_workspace_scoping_scenario()
@@ -260,6 +251,10 @@ def main():
         import traceback
 
         traceback.print_exc()
+
+
+def main():
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

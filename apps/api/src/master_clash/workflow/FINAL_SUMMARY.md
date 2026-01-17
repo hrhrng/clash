@@ -22,7 +22,9 @@
   - `create_canvas_edge` - 创建边（TODO）
   - `wait_for_generation` - 等待生成任务
   - `search_canvas` - 搜索节点
-- ✅ `TimelineMiddleware` - `timeline_editor`（发送 SSE timeline events）
+- ✅ `TimelineMiddleware` - DSL 编辑工具：
+  - `read_dsl` - 读取时间轴状态
+  - `patch_dsl` - 使用 JSON Patch 修改时间轴
 - ✅ `TodoListMiddleware` - 任务规划工具
 
 #### SubAgent Delegation ([subagents.py](subagents.py))
@@ -183,7 +185,7 @@ test_workspace_manual.py    ~300 行
 - [x] 读取 `get_project_context()`
 - [x] 写入 SSE proposals
 - [x] `create_canvas_node` → SSE
-- [x] `timeline_editor` → SSE
+- [x] `timeline_editor` → `read_dsl` / `patch_dsl` (File I/O)
 - [x] `wait_for_generation` → `get_asset_id()`
 - [x] Semantic IDs → `generate_unique_id_for_project()`
 - [x] SSE 事件处理 (api/main.py)

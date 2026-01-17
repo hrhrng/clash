@@ -1,39 +1,37 @@
 # Clash
 
-> **视频原生的多智能体协作平台** —— 重新定义 AI 与人类在创意画布上的共生关系。
+> **Next-Gen Co-Creation Platform** —— 重新定义 AI 与人类在创意画布上的共生关系。
 
-## 核心愿景: Sleep-time Creation
+## 核心愿景: Creative Democratization (创作平权)
 
-Clash 的诞生源于一个朴素的愿景：**让 AI 在你睡觉时为你工作**。
+Clash 致力于进一步降低优质内容的创作门槛，不仅是简单的工具降权，更是创意的升维。
 
-在传统的创作流程中，计算往往是响应式的（你点一下，AI 动一下）。而在 Clash 中，后台的多智能体系统会自动感知你的画布状态。当你休息或构思时，Agent 们正在进行深度思考、资产预生成和脚本优化。当你再次回到画布前，迎接你的是更成熟的草案和已经生成好的视觉资产。
-
-## 设计哲学: 自主与控制 (Autonomy + Control)
-
-我们不追求黑盒式的自动化，而是追求“高自主性”与“高可控性”的完美平衡：
-
-*   **给予 Agent 更多上下文 (More Context)**: Agent 通过 Loro 画布（Shared Brain）获取全局视野。它们能读懂你的布局逻辑、视觉风格和参考图关系，从而做出更聪明的自主决策。
-*   **给予人类更多控制权 (More Control)**: 
-    *   **SSE 提案机制**: AI 的动作（如新建节点）首先以“提案”形式展现，你可以观察 AI 实时思考的过程并随时干预。
-    *   **双向实时编辑**: 基于 Loro CRDT 技术，人类可以随时“接管” AI 正在编写的代码或脚本，实现真正的实时同屏协作。
-
----
+*   **Anti-Slop (反垃圾内容)**: 我们反对 AI 生成大量同质化的垃圾内容 (Slop)。我们的目标是利用 AI 赋能人类，去创作原本受限于技术或成本而无法实现的**高质量内容**。
+*   **Co-Creators (人机共创)**: Human 和 Agent 是平等的合作伙伴。
+    1.  **Idea First**: 在制作之前，AI 与你共同打磨创意，确保从源头就是高质量的。
+    2.  **Comprehensive Realization**: 通过 AI 辅助剪辑、AIGC 生成、Motion Graphics 等手段，全方位落地你的想象。
 
 ## 核心特性
 
-### 1. 协作画布 (Shared Loro Canvas)
-采用 [Loro](https://loro.dev) 作为底层状态引擎，支持离线编辑、冲突合并和毫秒级的实时同步。画布不仅是你的编辑区，也是 AI 的“共同操作图”。
+### 1. Idea Co-creation (创意共创)
+不再是简单的 "Prompt -> Video"。Agent 会深度参与你的构思过程，提供灵感、挑战逻辑、完善脚本，确保每一个视频都有扎实的创意内核。
 
-### 2. 多智能体专家系统 (Multi-Agent)
-基于 LangGraph 构建的专家集群：
-- **Supervisor**: 任务调度，拆解指令。
-- **ScriptWriter**: 文字内容底座。
-- **ConceptArtist**: 视觉概念化。
-- **StoryboardDesigner**: 分镜节奏规划。
-- **Editor**: 时间轴自动化。
+### 2. Sleep-time Production (异步制作)
+这是我们实现 "Co-creation" 的重要机制。当你休息或专注于构思时，Agent 们正在后台进行繁重的执行工作：
+*   深度思考与资产预生成
+*   脚本优化与分镜设计
+*   自动化的粗剪与时间轴编排
 
-### 3. Action 触发 Asset 逻辑
-画布采用“意图与资产分离”的设计。`ActionBadge` 承载人类的提示词和参数，触发产生 `Image/Video` 资产节点。通过 `NodeProcessor` 的自动观测，实现异步任务的闭环。
+### 3. Skill-Based Agent System (基于技能的智能体系统)
+我们将工业界的最佳实践（SOP）沉淀为可复用的 **Skills**。
+*   **SOP as Skills**: 无论是短剧脚本结构还是分镜逻辑，都封装为 Skill。
+*   **Dynamic Loading**: 用户可按需加载，Agent 也可根据意图自动调用。
+*   **Sub-agents**: 专业的任务交给专业的子智能体（如 Coding Agent 负责 Motion Graph 代码生成）。
+
+## 技术哲学: Minimalist & Evolvable
+
+*   **Shared Context (Canvas)**: 画布即环境 (Environment)。Agent 的操作被简化为对画布状态的 **Read** 和 **Write**。
+*   **Lightweight Core**: 保持 Agent 骨架的轻量化，通过扩展 **Skills** 来赋予其强大的能力。这种架构使得系统简洁且具备无限的演进潜力。
 
 ---
 

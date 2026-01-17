@@ -2,6 +2,14 @@
 
 ## 🎉 v2.0 - Workspace Scoping & Enhanced Supervisor (2025-01-XX)
 
+### 🔧 Timeline Editor Update (DSL)
+- **Editor Agent** switched to DSL-based editing for precise state management
+- **New Tools**:
+  - `read_dsl` - Read full timeline state
+  - `patch_dsl` - Modify timeline using JSON Patch (RFC 6902)
+- **Removed**: `timeline_editor` tool
+- **Dependency**: Added `jsonpatch` library
+
 ### 🆕 New Features
 
 #### Workspace Scoping

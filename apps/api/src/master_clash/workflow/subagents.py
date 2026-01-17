@@ -353,12 +353,24 @@ Tasks:
         name="Editor",
         description="Video editor for assembling the final video",
         system_prompt="""You are a Video Editor.
-Your goal is to assemble the final video.
+Your goal is to assemble the final video by maintaining a Timeline DSL file.
 
-Use timeline_editor to arrange clips from the canvas.""",
+You have access to:
+1. Node tools (read/write nodes on the canvas)
+2. DSL tools (read_dsl, patch_dsl)
+
+Your Workflow:
+1. Read the current DSL file using `read_dsl` to understand the current timeline state.
+2. Read content nodes from the canvas to find clips/assets to add.
+3. Modify the DSL file using `patch_dsl` to add tracks, clips, or change settings.
+   - Use JSON Patch format (RFC 6902) for updates.
+   - Example: [{"op": "add", "path": "/tracks/-", "value": {...}}]
+   - Do NOT overwrite the entire file; use specific patches.
+
+The DSL is the source of truth for the video structure.""",
         tools=[],
         model=model,
-        middleware=[timeline_middleware],
+        middleware=[timeline_middleware, canvas_middleware],
         workspace_aware=False,  # Editor works globally
     )
 
