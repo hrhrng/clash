@@ -123,3 +123,63 @@ export const ModelCardSchema = z.object({
     1. more protocal and ADT, less class
     2. more pattern match
 3. go async or go die
+
+# Agent-Optimized Documentation System (AODS)
+
+We use a "Progressive Disclosure" strategy to help AI Agents (and humans) navigate the codebase efficiently without consuming excessive context window.
+
+## 1. Directory Indexing (`agents.json`)
+
+Every significant directory MUST contain an `agents.json` file. This acts as a router for Agents.
+
+### Structure
+
+```json
+{
+  "summary": "Brief description of this directory's purpose.",
+  "context_hints": [
+    "When to look here: e.g., dealing with database schemas"
+  ],
+  "subdirectories": {
+    "folder_name": "Description of what is inside. Be specific."
+  },
+  "key_files": {
+    "filename.ext": "Description of this file's responsibility."
+  },
+  "architecture_notes": "Optional. High-level patterns used here."
+}
+```
+
+### Maintenance Rules
+
+*   **Create**: When creating a new module or directory, add an `agents.json`.
+*   **Update**: When adding important files or changing architecture, update the local `agents.json`.
+*   **Verify**: Before finishing a task, check if your changes render the documentation stale.
+
+## 2. Source Code Headers
+
+Key files (entry points, complex logic) MUST have a structured header.
+
+### Format
+
+```text
+/**
+ * @file <filename>
+ * @description <Concise summary>
+ * @module <module_path>
+ *
+ * @responsibility
+ * - <Primary Responsibility 1>
+ * - <Primary Responsibility 2>
+ *
+ * @exports
+ * - <Name>: <Description>
+ */
+```
+
+## 3. Navigation Workflow for Agents
+
+1.  **Start at Root**: Read `./agents.json` to understand the high-level map.
+2.  **Drill Down**: Follow `subdirectories` descriptions to find the relevant component.
+3.  **Read Context**: Read the `agents.json` in the target directory to understand local conventions.
+4.  **Locate File**: Use `key_files` or standard file listings to find the specific code.

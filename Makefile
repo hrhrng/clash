@@ -164,6 +164,11 @@ lint: check-tools ## Lint all code
 	@pnpm turbo run lint
 	@echo "$(BLUE)Linting Python...$(NC)"
 	@uv run ruff check .
+	@$(MAKE) lint-docs
+
+lint-docs: ## Check AODS documentation integrity
+	@echo "$(BLUE)Checking documentation integrity...$(NC)"
+	@python3 scripts/check_agents_docs.py
 
 lint-web: ## Lint frontend only
 	@echo "$(BLUE)Linting frontend...$(NC)"

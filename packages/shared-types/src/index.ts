@@ -1,8 +1,16 @@
 /**
- * @clash/shared-types
- * 
- * Shared type definitions for Master Clash.
- * Types are defined as Zod schemas for runtime validation and TypeScript types.
+ * @file index.ts
+ * @description Main entry point for shared type definitions used across Frontend and Backend.
+ * @module packages.shared-types.src
+ *
+ * @responsibility
+ * - Exports all Zod schemas and TypeScript types used across the monorepo
+ * - Acts as the Single Source of Truth for API contracts and Data Models
+ * - Categorizes types into Canvas, Task, Model, and Pipeline domains
+ *
+ * @exports
+ * - *Schema: Zod schemas for runtime validation
+ * - type *: TypeScript type definitions inferred from Zod
  */
 
 // Canvas types

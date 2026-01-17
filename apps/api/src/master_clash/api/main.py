@@ -1,7 +1,16 @@
 """
-FastAPI server for Master Clash backend.
-Handles AI generation - returns base64 images or temporary URLs.
-Frontend handles storage and database.
+@file main.py
+@description Main entry point for the FastAPI backend server.
+@module apps.api.src.master_clash.api
+
+@responsibility
+- Initializes the FastAPI application and middleware (CORS)
+- Registers API routers (describe, tasks, execute, session)
+- Handles global exceptions
+- Manages SSE streaming endpoints for LangGraph workflows
+
+@exports
+- app: The FastAPI application instance
 """
 
 import asyncio

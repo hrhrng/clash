@@ -50,7 +50,8 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
         default: { icon: Robot, color: 'text-slate-600', bg: 'bg-slate-50', ring: 'ring-1 ring-slate-200' },
     };
 
-    const config = statusConfig[status];
+    const config = statusConfig[status] ?? statusConfig.waiting;
+    const displayStatus = statusConfig[status] ? status : 'waiting';
     const pConfig = personaConfig[persona] || personaConfig.default;
     const StatusIcon = config.icon;
     const PersonaIcon = pConfig.icon;
@@ -84,7 +85,7 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
 
                 <div className="flex items-center gap-2">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${config.bg} ${config.color} font-medium capitalize`}>
-                        {status}
+                        {displayStatus}
                     </span>
                     {isExpanded ? (
                         <CaretDown className="w-4 h-4 text-slate-400" />
