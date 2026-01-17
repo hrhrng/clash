@@ -29,6 +29,13 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const lastReadyUrlRef = useRef<string | undefined>(undefined);
     const initialSizeRef = useRef<{ width: number; height: number } | null>(null);
     const didInitSizeRef = useRef(false);
+    const pendingThumbnailCaptureRef = useRef(false);
+    const videoUrlRef = useRef(videoUrl);
+
+    // Keep ref in sync with state
+    useEffect(() => {
+        videoUrlRef.current = videoUrl;
+    }, [videoUrl]);
 
     // Get current node dimensions
     const currentNode = nodes.find((n) => n.id === id);
@@ -40,6 +47,23 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const naturalDimensions = data.naturalWidth && data.naturalHeight
         ? calculateScaledDimensions(data.naturalWidth, data.naturalHeight)
         : null;
+
+    // Debug: log natural dimensions and calculated size
+    console.log('[VideoNode] Natural dimensions from data:', {
+        id,
+        naturalWidth: data.naturalWidth,
+        naturalHeight: data.naturalHeight,
+        naturalDimensions,
+    });
+
+    // Debug: log video src and resolved URL
+    const resolvedVideoUrl = videoUrl ? resolveAssetUrl(videoUrl) : undefined;
+    console.log('[VideoNode] Video URL debug:', {
+        id,
+        originalSrc: data.src,
+        videoUrl,
+        resolvedUrl: resolvedVideoUrl,
+    });
 
     const hasPreview = Boolean(videoUrl);
     const measuredWidth = currentNode?.width ?? currentNode?.style?.width;
@@ -120,7 +144,11 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
             const avgBrightness = totalBrightness / (data.length / 40);
 
             const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
-            if (!localThumbnail || avgBrightness > 20) {
+            // IMPORTANT: Read directly from cache instead of using localThumbnail state
+            // to avoid stale closure values. This prevents overwriting good cached thumbnails
+            // with white/black frames from accidental seeks.
+            const existingThumbnail = thumbnailCache.get(url);
+            if (!existingThumbnail && avgBrightness > 20) {
                 thumbnailCache.set(url, thumbnail);
                 setLocalThumbnail(thumbnail);
             }
@@ -214,11 +242,11 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                 onDoubleClick={handleDoubleClick}
             >
                 {(status === 'completed' || status === 'fin') && videoUrl ? (
-                    <div className="relative">
+                    <div className="relative" style={{ width: '100%', height: '100%' }}>
                         <video
                             ref={videoRef}
                             src={resolveAssetUrl(videoUrl)}
-                            poster={!isVideoReady ? posterImage : undefined}
+                            poster={!isVideoReady && posterImage ? posterImage : undefined}
                             controls={false}
                             className="block pointer-events-none"
                             style={{
@@ -255,6 +283,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
 
                                 // Trigger thumbnail generation if needed
                                 if (!localThumbnail) {
+                                    pendingThumbnailCaptureRef.current = true;
                                     video.currentTime = 1.0;
                                 }
                                 setIsVideoReady(true);
@@ -270,8 +299,23 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             }}
                             onSeeked={(e) => {
                                 const video = e.target as HTMLVideoElement;
-                                if (video.videoWidth > 0) {
-                                    captureThumbnail(video, videoUrl);
+                                // Only capture thumbnail at exactly 1.0 second (our explicit seek)
+                                // This prevents capturing thumbnails from browser auto-seek or other operations
+                                if (video.videoWidth > 0 && Math.abs(video.currentTime - 1.0) < 0.1 && pendingThumbnailCaptureRef.current) {
+                                    pendingThumbnailCaptureRef.current = false;
+
+                                    // Wait for the frame to actually render before capturing
+                                    // This fixes the issue where cached videos load too fast
+                                    // and the seeked event fires before the frame is rendered
+                                    const doCapture = () => captureThumbnail(video, videoUrlRef.current);
+
+                                    if ('requestVideoFrameCallback' in video) {
+                                        // Use the modern API to wait for the next painted frame
+                                        (video as any).requestVideoFrameCallback(doCapture);
+                                    } else {
+                                        // Fallback: use setTimeout to allow the frame to render
+                                        setTimeout(doCapture, 100);
+                                    }
                                 }
                             }}
                         />
@@ -343,13 +387,29 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             onLoadedMetadata={(e) => {
                                 const video = e.target as HTMLVideoElement;
                                 if (!localThumbnail) {
+                                    pendingThumbnailCaptureRef.current = true;
                                     video.currentTime = 1.0;
                                 }
                             }}
                             onSeeked={(e) => {
                                 const video = e.target as HTMLVideoElement;
-                                if (video.videoWidth > 0) {
-                                    captureThumbnail(video, videoUrl);
+                                // Only capture thumbnail at exactly 1.0 second (our explicit seek)
+                                // This prevents capturing thumbnails from browser auto-seek or other operations
+                                if (video.videoWidth > 0 && Math.abs(video.currentTime - 1.0) < 0.1 && pendingThumbnailCaptureRef.current) {
+                                    pendingThumbnailCaptureRef.current = false;
+
+                                    // Wait for the frame to actually render before capturing
+                                    // This fixes the issue where cached videos load too fast
+                                    // and the seeked event fires before the frame is rendered
+                                    const doCapture = () => captureThumbnail(video, videoUrlRef.current);
+
+                                    if ('requestVideoFrameCallback' in video) {
+                                        // Use the modern API to wait for the next painted frame
+                                        (video as any).requestVideoFrameCallback(doCapture);
+                                    } else {
+                                        // Fallback: use setTimeout to allow the frame to render
+                                        setTimeout(doCapture, 100);
+                                    }
                                 }
                             }}
                         />

@@ -20,7 +20,7 @@ const defaultAudioModel = MODEL_CARDS.find((card) => card.kind === 'audio')?.id 
 const getModelCard = (modelId?: string) => MODEL_CARDS.find((card) => card.id === modelId);
 
 type AssetStatus = 'uploading' | 'generating' | 'completed' | 'fin' | 'failed';
-type NodeType = 'image' | 'video' | 'audio';
+type NodeType = 'image' | 'video' | 'audio' | 'video_render';
 
 // Track nodes currently being processed to prevent duplicate submissions
 const processingNodes = new Set<string>();
@@ -44,7 +44,7 @@ export async function processPendingNodes(
       const nodeType = data?.type as NodeType;
       const innerData = data?.data || {};
 
-      if (!['image', 'video', 'audio'].includes(nodeType)) continue;
+      if (!['image', 'video', 'audio', 'video_render'].includes(nodeType)) continue;
 
       const status = innerData.status as AssetStatus;
       const src = innerData.src;
@@ -55,7 +55,50 @@ export async function processPendingNodes(
       if (pendingTask) continue;
 
       // Case 1: generating + no src -> submit generation task
-      if (status === 'generating' && !src) {
+      // OR video_render + status generating -> submit render task
+      // OR video node with timelineDsl + status generating -> submit render task
+      const hasTimelineDsl = innerData.timelineDsl != null;
+      const shouldRenderVideo = nodeType === 'video_render' || (nodeType === 'video' && hasTimelineDsl);
+
+      if ((status === 'generating' && !src) || (shouldRenderVideo && status === 'generating' && !pendingTask)) {
+        // Video render uses the timeline DSL
+        if (shouldRenderVideo) {
+          const processingKey = `${nodeId}:render`;
+          if (processingNodes.has(processingKey)) {
+            console.log(`[NodeProcessor] ⏭️ Skipping render ${nodeId.slice(0, 8)} - already being processed`);
+            continue;
+          }
+          processingNodes.add(processingKey);
+
+          console.log(`[NodeProcessor] 🎬 Submitting video_render for ${nodeId.slice(0, 8)}`);
+
+          const timelineDsl = innerData.timelineDsl;
+          if (!timelineDsl) {
+            console.error(`[NodeProcessor] ❌ Missing timelineDsl for video_render node ${nodeId.slice(0, 8)}`);
+            updateNodeData(doc, nodeId, { status: 'failed', error: 'Missing timelineDsl' }, broadcast);
+            processingNodes.delete(processingKey);
+            continue;
+          }
+
+          const params = {
+            timeline_dsl: timelineDsl,
+          };
+
+          const result = await submitTask(env, 'video_render', projectId, nodeId, params);
+          processingNodes.delete(processingKey);
+
+          if (result.task_id) {
+            console.log(`[NodeProcessor] ✅ Render task submitted: ${result.task_id} for node ${nodeId.slice(0, 8)}`);
+            updateNodeData(doc, nodeId, { pendingTask: result.task_id }, broadcast);
+            submitted = true;
+          } else {
+            console.error(`[NodeProcessor] ❌ Render task submission failed for node ${nodeId.slice(0, 8)}: ${result.error}`);
+            updateNodeData(doc, nodeId, { status: 'failed', error: result.error || 'Render task submission failed' }, broadcast);
+          }
+          continue;
+        }
+
+        // Original AIGC generation logic
         // Skip if already being processed (prevent race condition)
         const processingKey = `${nodeId}:gen`;
         if (processingNodes.has(processingKey)) {

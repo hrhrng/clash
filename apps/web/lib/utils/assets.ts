@@ -24,8 +24,11 @@ export function isR2Key(src: string): boolean {
  * If it's already a URL (http, blob, data), returns it as is.
  */
 export function resolveAssetUrl(src: string): string {
-    if (!src) return '';
-    
+    if (!src) {
+        console.log('[resolveAssetUrl] Empty src');
+        return '';
+    }
+
     // Normalize source
     const s = src.trim();
 
@@ -36,10 +39,10 @@ export function resolveAssetUrl(src: string): string {
         // const resolved = `/assets/${cleanKey}`;
         // Pointing to Next.js API route to match upload environment
         const resolved = `/api/assets/view/${cleanKey}`;
-        // console.log(`[resolveAssetUrl] Resolved R2 key: ${src} -> ${resolved}`);
+        console.log(`[resolveAssetUrl] Resolved R2 key: ${src} -> ${resolved}`);
         return resolved;
     }
 
-    // console.log(`[resolveAssetUrl] Not an R2 key: ${src}`);
+    console.log(`[resolveAssetUrl] Not an R2 key: ${src}`);
     return src;
 }

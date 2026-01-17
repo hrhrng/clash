@@ -337,6 +337,8 @@ type EditorProps = {
   }) => void;
   /** Unique key to force remount when opening different editors */
   editorKey?: string;
+  /** Export video callback */
+  onExport?: () => Promise<void>;
 };
 
 export const Editor: React.FC<EditorProps> = ({
@@ -350,6 +352,7 @@ export const Editor: React.FC<EditorProps> = ({
   availableAssets,
   onAssetPicked,
   editorKey,
+  onExport,
 }) => {
   // DO NOT include assets in initialState - they are managed by AssetInitializer
   const cleanInitialState = { ...initialState, assets: undefined };
@@ -371,6 +374,7 @@ export const Editor: React.FC<EditorProps> = ({
               onAssetUpload={onAssetUpload}
               availableAssets={availableAssets}
               onAssetPicked={onAssetPicked}
+              onExport={onExport}
             />
           </aside>
 

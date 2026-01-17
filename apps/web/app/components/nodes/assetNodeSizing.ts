@@ -89,7 +89,7 @@ export const resolveInitialMediaSize = ({
     }
 
     const useAspectRatioOnly =
-        status === 'generating' ||
+        (status === 'generating' && !naturalDimensions) ||
         (status === 'uploading' && !hasPreview && !naturalDimensions) ||
         (!hasPreview && !naturalDimensions);
 

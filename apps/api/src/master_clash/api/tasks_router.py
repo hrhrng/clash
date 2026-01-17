@@ -40,7 +40,7 @@ HEARTBEAT_INTERVAL_MS = 30 * 1000  # 30 seconds
 WORKER_ID = f"worker_{uuid.uuid4().hex[:8]}"  # Unique per process
 
 # Task types
-TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc"]
+TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc", "video_render"]
 
 # Status constants
 STATUS_PENDING = "pending"
@@ -532,6 +532,71 @@ async def _heartbeat_loop(task_id: str) -> None:
         pass
 
 
+async def process_video_render(task_id: str, params: dict) -> None:
+    """
+    Render video using Remotion CLI with Timeline DSL.
+
+    This is different from video_gen (which generates new video using AI).
+    video_render composites existing assets (videos, images, audio, text) using a timeline.
+    """
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+    project_id = params.get("project_id", "unknown")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎬 Processing video_render: {task_id}, node: {node_id}")
+
+        timeline_dsl = params.get("timeline_dsl", {})
+        if not timeline_dsl:
+            raise ValueError("Missing timeline_dsl in params")
+
+        logger.info(f"[Tasks] 📋 Timeline DSL: {json_dumps(timeline_dsl)[:500]}...")
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
+
+        try:
+            # Import render service (lazy import to avoid circular dependency)
+            from master_clash.services.remotion_render import render_video_with_remotion
+
+            result = await render_video_with_remotion(
+                timeline_dsl=timeline_dsl,
+                project_id=project_id,
+                task_id=task_id,
+            )
+
+            if result.success and result.r2_key:
+                await complete_task(task_id, result_url=result.r2_key)
+
+                await callback_to_loro(callback_url, node_id, {
+                    "src": result.r2_key,
+                    "status": "completed",
+                    "pendingTask": None
+                })
+                logger.info(f"[Tasks] ✅ video_render completed: {result.r2_key}")
+            else:
+                error_message = result.error or "Render failed"
+                await fail_task(task_id, error_message)
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": error_message,
+                    "pendingTask": None
+                })
+
+        finally:
+            heartbeat_task.cancel()
+
+    except Exception as e:
+        logger.error(f"[Tasks] ❌ video_render failed: {e}", exc_info=True)
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "status": "failed",
+            "error": str(e),
+            "pendingTask": None
+        })
+
+
 # === Endpoints ===
 
 @router.post("/submit", response_model=TaskSubmitResponse)
@@ -553,6 +618,7 @@ async def submit_task(request: TaskSubmitRequest, background_tasks: BackgroundTa
         "audio_gen": process_audio_generation,
         "image_desc": process_image_description,
         "video_desc": process_video_description,
+        "video_render": process_video_render,
     }.get(request.task_type)
     
     if processor:

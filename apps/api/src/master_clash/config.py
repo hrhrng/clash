@@ -111,6 +111,9 @@ class Settings:
         # Loro Sync Server
         self.loro_sync_url: str | None = _env("LORO_SYNC_URL", "ws://localhost:8787")
 
+        # Frontend URL (for asset proxy during video rendering)
+        self.frontend_url: str = _env("FRONTEND_URL", "http://localhost:3000") or "http://localhost:3000"
+
         # App behavior
         self.max_workers: int = _env_int("MAX_WORKERS", 4)
         self.log_level: str = _env("LOG_LEVEL", "INFO") or "INFO"

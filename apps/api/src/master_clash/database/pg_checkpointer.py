@@ -30,11 +30,19 @@ async def get_async_connection_pool() -> AsyncConnectionPool:
 
         _async_pool = AsyncConnectionPool(
             conninfo=settings.postgres_connection_string,
+            min_size=1,  # Keep at least 1 connection alive
             max_size=10,
             kwargs={
                 "autocommit": True,
                 "prepare_threshold": 0,
+                "connect_timeout": 30,  # Connection timeout in seconds
+                "options": "-c statement_timeout=30000",  # Query timeout
             },
+            # Pool timeout settings to prevent stale connections
+            timeout=30,  # Timeout for getting connection from pool
+            max_idle=300,  # Max idle time before connection is closed (5 min)
+            max_lifetime=600,  # Max connection lifetime (10 min)
+            reconfigure=True,  # Allow reconfiguration
         )
 
     return _async_pool

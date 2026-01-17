@@ -9,6 +9,7 @@ Provides clean interfaces to external services:
 - generation_models: Unified model registry + dispatchers
 - gemini_asr: Gemini ASR (Audio/Video Transcription)
 - video_intelligence: Google Video Intelligence (Shot Detection)
+- remotion_render: Remotion video rendering service
 """
 
 from master_clash.services import d1, genai, kling, r2, generation_models, kling_kie_client

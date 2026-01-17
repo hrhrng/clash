@@ -28,6 +28,7 @@ type AssetPanelProps = {
     height?: number;
     sourceNodeId?: string;
   }) => void;
+  onExport?: () => Promise<void>;
 };
 
 export const AssetPanel: React.FC<AssetPanelProps> = ({
@@ -36,6 +37,7 @@ export const AssetPanel: React.FC<AssetPanelProps> = ({
   onAssetUpload,
   availableAssets = [],
   onAssetPicked,
+  onExport,
 }) => {
   const { state, dispatch } = useEditor();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -222,32 +224,43 @@ export const AssetPanel: React.FC<AssetPanelProps> = ({
 
     <div className="relative flex flex-col h-full bg-slate-50">
       <div className="px-4 py-3 bg-white border-b border-slate-200">
-        {onBack ? (
-          <button
-            type="button"
-            onClick={onBack}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-900 bg-slate-900 text-white shadow-sm transition-colors hover:bg-slate-800"
-            aria-label={backLabel}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-5 w-5"
-              aria-hidden="true"
-              focusable="false"
+        <div className="flex items-center justify-between">
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-900 bg-slate-900 text-white shadow-sm transition-colors hover:bg-slate-800"
+              aria-label={backLabel}
             >
-              <path
-                d="M10.5 6.5L5 12l5.5 5.5M6 12h13"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        ) : (
-          <h2 className="m-0 text-sm font-bold text-slate-900">Assets</h2>
-        )}
+              <svg
+                viewBox="0 0 24 24"
+                className="h-5 w-5"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M10.5 6.5L5 12l5.5 5.5M6 12h13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : (
+            <h2 className="m-0 text-sm font-bold text-slate-900">Assets</h2>
+          )}
+          {onExport && (
+            <button
+              type="button"
+              onClick={() => onExport()}
+              className="flex h-9 px-3 items-center justify-center rounded-lg border border-blue-600 bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 text-sm font-semibold"
+            >
+              Export
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4">

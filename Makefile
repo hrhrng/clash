@@ -1,7 +1,6 @@
-.PHONY: install dev dev-web dev-api dev-sync dev-gateway dev-collab dev-full build test lint clean format setup db-web-local db-sync-local check-tools help
+.PHONY: install dev dev-web dev-api dev-sync dev-gateway dev-collab dev-full build test lint clean format setup db-web-local db-sync-local check-tools help bundle remotion-bundle remotion-render
 
 # Use interactive shell to load .zshrc environment
-SHELL := /bin/zsh -i
 
 #==============================================================================
 # Configuration
@@ -40,7 +39,7 @@ help: ## Show this help message
 check-tools: ## Verify required tools are installed
 	@echo "$(BLUE)Checking required tools...$(NC)"
 	@command -v pnpm >/dev/null 2>&1 || { echo "$(RED)Error: pnpm not found.$(NC)"; echo "$(YELLOW)Install: brew install pnpm$(NC)"; exit 1; }
-	@command -v uv >/dev/null 2>&1 || { echo "$(RED)Error: uv not found.$(NC)"; echo "$(YELLOW)Expected at: ~/.langflow/uv/uv$(NC)"; exit 1; }
+	@[ -d ".venv" ] || { echo "$(RED)Error: .venv directory not found.$(NC)"; echo "$(YELLOW)Please ensure python virtual environment is created.$(NC)"; exit 1; }
 	@command -v turbo >/dev/null 2>&1 || { echo "$(YELLOW)Warning: turbo not found. Run 'pnpm install' first$(NC)"; }
 	@echo "$(GREEN)✓ All required tools are installed$(NC)"
 
@@ -51,8 +50,7 @@ check-tools: ## Verify required tools are installed
 install: check-tools ## Install all dependencies (TypeScript + Python)
 	@echo "$(BLUE)Installing TypeScript dependencies...$(NC)"
 	@pnpm install
-	@echo "$(BLUE)Installing Python dependencies...$(NC)"
-	@uv sync
+	@echo "$(BLUE)Python dependencies should be managed in .venv...$(NC)"
 	@echo "$(GREEN)✓ Installation complete$(NC)"
 
 setup: install ## Alias for install (deprecated, use 'make install')
@@ -82,7 +80,7 @@ dev-web: ## Start frontend development server
 
 dev-api: ## Start backend (FastAPI) development server
 	@echo "$(BLUE)Starting backend on http://localhost:8888...$(NC)"
-	@HTTP_PROXY=$(HTTP_PROXY) HTTPS_PROXY=$(HTTPS_PROXY) NO_PROXY=$(NO_PROXY) PYTHONPATH=apps/api/src uv run python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8888
+	@HTTP_PROXY=$(HTTP_PROXY) HTTPS_PROXY=$(HTTPS_PROXY) NO_PROXY=$(NO_PROXY) PYTHONPATH=apps/api/src .venv/bin/python -m uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8888
 
 dev-sync: db-sync-local ## Start Loro sync server (Durable Objects)
 	@echo "$(BLUE)Starting sync server on http://localhost:8787...$(NC)"
@@ -139,13 +137,13 @@ build: check-tools ## Build all packages
 	@echo "$(BLUE)Building TypeScript packages...$(NC)"
 	@pnpm turbo run build
 	@echo "$(BLUE)Verifying Python packages...$(NC)"
-	@uv run pytest --collect-only
+	@.venv/bin/pytest --collect-only
 
 test: check-tools ## Run all tests
 	@echo "$(BLUE)Running TypeScript tests...$(NC)"
 	@pnpm turbo run test
 	@echo "$(BLUE)Running Python tests...$(NC)"
-	@uv run pytest
+	@.venv/bin/pytest
 
 test-web: ## Run frontend tests only
 	@echo "$(BLUE)Running frontend tests...$(NC)"
@@ -153,7 +151,26 @@ test-web: ## Run frontend tests only
 
 test-api: ## Run backend tests only
 	@echo "$(BLUE)Running backend tests...$(NC)"
-	@uv run pytest
+	@.venv/bin/pytest
+
+#==============================================================================
+# Remotion Bundle & Render
+#==============================================================================
+
+remotion-bundle: ## Build Remotion bundle for server-side rendering
+	@echo "$(BLUE)Building Remotion bundle...$(NC)"
+	@cd packages/remotion-components && npx remotion bundle src/Root.tsx
+	@echo "$(GREEN)✓ Bundle created at packages/remotion-components/build$(NC)"
+
+remotion-render: ## Render video using Remotion CLI (for local testing)
+	@echo "$(BLUE)Rendering video...$(NC)"
+	@echo "$(YELLOW)Usage: make remotion-render PROPS='{\"tracks\":[...]}' OUTPUT=output.mp4$(NC)"
+	@[ -n "$(PROPS)" ] || { echo "$(RED)Error: PROPS is required$(NC)"; exit 1; }
+	@[ -n "$(OUTPUT)" ] || { echo "$(RED)Error: OUTPUT is required$(NC)"; exit 1; }
+	@cd packages/remotion-components && npx remotion render src/Root.tsx VideoComposition --props='$(PROPS)' --output="$(OUTPUT)"
+	@echo "$(GREEN)✓ Video rendered to $(OUTPUT)$(NC)"
+
+bundle: remotion-bundle ## Alias for remotion-bundle
 
 #==============================================================================
 # Code Quality
@@ -163,7 +180,7 @@ lint: check-tools ## Lint all code
 	@echo "$(BLUE)Linting TypeScript...$(NC)"
 	@pnpm turbo run lint
 	@echo "$(BLUE)Linting Python...$(NC)"
-	@uv run ruff check .
+	@.venv/bin/ruff check .
 	@$(MAKE) lint-docs
 
 lint-docs: ## Check AODS documentation integrity
@@ -176,19 +193,19 @@ lint-web: ## Lint frontend only
 
 lint-api: ## Lint backend only
 	@echo "$(BLUE)Linting backend...$(NC)"
-	@uv run ruff check apps/api
+	@.venv/bin/ruff check apps/api
 
 format: check-tools ## Format all code
 	@echo "$(BLUE)Formatting TypeScript...$(NC)"
 	@pnpm prettier --write "**/*.{ts,tsx,json,md}"
 	@echo "$(BLUE)Formatting Python...$(NC)"
-	@uv run ruff format .
+	@.venv/bin/ruff format .
 
 format-check: ## Check if code is formatted (CI use)
 	@echo "$(BLUE)Checking TypeScript formatting...$(NC)"
 	@pnpm prettier --check "**/*.{ts,tsx,json,md}"
 	@echo "$(BLUE)Checking Python formatting...$(NC)"
-	@uv run ruff format --check .
+	@.venv/bin/ruff format --check .
 
 #==============================================================================
 # Cleanup
@@ -229,7 +246,8 @@ update-deps: ## Update all dependencies
 	@echo "$(BLUE)Updating TypeScript dependencies...$(NC)"
 	@pnpm update --latest
 	@echo "$(BLUE)Updating Python dependencies...$(NC)"
-	@uv sync --upgrade
+	@echo "Skipping python deps update (uv not found)"
+	# @uv sync --upgrade
 
 info: ## Show project information
 	@echo "$(BLUE)Master Clash - Project Information$(NC)"

@@ -28,6 +28,12 @@
     "wrangler": "^4"
   },
   "packageManager": "pnpm@8.15.0",
+  "pnpm": {
+    "overrides": {
+      "remotion": "4.0.370",
+      "@remotion/*": "4.0.370"
+    }
+  },
   "dependencies": {
     "better-auth": "^1.4.6",
     "better-auth-cloudflare": "^0.2.9",

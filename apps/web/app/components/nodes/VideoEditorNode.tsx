@@ -1,7 +1,7 @@
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useState } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
-import { FilmSlate, Play, ArrowSquareOut } from '@phosphor-icons/react';
+import { FilmSlate, Play, ArrowSquareOut, VideoCamera } from '@phosphor-icons/react';
 import { useVideoEditor } from '../VideoEditorContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
@@ -11,6 +11,7 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
     const { openEditor } = useVideoEditor();
     const loroSync = useOptionalLoroSyncContext();
     const reactFlow = useReactFlow();
+    const [rendering, setRendering] = useState(false);
 
     const handleOpenEditor = useCallback(() => {
         const assets = data.inputs || [];
@@ -35,7 +36,6 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
             .filter((node) => ['image', 'video', 'audio'].includes(node.type || ''))
             .filter((node) => node.data?.src && !connectedAssetIds.has(node.id))
             .filter((node) => {
-                if (node.type !== 'video') return true;
                 const statusValue = node.data?.status;
                 if (typeof statusValue !== 'string') return true;
                 return !isActiveStatus(normalizeStatus(statusValue));
@@ -60,6 +60,122 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
         openEditor(assets, id, timelineDsl, availableAssets);
     }, [data.inputs, data.timelineDsl, id, loroSync, openEditor, reactFlow]);
 
+    const handleRender = useCallback(async () => {
+        console.log('[VideoEditorNode] handleRender called');
+        console.log('[VideoEditorNode] loroSync.connected:', loroSync?.connected);
+
+        if (!loroSync?.doc) {
+            console.error('[VideoEditorNode] LoroSync not connected');
+            return;
+        }
+
+        setRendering(true);
+        try {
+            // Get current timeline DSL from node or data
+            let timelineDsl = data.timelineDsl;
+            const loroNode = loroSync.doc.getMap('nodes').get(id) as any;
+            timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
+
+            if (!timelineDsl || !timelineDsl.tracks || timelineDsl.tracks.length === 0) {
+                alert('Please open the editor and create some content first!');
+                return;
+            }
+
+            // Calculate video duration from timeline content
+            let maxEndFrame = 0;
+            for (const track of timelineDsl.tracks) {
+                for (const item of track.items) {
+                    const endFrame = item.from + item.durationInFrames;
+                    if (endFrame > maxEndFrame) {
+                        maxEndFrame = endFrame;
+                    }
+                }
+            }
+            const durationInSeconds = maxEndFrame / timelineDsl.fps;
+
+            // Debug: log duration calculation
+            console.log('[VideoEditorNode] Duration calculation:', {
+                maxEndFrame,
+                fps: timelineDsl.fps,
+                calculatedDuration: durationInSeconds,
+                originalDuration: timelineDsl.durationInFrames,
+                compositionSize: `${timelineDsl.compositionWidth}x${timelineDsl.compositionHeight}`,
+            });
+
+            // Create a new video node with the rendered content
+            // IMPORTANT: Override durationInFrames to use calculated value
+            const updatedTimelineDsl = {
+                ...timelineDsl,
+                durationInFrames: maxEndFrame,
+            };
+
+            console.log('[VideoEditorNode] Creating video node with:', {
+                compositionWidth: timelineDsl.compositionWidth,
+                compositionHeight: timelineDsl.compositionHeight,
+                maxEndFrame,
+                durationInSeconds,
+            });
+
+            const newVideoNodeId = `video-${Date.now()}`;
+            const newVideoNode = {
+                id: newVideoNodeId,
+                type: 'video',
+                position: {
+                    x: data.position?.x + 250 || 400,
+                    y: data.position?.y || 100,
+                },
+                data: {
+                    label: `Rendered Video`,
+                    src: null,  // Will be filled by callback when rendering completes
+                    status: 'generating',
+                    duration: durationInSeconds,
+                    timelineDsl: updatedTimelineDsl,
+                    pendingTask: null,
+                    // Set natural dimensions to match video editor canvas for correct aspect ratio
+                    naturalWidth: timelineDsl.compositionWidth,
+                    naturalHeight: timelineDsl.compositionHeight,
+                },
+            };
+
+            console.log('[VideoEditorNode] New video node data:', {
+                naturalWidth: newVideoNode.data.naturalWidth,
+                naturalHeight: newVideoNode.data.naturalHeight,
+                durationInFrames: updatedTimelineDsl.durationInFrames,
+            });
+
+            // Add new node to LoroSync
+            console.log('[VideoEditorNode] Adding to LoroSync:', newVideoNodeId);
+            loroSync.addNode(newVideoNodeId, newVideoNode);
+
+            // Create edge from editor to new video node
+            const edgeId = `${id}-${newVideoNodeId}`;
+            const newEdge = {
+                id: edgeId,
+                source: id,
+                target: newVideoNodeId,
+                type: 'default',
+            };
+            console.log('[VideoEditorNode] Adding edge to LoroSync:', edgeId);
+            loroSync.addEdge(edgeId, newEdge);
+
+            // Also add to ReactFlow for immediate UI update
+            console.log('[VideoEditorNode] Adding to ReactFlow:', newVideoNodeId);
+            reactFlow.addNodes(newVideoNode);
+            reactFlow.addEdges(newEdge);
+
+            // Debug: Check what ReactFlow actually has
+            setTimeout(() => {
+                const nodeInFlow = reactFlow.getNode(newVideoNodeId);
+                console.log('[VideoEditorNode] Node in ReactFlow:', nodeInFlow);
+                console.log('[VideoEditorNode] Node data:', nodeInFlow?.data);
+            }, 100);
+        } catch (error) {
+            console.error('[VideoEditorNode] Failed to trigger render:', error);
+        } finally {
+            setRendering(false);
+        }
+    }, [data, id, loroSync, reactFlow]);
+
     return (
         <div
             className="group relative min-w-[200px] max-w-[400px]"
@@ -77,12 +193,16 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
                     </div>
                 </div>
 
-                {/* Footer with inputs info */}
+                {/* Action Buttons */}
                 <div className="bg-slate-50 px-3 py-2 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span className="font-medium">{data.inputs?.length || 0}</span>
-                        <span>assets</span>
-                    </div>
+                    <button
+                        onClick={handleRender}
+                        disabled={rendering}
+                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-slate-600 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        <VideoCamera className="w-3.5 h-3.5" />
+                        {rendering ? 'Rendering...' : 'Render'}
+                    </button>
                     <ArrowSquareOut className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
                 </div>
             </div>
