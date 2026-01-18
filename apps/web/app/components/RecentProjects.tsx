@@ -12,6 +12,7 @@ interface Asset {
     url: string;
     type: 'image' | 'video';
     storageKey: string;
+    createdAt?: Date | string | null;
 }
 
 interface ProjectWithAssets {
@@ -27,8 +28,8 @@ interface RecentProjectsProps {
 
 export default function RecentProjects({ projects }: RecentProjectsProps) {
     return (
-        <div className="w-full max-w-6xl mx-auto px-6 pb-24 mt-8">
-            <div className="mb-10 flex items-center justify-between">
+        <div className="w-full max-w-[1600px] mx-auto px-6 pb-24 mt-0">
+            <div className="mb-8 flex items-center justify-between px-2">
                 <h2 className="text-3xl font-bold tracking-tight text-gray-900">Recent Projects</h2>
                 <Link
                     href="/projects"
@@ -62,92 +63,92 @@ export default function RecentProjects({ projects }: RecentProjectsProps) {
 
                 {/* Project Cards */}
                 {projects.map((project) => {
-                    const assets = project.assets || [];
-                    const assetCount = assets.length;
+                    const allAssets = project.assets || [];
+
+                    // Sort assets: Images first, then by createdAt (newest first)
+                    const displayAssets = [...allAssets]
+                        .sort((a, b) => {
+                            // 1. Prioritize images
+                            if (a.type === 'image' && b.type !== 'image') return -1;
+                            if (a.type !== 'image' && b.type === 'image') return 1;
+
+                            // 2. Sort by createdAt (descending)
+                            const dateA = new Date(a.createdAt || 0).getTime();
+                            const dateB = new Date(b.createdAt || 0).getTime();
+                            return dateB - dateA;
+                        })
+                        .slice(0, 4); // Take up to 4 assets
+
+                    const assetCount = displayAssets.length;
+
+                    // Determine grid columns based on count
+                    // 1 asset -> full width
+                    // 2 assets -> 2 columns, split vertically
+                    // 3+ assets -> 2x2 grid (requires 3 or 4 items)
+                    const gridClass = assetCount === 1 ? 'grid-cols-1' :
+                                     assetCount === 2 ? 'grid-cols-2' :
+                                     'grid-cols-2 grid-rows-2';
+
+                    // Format Date
+                    const date = new Date(project.updatedAt || new Date());
+                    const formattedDate = new Intl.DateTimeFormat('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric'
+                    }).format(date);
 
                     return (
-                    <Link key={project.id} href={`/projects/${project.id}`}>
+                    <Link key={project.id} href={`/projects/${project.id}`} className="block group">
                         <motion.div
-                            className="group relative aspect-video overflow-hidden rounded-[2rem] bg-gray-100 transition-all hover:shadow-xl ring-1 ring-black/5"
-                            whileHover={{ y: -4 }}
+                            className="relative aspect-video overflow-hidden rounded-[1.5rem] bg-gray-100 mb-4 transition-all hover:shadow-lg ring-1 ring-black/5"
+                            whileHover={{ y: -2 }}
                             whileTap={{ scale: 0.98 }}
                         >
                             {/* Asset Grid Logic */}
                             {assetCount === 0 ? (
-                                /* No Assets - Default View */
-                                <div className="absolute inset-0 flex flex-col justify-between bg-white p-6 transition-colors group-hover:bg-gray-50">
-                                    <div className="flex items-start justify-between">
-                                        <span className="text-4xl">🎬</span>
-                                        <div className="opacity-0 transition-opacity group-hover:opacity-100">
-                                            <div className="rounded-full bg-white p-2 shadow-sm">
-                                                <PaperPlaneRight className="h-5 w-5 text-gray-900" />
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <h3 className="line-clamp-2 text-xl font-bold leading-tight tracking-tight text-gray-900 group-hover:text-brand transition-colors">
-                                            {project.name}
-                                        </h3>
-                                        <p className="mt-2 text-sm font-medium text-gray-400">
-                                            Last edited just now
-                                        </p>
-                                    </div>
+                                /* No Assets - Empty State */
+                                <div className="absolute inset-0 flex items-center justify-center bg-gray-50 text-gray-300">
+                                   {/*  Placeholder or empty gray box as per screenshot */}
                                 </div>
                             ) : (
                                 /* Has Assets */
-                                <div className="absolute inset-0 bg-white">
-                                    {/* Grid Container */}
-                                    <div className={`grid h-full w-full ${
-                                        assetCount === 1 ? 'grid-cols-1' :
-                                        assetCount === 2 ? 'grid-cols-2 gap-0.5' :
-                                        'grid-cols-2 grid-rows-2 gap-0.5'
-                                    } bg-gray-100`}>
-                                        {assets.slice(0, 4).map((asset: Asset, index: number) => (
-                                            <div key={asset.id} className="relative overflow-hidden bg-gray-200">
-                                                {asset.type === 'video' ? (
-                                                    <video
-                                                        src={asset.url}
-                                                        className="h-full w-full object-cover"
-                                                        muted
-                                                        loop
-                                                        playsInline
-                                                        // Auto play on hover could be cool, but keeping static for now or maybe poster
-                                                    />
-                                                ) : (
-                                                    <img
-                                                        src={asset.url}
-                                                        alt="Asset"
-                                                        className="h-full w-full object-cover"
-                                                    />
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {/* Overlay Gradient for Text Readability */}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-90 transition-opacity group-hover:opacity-100" />
-
-                                    {/* Content Overlay */}
-                                    <div className="absolute inset-0 flex flex-col justify-between p-6">
-                                        <div className="flex items-start justify-end">
-                                            <div className="translate-y-2 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
-                                                <div className="rounded-full bg-white/20 backdrop-blur-md p-2 text-white">
-                                                    <PaperPlaneRight className="h-5 w-5" weight="fill" />
-                                                </div>
-                                            </div>
+                                <div className={`grid h-full w-full ${gridClass} gap-[2px] bg-white`}>
+                                    {displayAssets.map((asset: Asset) => (
+                                        <div key={asset.id} className="relative overflow-hidden bg-gray-100">
+                                            {asset.type === 'video' ? (
+                                                <video
+                                                    src={asset.url}
+                                                    className="h-full w-full object-cover"
+                                                    muted
+                                                    loop
+                                                    playsInline
+                                                />
+                                            ) : (
+                                                <img
+                                                    src={asset.url}
+                                                    alt="Asset"
+                                                    className="h-full w-full object-cover"
+                                                />
+                                            )}
                                         </div>
-                                        <div>
-                                            <h3 className="line-clamp-2 text-xl font-bold leading-tight tracking-tight text-white shadow-black/20 drop-shadow-sm">
-                                                {project.name}
-                                            </h3>
-                                            <p className="mt-1 text-sm font-medium text-white/70">
-                                                {assetCount} assets
-                                            </p>
-                                        </div>
-                                    </div>
+                                    ))}
+                                    {/* Fill empty spots if we have 3 assets in a 4-grid slot (though current logic limits to 4, 3 assets would leave 1 empty) */}
+                                    {assetCount === 3 && (
+                                         <div className="bg-gray-100"></div>
+                                    )}
                                 </div>
                             )}
                         </motion.div>
+
+                        {/* Text Content Below Card */}
+                        <div className="px-1">
+                            <h3 className="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">
+                                {project.name || 'Untitled'}
+                            </h3>
+                            <p className="mt-1 text-xs text-gray-500">
+                                {formattedDate}
+                            </p>
+                        </div>
                     </Link>
                 )})}
             </div>

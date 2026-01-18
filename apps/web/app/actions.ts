@@ -91,8 +91,9 @@ export async function getProjects(limit = 10) {
             limit: limit,
             with: {
                 assets: {
-                    limit: 4,
-                    orderBy: [desc(schema.assets.createdAt)],
+                    limit: 12,
+                    // Sort by type (image < video, so images come first) then by creation time
+                    orderBy: [asc(schema.assets.type), desc(schema.assets.createdAt)],
                 }
             }
         });
