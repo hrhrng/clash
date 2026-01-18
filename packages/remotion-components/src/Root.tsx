@@ -1,5 +1,5 @@
 import React from 'react';
-import { Composition, registerRoot } from 'remotion';
+import { Composition, registerRoot, getInputProps } from 'remotion';
 import { VideoComposition } from './VideoComposition';
 
 /**
@@ -22,7 +22,16 @@ export interface RemotionInputProps {
  *   npx remotion render src/Root.tsx VideoComposition --props '{"tracks": [...]}' --output video.mp4
  *   npx remotion bundle src/Root.tsx --outdir=./dist
  */
-export const RemotionRoot: React.FC<RemotionInputProps> = (inputProps) => {
+export const RemotionRoot: React.FC<RemotionInputProps> = (props) => {
+  // Merge props from argument (if any) and getInputProps() (CLI/Studio)
+  const inputProps = {
+    ...getInputProps(),
+    ...props,
+  } as RemotionInputProps;
+
+  // Debug log to see what props are actually received
+  console.log('[RemotionRoot] Received props:', JSON.stringify(inputProps, null, 2));
+
   // Extract composition settings from input props, with defaults
   const {
     compositionWidth = 1920,
@@ -31,6 +40,8 @@ export const RemotionRoot: React.FC<RemotionInputProps> = (inputProps) => {
     durationInFrames = 300,
     tracks = [],
   } = inputProps || {};
+
+  console.log(`[RemotionRoot] Config: ${compositionWidth}x${compositionHeight} @ ${fps}fps, duration: ${durationInFrames}`);
 
   return (
     <>
