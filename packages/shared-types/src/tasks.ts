@@ -38,6 +38,7 @@ export const VideoGenParamsSchema = z.object({
   reference_images: z.array(z.string()).optional(),
   reference_mode: z.string().optional(),
   aspect_ratio: z.string().optional(),
+  resolution: z.string().optional(),
   negative_prompt: z.string().optional(),
   cfg_scale: z.number().optional(),
 });
