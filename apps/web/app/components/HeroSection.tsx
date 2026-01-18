@@ -37,8 +37,8 @@ export default function HeroSection() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
             >
-                Hey<span className="text-brand">!</span> <br />
-                Let's make some <span className="text-brand">CLASH?</span>
+                Hey! <br />
+                Let's make some <span className="text-brand">CLASH</span>?
             </motion.h1>
 
             {/* Chat Input - Gemini Style */}

@@ -105,7 +105,7 @@ patch_dsl(
         "path": "/tracks/-",
         "value": {
             "id": "track-1",
-            "clips": [...]
+            "items": [...]
         }
     }]
 )

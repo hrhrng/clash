@@ -68,14 +68,10 @@ export default function RecentProjects({ projects }: RecentProjectsProps) {
                 {projectList.map((project) => {
                     const allAssets = project.assets || [];
 
-                    // Sort assets: Images first, then by createdAt (newest first)
+                    // Sort assets: Newest first
                     const displayAssets = [...allAssets]
                         .sort((a, b) => {
-                            // 1. Prioritize images
-                            if (a.type === 'image' && b.type !== 'image') return -1;
-                            if (a.type !== 'image' && b.type === 'image') return 1;
-
-                            // 2. Sort by createdAt (descending)
+                            // Sort by createdAt (descending)
                             // @ts-ignore
                             const dateA = new Date(a.createdAt || 0).getTime();
                             // @ts-ignore

@@ -1172,6 +1172,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 naturalWidth: mediaWidth,
                 naturalHeight: mediaHeight,
                 duration: videoDuration,
+                createdAt: Date.now(), // Explicitly store creation time for sorting
             });
 
             if (options?.connectToVideoEditorId) {

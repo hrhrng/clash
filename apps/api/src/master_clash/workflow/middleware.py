@@ -269,6 +269,41 @@ Example workflow:
 
                 # Update node in Loro
                 updated_data = {**data, "timelineDsl": patched_dsl}
+
+                # Update upstream dependencies based on assets in timeline
+                # This ensures the video-editor node is connected to the assets it uses
+                asset_ids = set()
+                for track in patched_dsl.get("tracks", []):
+                    # Support both items (new) and clips (old) for backward compatibility
+                    items = track.get("items") or track.get("clips") or []
+                    for item in items:
+                        if "assetId" in item:
+                            asset_ids.add(item["assetId"])
+
+                if asset_ids:
+                    current_upstreams = set(updated_data.get("upstreamNodeIds", []))
+                    new_upstreams = current_upstreams.union(asset_ids)
+
+                    if new_upstreams != current_upstreams:
+                        updated_data["upstreamNodeIds"] = list(new_upstreams)
+                        logger.info(f"Updated upstreamNodeIds for {node_id}: {updated_data['upstreamNodeIds']}")
+
+                        # Add edges for new connections
+                        for asset_id in asset_ids:
+                            if asset_id not in current_upstreams:
+                                edge_id = f"{asset_id}-{node_id}"
+                                try:
+                                    loro_edge = {
+                                        "id": edge_id,
+                                        "source": asset_id,
+                                        "target": node_id,
+                                        "type": "default"
+                                    }
+                                    loro_client.add_edge(edge_id, loro_edge)
+                                    logger.info(f"Added dependency edge {edge_id} from {asset_id} to {node_id}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to add edge {edge_id}: {e}")
+
                 loro_client.update_node(node_id, {"data": updated_data})
 
                 logger.info(f"Successfully patched timeline DSL for node {node_id}")

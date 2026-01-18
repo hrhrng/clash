@@ -171,12 +171,18 @@ export async function getProjects(limit = 10) {
                         type: node.type as 'image' | 'video',
                         storageKey: node.data.storageKey || '',
                         createdAt: (() => {
-                            const parts = node.id.split('-');
-                            const lastPart = parts[parts.length - 1];
-                            const timestamp = parseInt(lastPart);
-                            return !isNaN(timestamp) && timestamp > 1600000000000
-                                ? new Date(timestamp)
-                                : project.updatedAt;
+                            // 1. Try node.data.createdAt (explicit metadata)
+                            if (node.data?.createdAt) {
+                                return new Date(node.data.createdAt);
+                            }
+
+                            // 2. Try node.createdAt (if stored on node root)
+                            if (node.createdAt) {
+                                return new Date(node.createdAt);
+                            }
+
+                            // 3. Fallback to project updated time (or created time)
+                            return project.updatedAt || project.createdAt;
                         })()
                     };
                 })

@@ -83,14 +83,10 @@ function ProjectCard({ project }: { project: ProjectWithAssets }) {
 
     // Asset Preview Logic
     const allAssets = project.assets || [];
-    // Sort assets (images first, then new ones)
+    // Sort assets (newest first)
     const displayAssets = [...allAssets]
         .sort((a, b) => {
-             // 1. Prioritize images
-             if (a.type === 'image' && b.type !== 'image') return -1;
-             if (a.type !== 'image' && b.type === 'image') return 1;
-
-             // 2. Sort by createdAt (descending) - assuming createdAt might be available even if not in interface yet
+             // Sort by createdAt (descending)
              // @ts-ignore
              const dateA = new Date(a.createdAt || 0).getTime();
              // @ts-ignore

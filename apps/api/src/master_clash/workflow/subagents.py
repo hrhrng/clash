@@ -370,7 +370,7 @@ Your Workflow:
 3. Search or read canvas nodes to find video/image assets to add to the timeline.
 4. Modify the timeline using JSON Patch: `patch_dsl(node_id="editor-abc123", patch=[...])`
    - Use JSON Patch format (RFC 6902) for updates.
-   - Example: [{"op": "add", "path": "/tracks/-", "value": {"id": "track-1", "clips": [...]}}]
+   - Example: [{"op": "add", "path": "/tracks/-", "value": {"id": "track-1", "items": [...]}}]
    - Do NOT overwrite the entire structure; use specific patches.
 
 **Timeline DSL Structure**:
@@ -383,7 +383,7 @@ Your Workflow:
   "tracks": [
     {
       "id": "track-1",
-      "clips": [
+      "items": [
         {
           "assetId": "asset-id-here",
           "startTime": 0,
