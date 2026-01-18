@@ -80,8 +80,25 @@ export async function processPendingNodes(
             continue;
           }
 
+          // Ensure timelineDsl is a plain object, not a Loro Proxy
+          let safeDsl = timelineDsl;
+          try {
+            // If it has toJSON, call it (Loro objects usually have this)
+            if (typeof timelineDsl.toJSON === 'function') {
+                safeDsl = timelineDsl.toJSON();
+            } else {
+                // Fallback deep clone
+                safeDsl = JSON.parse(JSON.stringify(timelineDsl));
+            }
+          } catch (e) {
+            console.warn(`[NodeProcessor] ⚠️ Failed to convert DSL to plain object: ${e}`);
+            safeDsl = JSON.parse(JSON.stringify(timelineDsl));
+          }
+
+          console.log(`[NodeProcessor] 🔍 Render DSL for ${nodeId.slice(0, 8)}: duration=${safeDsl.durationInFrames}, tracks=${safeDsl.tracks?.length}`);
+
           const params = {
-            timeline_dsl: timelineDsl,
+            timeline_dsl: safeDsl,
           };
 
           const result = await submitTask(env, 'video_render', projectId, nodeId, params);
@@ -148,6 +165,7 @@ export async function processPendingNodes(
           params.aspect_ratio = aspectRatio;
           if (modelParams.negative_prompt) params.negative_prompt = modelParams.negative_prompt;
           if (modelParams.cfg_scale) params.cfg_scale = modelParams.cfg_scale;
+          if (modelParams.resolution) params.resolution = modelParams.resolution;
           if (referenceMode === 'start_end' && referenceImages[1]) {
             params.tail_image_url = referenceImages[1];
           }
