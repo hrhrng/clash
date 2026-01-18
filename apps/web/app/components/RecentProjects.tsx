@@ -25,10 +25,10 @@ export default function RecentProjects({ projects }: RecentProjectsProps) {
                 </Link>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {/* Empty State Card / New Project */}
                 <motion.button
-                    className="group flex aspect-[4/3] flex-col items-center justify-center gap-4 rounded-[2rem] border-2 border-dashed border-gray-200 bg-gray-50 transition-all hover:border-brand/30 hover:bg-gray-100"
+                    className="group flex aspect-video flex-col items-center justify-center gap-4 rounded-[2rem] border-2 border-dashed border-gray-200 bg-gray-50 transition-all hover:border-brand/30 hover:bg-gray-100"
                     whileHover={{ scale: 1.01 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => {
@@ -51,7 +51,7 @@ export default function RecentProjects({ projects }: RecentProjectsProps) {
                 {projects.map((project) => (
                     <Link key={project.id} href={`/projects/${project.id}`}>
                         <motion.div
-                            className="group relative aspect-[4/3] overflow-hidden rounded-[2rem] bg-gray-100 transition-all hover:shadow-xl"
+                            className="group relative aspect-video overflow-hidden rounded-[2rem] bg-gray-100 transition-all hover:shadow-xl"
                             whileHover={{ y: -4 }}
                             whileTap={{ scale: 0.98 }}
                         >
