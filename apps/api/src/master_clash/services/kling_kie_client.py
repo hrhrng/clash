@@ -55,10 +55,12 @@ async def create_text_to_video_task(
     aspect_ratio: str = "16:9",
     negative_prompt: str = "blur, distort, low quality",
     cfg_scale: float = 0.5,
+    resolution: str | None = None,
+    model: str = "kling/v2-5-turbo-text-to-video-pro",
     callback_url: str | None = None,
 ) -> str:
     payload: dict[str, Any] = {
-        "model": "kling/v2-5-turbo-text-to-video-pro",
+        "model": model,
         "input": {
             "prompt": prompt,
             "duration": duration,
@@ -67,10 +69,13 @@ async def create_text_to_video_task(
             "cfg_scale": cfg_scale,
         },
     }
+    if resolution:
+        payload["input"]["resolution"] = resolution
+
     if callback_url:
         payload["callBackUrl"] = callback_url
 
-    logger.info("[KIE] Submit text2video: duration=%s aspect_ratio=%s", duration, aspect_ratio)
+    logger.info("[KIE] Submit text2video: model=%s duration=%s aspect_ratio=%s", model, duration, aspect_ratio)
     result = await _post(payload)
     task_id = result.get("data", {}).get("taskId")
     if not task_id:
@@ -85,11 +90,13 @@ async def create_image_to_video_task(
     aspect_ratio: str = "16:9",
     negative_prompt: str = "blur, distort, low quality",
     cfg_scale: float = 0.5,
+    resolution: str | None = None,
     tail_image_url: str | None = None,
+    model: str = "kling/v2-5-turbo-image-to-video-pro",
     callback_url: str | None = None,
 ) -> str:
     payload: dict[str, Any] = {
-        "model": "kling/v2-5-turbo-image-to-video-pro",
+        "model": model,
         "input": {
             "image_url": image_url,
             "prompt": prompt,
@@ -100,12 +107,14 @@ async def create_image_to_video_task(
         },
     }
 
+    if resolution:
+        payload["input"]["resolution"] = resolution
     if tail_image_url:
         payload["input"]["tail_image_url"] = tail_image_url
     if callback_url:
         payload["callBackUrl"] = callback_url
 
-    logger.info("[KIE] Submit image2video: duration=%s aspect_ratio=%s", duration, aspect_ratio)
+    logger.info("[KIE] Submit image2video: model=%s duration=%s aspect_ratio=%s", model, duration, aspect_ratio)
     result = await _post(payload)
     task_id = result.get("data", {}).get("taskId")
     if not task_id:

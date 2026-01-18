@@ -252,8 +252,19 @@ def _public_r2_url(key: str) -> str:
     return f"{base}/{key}"
 
 
+
+def _get_kie_model_name(model_id: str) -> str:
+    if model_id == "kling-kie-text2video":
+        return "kling/v2-5-turbo-text-to-video-pro"
+    if model_id == "kling-kie-image2video":
+        return "kling/v2-5-turbo-image-to-video-pro"
+    return model_id
+
+
 async def _submit_kie_text2video(request: VideoGenerationRequest) -> VideoSubmissionResult:
     params = request.params
+    kie_model = _get_kie_model_name(request.model_id)
+
     try:
         task_id = await kling_kie_client.create_text_to_video_task(
             prompt=request.prompt,
@@ -261,6 +272,8 @@ async def _submit_kie_text2video(request: VideoGenerationRequest) -> VideoSubmis
             aspect_ratio=str(params.get("aspect_ratio", "16:9")),
             negative_prompt=str(params.get("negative_prompt", "blur, distort, low quality")),
             cfg_scale=float(params.get("cfg_scale", 0.5)),
+            resolution=params.get("resolution"),
+            model=kie_model,
             callback_url=request.callback_url,
         )
     except Exception as exc:  # noqa: BLE001
@@ -294,6 +307,7 @@ async def _submit_kie_image2video(request: VideoGenerationRequest) -> VideoSubmi
     params = request.params
     image_url = _public_r2_url(reference)
     tail_image_url = params.get("tail_image_url")
+    kie_model = _get_kie_model_name(request.model_id)
 
     try:
         task_id = await kling_kie_client.create_image_to_video_task(
@@ -303,7 +317,9 @@ async def _submit_kie_image2video(request: VideoGenerationRequest) -> VideoSubmi
             aspect_ratio=str(params.get("aspect_ratio", "16:9")),
             negative_prompt=str(params.get("negative_prompt", "blur, distort, low quality")),
             cfg_scale=float(params.get("cfg_scale", 0.5)),
+            resolution=params.get("resolution"),
             tail_image_url=tail_image_url,
+            model=kie_model,
             callback_url=request.callback_url,
         )
     except Exception as exc:  # noqa: BLE001
@@ -359,12 +375,20 @@ VIDEO_SUBMIT_HANDLERS: dict[str, VideoSubmitHandler] = {
     "kling-image2video": _submit_kling_image2video,
     "kling-kie-text2video": _submit_kie_text2video,
     "kling-kie-image2video": _submit_kie_image2video,
+    "sora-2-pro-text-to-video": _submit_kie_text2video,
+    "sora-2-pro-image-to-video": _submit_kie_image2video,
+    "sora-2-characters": _submit_kie_image2video,
+    "sora-2-pro-storyboard": _submit_kie_text2video,
 }
 
 VIDEO_POLL_HANDLERS: dict[str, VideoPollHandler] = {
     "kling-image2video": _poll_kling_image2video,
     "kling-kie-text2video": _poll_kie_video,
     "kling-kie-image2video": _poll_kie_video,
+    "sora-2-pro-text-to-video": _poll_kie_video,
+    "sora-2-pro-image-to-video": _poll_kie_video,
+    "sora-2-characters": _poll_kie_video,
+    "sora-2-pro-storyboard": _poll_kie_video,
 }
 
 
