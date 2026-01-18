@@ -51,9 +51,11 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
         node_id: str,
         runtime: ToolRuntime,
     ) -> str:
-        """Run a generation node (action-badge) to generate the asset.
+        """Run a generation node (action-badge) OR a video-editor node.
 
-        This triggers the actual generation by calling loro-sync-server API.
+        - For action-badge: Triggers image/video generation using AI models.
+        - For video-editor: Triggers rendering of the video timeline into a video asset.
+
         The result will be automatically synced to the canvas via Loro.
         """
         project_id = runtime.state.get("project_id", "")
@@ -118,7 +120,87 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
             if node is None:
                 return f"Error: Node {node_id} not found"
 
-            # Verify it's a generation node
+            # Handle video-editor node
+            if node.type == "video-editor":
+                logger.info(f"[RunGen] Processing video-editor node {node_id}")
+
+                timeline_dsl = node.data.get("timelineDsl")
+                if not timeline_dsl or not timeline_dsl.get("tracks"):
+                    return f"Error: Video editor {node_id} has no content (empty timeline)."
+
+                # Calculate duration
+                max_end_frame = 0
+                for track in timeline_dsl.get("tracks", []):
+                    for item in track.get("items", []):
+                        end_frame = item.get("from", 0) + item.get("durationInFrames", 0)
+                        if end_frame > max_end_frame:
+                            max_end_frame = end_frame
+
+                fps = timeline_dsl.get("fps", 30)
+                duration_seconds = max_end_frame / fps if fps > 0 else 0
+
+                # Update DSL with calculated duration
+                updated_dsl = {**timeline_dsl, "durationInFrames": max_end_frame}
+
+                # Generate asset ID
+                from master_clash.semantic_id import (
+                    create_d1_checker,
+                    generate_unique_id_for_project,
+                )
+                checker = create_d1_checker()
+                asset_id = generate_unique_id_for_project(project_id, checker)
+
+                # Get position from Loro
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro not connected, cannot create video node"
+
+                editor_node_data = loro_client.get_node(node_id)
+                editor_node_data = _ensure_dict(editor_node_data)
+
+                editor_pos = editor_node_data.get("position") if editor_node_data else None
+                if not isinstance(editor_pos, dict) or "x" not in editor_pos or "y" not in editor_pos:
+                    editor_pos = {"x": 100, "y": 100}
+
+                # Use NEEDS_LAYOUT_POSITION (-1, -1) to trigger frontend auto-layout
+                # This ensures the new node is placed correctly relative to the source, avoiding overlaps
+                new_x = -1
+                new_y = -1
+
+                pending_node = {
+                    "id": asset_id,
+                    "type": "video",
+                    "position": {"x": new_x, "y": new_y},
+                    "data": {
+                        "label": "Rendered Video",
+                        "status": "generating",
+                        "src": "",
+                        "duration": duration_seconds,
+                        "timelineDsl": updated_dsl,  # Using updated_dsl which includes correct durationInFrames
+                        "naturalWidth": updated_dsl.get("compositionWidth", 1920),
+                        "naturalHeight": updated_dsl.get("compositionHeight", 1080),
+                        "assetId": asset_id,
+                        "sourceNodeId": node_id
+                    }
+                }
+
+                edge_id = f"e-{node_id}-{asset_id}"
+                new_edge = {
+                    "id": edge_id,
+                    "source": node_id,
+                    "target": asset_id,
+                    "type": "default"
+                }
+
+                logger.info(f"[RunGen] Creating video node {asset_id} for editor {node_id}")
+                loro_client.batch_update_graph(
+                    nodes={asset_id: pending_node},
+                    edges={edge_id: new_edge}
+                )
+
+                return f"Rendering triggered for video-editor. Created video node {asset_id}. Watch canvas for updates."
+
+            # Verify it's a generation node (action-badge)
             if node.type != "action-badge":
                 return f"Error: Node {node_id} is not a generation node (type: {node.type})"
 
