@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { eq } from 'drizzle-orm';
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+
 import * as schema from '@/lib/db/schema';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { uploadBufferToR2, uploadVideoFromUrlToR2 } from '@/lib/r2-upload';
@@ -15,7 +15,7 @@ const getDb = async () => {
         if (bindings.DB) {
             return drizzleD1(bindings.DB, { schema });
         }
-    } catch (e) {
+    } catch (_e) {
         // Ignore error
     }
 

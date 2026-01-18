@@ -5,7 +5,7 @@ Provides multi-level interrupt checking:
 - before_tool: Check before each tool execution
 - token-level: Via callback injection, check during streaming
 
-All interrupt flags are stored in D1/SQLite for cross-instance access.
+All interrupt flags are stored in the configured database (Postgres/SQLite) for cross-instance access.
 """
 
 import logging
@@ -37,17 +37,17 @@ class InterruptRequested(Exception):
 
 class InterruptCallbackHandler(BaseCallbackHandler):
     """Callback handler for token-level interrupt checking.
-    
+
     Uses cached flag checks to minimize database queries while still
     providing responsive interruption during streaming.
     """
-    
+
     def __init__(self, thread_id: str, check_interval_ms: int = 500):
         """Initialize callback handler.
-        
+
         Args:
             thread_id: Session identifier
-            check_interval_ms: How often to check D1 for interrupt flag (default 500ms)
+            check_interval_ms: How often to check DB for interrupt flag (default 500ms)
         """
         super().__init__()
         self.thread_id = thread_id
@@ -78,13 +78,13 @@ class InterruptCallbackHandler(BaseCallbackHandler):
 
 class InterruptMiddleware(AgentMiddleware):
     """Middleware for multi-level interrupt checking.
-    
+
     Provides three levels of interrupt checking:
     1. before_model (awrap_model_call): Check before each LLM call
     2. before_tool (awrap_tool_call): Check before each tool execution
     3. token-level: Via injected callback handler
-    
-    All flags are stored in D1/SQLite for cross-instance access in serverless.
+
+    All flags are stored in the database for cross-instance access in serverless.
     """
     
     def __init__(self, thread_id: str, check_interval_ms: int = 500):

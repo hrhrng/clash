@@ -7,6 +7,7 @@ import {
     Plus,
     FilmSlate,
     Microphone,
+    Sparkle
 } from '@phosphor-icons/react';
 import Link from 'next/link';
 import { createProject } from '../actions';
@@ -36,61 +37,71 @@ export default function HomePageClient({ initialProjects }: HomePageClientProps)
     };
 
     return (
-        <div className="min-h-screen bg-white flex items-center">
-            <div className="mx-auto w-full max-w-7xl px-12">
+        <div className="text-gray-900 p-6 md:p-12">
+            <div className="mx-auto max-w-6xl">
                 {/* Hero Section with Chat Input */}
-                <div className="mb-24 text-center">
-                    <h1 className="mb-8 text-4xl font-bold tracking-tight text-gray-900">
-                        Hey! Let's make some CLASH?
-                    </h1>
+                <div className="mb-24 pt-12">
+                    <motion.h1
+                        className="mb-12 text-6xl md:text-7xl font-bold tracking-tighter text-gray-900"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5 }}
+                    >
+                        Hey! <br />
+                        Let's make some <span className="text-brand">CLASH?</span>
+                    </motion.h1>
 
-                    {/* Chat Input */}
-                    <div className="mx-auto max-w-3xl">
-                        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-lg">
+                    {/* Chat Input - Gemini Style */}
+                    <div className="max-w-4xl">
+                        <div className="group relative rounded-[2rem] border border-gray-200 bg-white p-2 shadow-sm transition-all duration-300 hover:shadow-md focus-within:shadow-xl focus-within:border-gray-300">
                             <textarea
                                 value={inputValue}
                                 onChange={(e) => setInputValue(e.target.value)}
                                 onKeyPress={handleKeyPress}
                                 placeholder="Describe your video idea... e.g., 'Create a 60-second product demo video with subtitles'"
-                                className="w-full resize-none bg-white px-4 py-3 text-base text-gray-900 placeholder:text-gray-400 focus:outline-none"
+                                className="w-full resize-none rounded-2xl bg-transparent px-6 py-4 text-xl text-gray-900 placeholder:text-gray-400 focus:outline-none"
                                 rows={3}
                                 disabled={isPending}
                             />
-                            <div className="mt-3 flex items-center justify-between">
+                            <div className="flex items-center justify-between px-4 pb-2">
                                 <div className="flex gap-2">
                                     <motion.button
-                                        className="rounded-lg p-2 transition-colors hover:bg-gray-50"
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.95 }}
+                                        className="rounded-full p-3 transition-colors hover:bg-gray-100"
+                                        whileHover={{ scale: 1.1 }}
+                                        whileTap={{ scale: 0.9 }}
                                     >
                                         <FilmSlate
-                                            className="h-5 w-5 text-gray-600"
-                                            weight="duotone"
+                                            className="h-6 w-6 text-gray-500"
+                                            weight="regular"
                                         />
                                     </motion.button>
                                     <motion.button
-                                        className="rounded-lg p-2 transition-colors hover:bg-gray-50"
-                                        whileHover={{ scale: 1.05 }}
-                                        whileTap={{ scale: 0.95 }}
+                                        className="rounded-full p-3 transition-colors hover:bg-gray-100"
+                                        whileHover={{ scale: 1.1 }}
+                                        whileTap={{ scale: 0.9 }}
                                     >
                                         <Microphone
-                                            className="h-5 w-5 text-gray-600"
-                                            weight="duotone"
+                                            className="h-6 w-6 text-gray-500"
+                                            weight="regular"
                                         />
                                     </motion.button>
                                 </div>
                                 <motion.button
                                     onClick={handleSend}
                                     disabled={!inputValue.trim() || isPending}
-                                    className={`flex items-center gap-2 rounded-lg px-4 py-2 transition-all ${inputValue.trim() && !isPending
-                                        ? 'bg-gray-900 text-white shadow-md'
-                                        : 'cursor-not-allowed bg-gray-200 text-gray-400'
+                                    className={`flex items-center gap-2 rounded-full px-6 py-3 transition-all ${inputValue.trim() && !isPending
+                                        ? 'bg-gray-900 text-white shadow-lg hover:bg-brand'
+                                        : 'cursor-not-allowed bg-gray-100 text-gray-400'
                                         }`}
                                     whileHover={inputValue.trim() && !isPending ? { scale: 1.05 } : {}}
                                     whileTap={inputValue.trim() && !isPending ? { scale: 0.95 } : {}}
                                 >
-                                    <PaperPlaneRight className="h-4 w-4" weight="fill" />
-                                    <span className="text-sm font-medium">
+                                    {isPending ? (
+                                        <Sparkle className="h-5 w-5 animate-spin" weight="fill" />
+                                    ) : (
+                                        <PaperPlaneRight className="h-5 w-5" weight="fill" />
+                                    )}
+                                    <span className="text-base font-medium">
                                         {isPending ? 'Creating...' : 'Generate'}
                                     </span>
                                 </motion.button>
@@ -101,47 +112,61 @@ export default function HomePageClient({ initialProjects }: HomePageClientProps)
 
                 {/* Recent Projects */}
                 <div>
-                    <div className="mb-6 flex items-center justify-between">
-                        <h2 className="text-2xl font-bold text-gray-900">Recent Projects</h2>
+                    <div className="mb-10 flex items-center justify-between">
+                        <h2 className="text-3xl font-bold tracking-tight text-gray-900">Recent Projects</h2>
                         <Link
                             href="/projects"
-                            className="text-sm font-medium text-red-600 transition-colors hover:text-red-700"
+                            className="text-lg font-medium text-gray-500 transition-colors hover:text-brand"
                         >
                             See All →
                         </Link>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                         {/* Empty State Card / New Project */}
                         <motion.button
-                            className="group flex aspect-square items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 transition-all hover:border-red-200 hover:bg-red-50"
-                            whileHover={{ x: 2 }}
+                            className="group flex aspect-[4/3] flex-col items-center justify-center gap-4 rounded-[2rem] border-2 border-dashed border-gray-200 bg-gray-50 transition-all hover:border-brand/30 hover:bg-gray-100"
+                            whileHover={{ scale: 1.01 }}
                             whileTap={{ scale: 0.98 }}
                             onClick={() => {
-                                // Optional: focus input or open modal
                                 document.querySelector('textarea')?.focus();
                             }}
                         >
-                            <Plus
-                                className="h-8 w-8 text-gray-400 transition-colors group-hover:text-red-500"
-                                weight="bold"
-                            />
+                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm transition-transform group-hover:scale-110">
+                                <Plus
+                                    className="h-8 w-8 text-gray-400 transition-colors group-hover:text-brand"
+                                    weight="bold"
+                                />
+                            </div>
+                            <span className="text-lg font-medium text-gray-500 group-hover:text-gray-900">New Project</span>
                         </motion.button>
 
                         {/* Project Cards */}
                         {initialProjects.map((project) => (
                             <Link key={project.id} href={`/projects/${project.id}`}>
                                 <motion.div
-                                    className="group aspect-square cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-slate-100 transition-all hover:border-red-200"
-                                    whileHover={{ x: 2 }}
+                                    className="group relative aspect-[4/3] overflow-hidden rounded-[2rem] bg-gray-100 transition-all hover:shadow-xl"
+                                    whileHover={{ y: -4 }}
                                     whileTap={{ scale: 0.98 }}
-                                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                                 >
-                                    <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 p-4 text-center transition-all group-hover:from-red-50 group-hover:to-red-100">
-                                        <span className="text-4xl mb-2">🎬</span>
-                                        <span className="text-sm font-medium text-gray-700 line-clamp-2">
-                                            {project.name}
-                                        </span>
+                                    <div className="absolute inset-0 flex flex-col justify-between bg-white p-8 transition-colors group-hover:bg-gray-50">
+                                        <div className="flex items-start justify-between">
+                                            <span className="text-5xl">🎬</span>
+                                            <div className="opacity-0 transition-opacity group-hover:opacity-100">
+                                                <div className="rounded-full bg-white p-2 shadow-sm">
+                                                    <PaperPlaneRight className="h-5 w-5 text-gray-900" />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="line-clamp-2 text-2xl font-bold leading-tight tracking-tight text-gray-900 group-hover:text-brand transition-colors">
+                                                {project.name}
+                                            </h3>
+                                            <p className="mt-2 text-sm font-medium text-gray-400">
+                                                Last edited just now
+                                            </p>
+                                        </div>
                                     </div>
                                 </motion.div>
                             </Link>

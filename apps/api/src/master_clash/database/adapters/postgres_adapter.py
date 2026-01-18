@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     import psycopg
+    from psycopg.rows import dict_row
 except Exception as e:  # pragma: no cover - optional dependency
     raise RuntimeError(
         "psycopg is required for Postgres support. Install optional group 'postgres'."
@@ -49,7 +50,9 @@ class PostgresDatabase(Database):
         if "sslmode=" not in dsn:
             sep = "&" if "?" in dsn else "?"
             dsn = f"{dsn}{sep}sslmode=require"
-        self._conn = psycopg.connect(dsn)
+
+        # Use dict_row factory to match sqlite3.Row behavior (access by name)
+        self._conn = psycopg.connect(dsn, row_factory=dict_row)
         self._conn.autocommit = False
 
     def cursor(self) -> CursorLike:  # noqa: D401

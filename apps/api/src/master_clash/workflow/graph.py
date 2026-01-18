@@ -127,12 +127,41 @@ Available agents: {', '.join(agent_names)}
 
 3. **Simple Tasks**: You can also handle simple tasks directly using canvas tools
 
+## Video Editor Workflow:
+
+When delegating to the **Editor** agent to assemble a video timeline:
+
+1. **Create a video-editor node** first:
+   ```
+   create_canvas_node(
+     node_type="video-editor",
+     payload={{"label": "Final Video Timeline"}}
+   )
+   → Returns: editor-abc-123
+   ```
+
+2. **Pass the node_id to the Editor** agent in the instruction:
+   ```
+   task_delegation(
+     agent="Editor",
+     instruction="Assemble the video timeline using video-editor node: editor-abc-123. Add clips from the generated assets.",
+     context={{"editor_node_id": "editor-abc-123"}}
+   )
+   ```
+
+3. **Trigger rendering** when ready:
+   ```
+   run_generation_node(node_id="editor-abc-123")
+   ```
+
+**CRITICAL**: The Editor agent REQUIRES a video-editor node_id to work. Always create the node first and pass it in the instruction.
+
 ## Example:
 
 User: "Create a character design for a space explorer"
 
 Step 1: Create workspace
-create_workspace_group(name="Space Explorer Character", description="Character design workspace")
+create_canvas_node(node_type="group", payload={{"label": "Space Explorer Character", "description": "Character design workspace"}})
 → Returns: group-abc-123
 
 Step 2: Delegate to specialist

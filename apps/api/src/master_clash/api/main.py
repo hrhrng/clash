@@ -14,7 +14,6 @@
 """
 
 import asyncio
-import base64
 import json
 import logging
 import uuid
@@ -29,15 +28,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from master_clash.api.describe_router import router as describe_router
+from master_clash.api.execute_router import router as execute_router
+from master_clash.api.session_router import router as session_router
+from master_clash.api.stream_emitter import StreamEmitter
+from master_clash.api.tasks_router import router as tasks_router
 from master_clash.config import get_settings
 from master_clash.context import ProjectContext, set_project_context
+from master_clash.loro_sync import LoroSyncClient
 from master_clash.tools.description import generate_description
 from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.nano_banana import nano_banana_gen
-from master_clash.loro_sync import LoroSyncClient
 from master_clash.utils import image_to_base64
 from master_clash.workflow.multi_agent import get_or_create_graph
-from master_clash.api.stream_emitter import StreamEmitter
 
 # Configure logging
 settings = get_settings()
@@ -59,15 +62,11 @@ app.add_middleware(
 )
 
 # Register routers
-from master_clash.api.describe_router import router as describe_router
-from master_clash.api.tasks_router import router as tasks_router
-from master_clash.api.execute_router import router as execute_router
-from master_clash.api.session_router import router as session_router
+
 app.include_router(describe_router)
 app.include_router(tasks_router)
 app.include_router(execute_router)
 app.include_router(session_router)
-
 
 
 class GenerateSemanticIDRequest(BaseModel):
@@ -130,16 +129,17 @@ async def stream_workflow(
 
         # Create/update session record for interrupt tracking
         from master_clash.services.session_interrupt import (
-            create_session, 
+            create_session,
+            generate_and_update_title,
             set_session_status,
-            generate_and_update_title
         )
+
         await create_session(thread_id, project_id)
-        
+
         # If new session, trigger title generation in background
         if not resume and user_input:
             asyncio.create_task(generate_and_update_title(thread_id, user_input))
-            
+
         logger.info(f"[Session] Started: thread_id={thread_id}, project_id={project_id}")
 
         inputs = None
@@ -159,6 +159,7 @@ async def stream_workflow(
             }
             # Log the original user input as an event for complete history replay
             from master_clash.services.session_interrupt import log_session_event
+
             log_session_event(thread_id, "user_message", {"content": user_input})
 
         config = {
@@ -466,10 +467,10 @@ async def stream_workflow(
                                 part_text = part.get("text", "")
                                 if part_text:
                                     yield emitter.text(
-                                        part_text, 
+                                        part_text,
                                         thread_id=thread_id,
-                                        agent=agent_name or "Agent", 
-                                        agent_id=agent_id
+                                        agent=agent_name or "Agent",
+                                        agent_id=agent_id,
                                     )
                         continue
 
@@ -477,10 +478,10 @@ async def stream_workflow(
                     text_content = _extract_text(content)
                     if text_content:
                         yield emitter.text(
-                            text_content, 
+                            text_content,
                             thread_id=thread_id,
-                            agent=agent_name or "Agent", 
-                            agent_id=agent_id
+                            agent=agent_name or "Agent",
+                            agent_id=agent_id,
                         )
 
                 elif mode == "custom":
@@ -517,20 +518,27 @@ async def stream_workflow(
                             # Let's emit as 'thinking' for now to ensure it shows up in the agent card logs?
                             # Or better, if it's raw text from the model, it's likely the agent 'working'.
                             # In ChatbotCopilot.tsx, 'thinking' event adds to logs.
-                            yield emitter.thinking(content, thread_id=thread_id, agent=agent, agent_id=agent_id)
+                            yield emitter.thinking(
+                                content, thread_id=thread_id, agent=agent, agent_id=agent_id
+                            )
                             continue
                         yield emitter.format_event("custom", data, thread_id=thread_id)
 
         except Exception as exc:  # pragma: no cover - surfaced to client
             # Check if this is an interrupt request
             from master_clash.workflow.interrupt_middleware import InterruptRequested
+
             if isinstance(exc, InterruptRequested):
                 logger.info(f"[Session] Interrupted: thread_id={thread_id}")
                 await set_session_status(thread_id, "interrupted")
-                yield emitter.format_event("session_interrupted", {
-                    "thread_id": thread_id,
-                    "message": "Session interrupted. You can resume later with the same thread_id.",
-                }, thread_id=thread_id)
+                yield emitter.format_event(
+                    "session_interrupted",
+                    {
+                        "thread_id": thread_id,
+                        "message": "Session interrupted. You can resume later with the same thread_id.",
+                    },
+                    thread_id=thread_id,
+                )
             else:
                 logger.error("Stream workflow failed: %s", exc, exc_info=True)
                 await set_session_status(thread_id, "completed")  # Mark as completed on error
@@ -568,10 +576,10 @@ async def generate_semantic_ids(request: GenerateSemanticIDRequest):
     that are unique within the project scope.
     """
     try:
-        from master_clash.semantic_id import create_d1_checker, generate_unique_ids_for_project
+        from master_clash.semantic_id import create_id_checker, generate_unique_ids_for_project
 
-        # Create D1 checker
-        checker = create_d1_checker()
+        # Create generic checker (works with Postgres/SQLite)
+        checker = create_id_checker()
 
         # Generate unique IDs
         ids = generate_unique_ids_for_project(request.project_id, request.count, checker)

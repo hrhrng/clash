@@ -91,8 +91,18 @@ class TimelineMiddleware(AgentMiddleware):
 
         timeline_prompt = """
 You can control the video timeline via the DSL tools.
-- read_dsl: Read the current timeline DSL file.
-- patch_dsl: Modify the timeline using JSON Patch operations.
+
+**CRITICAL**: You MUST be given a video-editor node ID to work with.
+If you haven't been given a node_id, ask the director for it or request creating a new video-editor node first.
+
+DSL Tools:
+- read_dsl(node_id): Read the current timeline DSL from a video-editor node.
+- patch_dsl(node_id, patch): Modify the timeline using JSON Patch operations on a video-editor node.
+
+Example workflow:
+1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
+2. You read the current state: read_dsl(node_id="editor-abc123")
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {...}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -106,8 +116,18 @@ You can control the video timeline via the DSL tools.
 
         timeline_prompt = """
 You can control the video timeline via the DSL tools.
-- read_dsl: Read the current timeline DSL file.
-- patch_dsl: Modify the timeline using JSON Patch operations.
+
+**CRITICAL**: You MUST be given a video-editor node ID to work with.
+If you haven't been given a node_id, ask the director for it or request creating a new video-editor node first.
+
+DSL Tools:
+- read_dsl(node_id): Read the current timeline DSL from a video-editor node.
+- patch_dsl(node_id, patch): Modify the timeline using JSON Patch operations on a video-editor node.
+
+Example workflow:
+1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
+2. You read the current state: read_dsl(node_id="editor-abc123")
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {...}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -125,25 +145,61 @@ You can control the video timeline via the DSL tools.
     def _read_dsl_tool(self) -> BaseTool:
         """Create read_dsl tool."""
         from langchain_core.tools import tool
-        import os
+        import json
 
         class ReadDSLInput(BaseModel):
-            file_path: str = Field(description="Path to the DSL file")
+            node_id: str = Field(description="ID of the video-editor node containing the timeline DSL")
 
         @tool(args_schema=ReadDSLInput)
-        def read_dsl(file_path: str, runtime: ToolRuntime) -> str:
-            """Read the content of a DSL file (JSON)."""
+        def read_dsl(node_id: str, runtime: ToolRuntime) -> str:
+            """Read the timeline DSL from a video-editor node.
+
+            Returns the timelineDsl field from the node's data as a JSON string.
+            If the node doesn't exist or has no timeline, returns an error message.
+            """
             try:
-                # Security check: prevent traversing up
-                if ".." in file_path or file_path.startswith("/"):
-                    return "Error: Absolute paths and directory traversal are not allowed. Provide a path relative to the project root."
+                # Get Loro client from runtime
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
 
-                if not os.path.exists(file_path):
-                    return f"Error: File {file_path} does not exist."
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro client not connected. Cannot read node data."
 
-                with open(file_path, "r") as f:
-                    return f.read()
+                # Read node from Loro
+                node_data = loro_client.get_node(node_id)
+                if not node_data:
+                    return f"Error: Node {node_id} not found."
+
+                # Handle different node data formats
+                if hasattr(node_data, "value"):
+                    node_data = node_data.value
+
+                if not isinstance(node_data, dict):
+                    return f"Error: Invalid node data format for {node_id}"
+
+                # Check node type
+                if node_data.get("type") != "video-editor":
+                    return f"Error: Node {node_id} is not a video-editor node (type: {node_data.get('type')})"
+
+                # Get timelineDsl from node.data
+                data = node_data.get("data", {})
+                timeline_dsl = data.get("timelineDsl")
+
+                if timeline_dsl is None:
+                    # Return empty timeline structure
+                    empty_timeline = {
+                        "version": "1.0.0",
+                        "fps": 30,
+                        "compositionWidth": 1920,
+                        "compositionHeight": 1080,
+                        "durationInFrames": 0,
+                        "tracks": []
+                    }
+                    return json.dumps(empty_timeline, indent=2)
+
+                return json.dumps(timeline_dsl, indent=2)
+
             except Exception as e:
+                logger.error(f"Error reading DSL from node {node_id}: {e}", exc_info=True)
                 return f"Error reading DSL: {e}"
 
         return read_dsl
@@ -153,47 +209,76 @@ You can control the video timeline via the DSL tools.
         from langchain_core.tools import tool
         import json
         import jsonpatch
-        import os
 
         class PatchDSLInput(BaseModel):
-            file_path: str = Field(description="Path to the DSL file")
+            node_id: str = Field(description="ID of the video-editor node containing the timeline DSL")
             patch: list[dict[str, Any]] = Field(
-                description="JSON Patch operations (RFC 6902). Example: [{'op': 'replace', 'path': '/version', 'value': '1.0.1'}, {'op': 'add', 'path': '/scenes/0/clips/-', 'value': {...}}]"
+                description="JSON Patch operations (RFC 6902). Example: [{'op': 'replace', 'path': '/version', 'value': '1.0.1'}, {'op': 'add', 'path': '/tracks/-', 'value': {...}}]"
             )
 
         @tool(args_schema=PatchDSLInput)
         def patch_dsl(
-            file_path: str,
+            node_id: str,
             patch: list[dict[str, Any]],
             runtime: ToolRuntime,
         ) -> str:
-            """Apply a JSON Patch to the DSL file."""
+            """Apply a JSON Patch to the timeline DSL of a video-editor node.
+
+            This modifies the timelineDsl field in the node's data and updates the node in Loro.
+            """
             try:
-                # Security check
-                if ".." in file_path or file_path.startswith("/"):
-                    return "Error: Absolute paths and directory traversal are not allowed. Provide a path relative to the project root."
+                # Get Loro client from runtime
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
 
-                if not os.path.exists(file_path):
-                    # If file doesn't exist, start with empty dict
-                    original: dict[str, Any] = {}
-                else:
-                    with open(file_path, "r") as f:
-                        content = f.read().strip()
-                        if not content:
-                            original = {}
-                        else:
-                            original = json.loads(content)
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro client not connected. Cannot modify node data."
 
-                # Apply patch
-                patched = jsonpatch.apply_patch(original, patch)
+                # Read current node data
+                node_data = loro_client.get_node(node_id)
+                if not node_data:
+                    return f"Error: Node {node_id} not found."
 
-                # Write back
-                with open(file_path, "w") as f:
-                    json.dump(patched, f, indent=2)
+                # Handle different node data formats
+                if hasattr(node_data, "value"):
+                    node_data = node_data.value
 
-                return "Patch applied successfully"
+                if not isinstance(node_data, dict):
+                    return f"Error: Invalid node data format for {node_id}"
 
+                # Check node type
+                if node_data.get("type") != "video-editor":
+                    return f"Error: Node {node_id} is not a video-editor node (type: {node_data.get('type')})"
+
+                # Get current timelineDsl
+                data = node_data.get("data", {})
+                current_dsl = data.get("timelineDsl")
+
+                if current_dsl is None:
+                    # Initialize with empty timeline
+                    current_dsl = {
+                        "version": "1.0.0",
+                        "fps": 30,
+                        "compositionWidth": 1920,
+                        "compositionHeight": 1080,
+                        "durationInFrames": 0,
+                        "tracks": []
+                    }
+
+                # Apply JSON Patch
+                patched_dsl = jsonpatch.apply_patch(current_dsl, patch)
+
+                # Update node in Loro
+                updated_data = {**data, "timelineDsl": patched_dsl}
+                loro_client.update_node(node_id, {"data": updated_data})
+
+                logger.info(f"Successfully patched timeline DSL for node {node_id}")
+                return f"Patch applied successfully to video-editor node {node_id}"
+
+            except jsonpatch.JsonPatchException as e:
+                logger.error(f"JSON Patch error for node {node_id}: {e}", exc_info=True)
+                return f"Error: Invalid JSON Patch operation: {e}"
             except Exception as e:
+                logger.error(f"Error patching DSL for node {node_id}: {e}", exc_info=True)
                 return f"Error patching DSL: {e}"
 
         return patch_dsl
@@ -250,10 +335,13 @@ class CanvasMiddleware(AgentMiddleware):
 You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
-- create_canvas_node: Create text/group nodes (for organization)
+- create_canvas_node: Create text/group/video-editor nodes
+  - text: For notes and scripts
+  - group: For organization (ALWAYS create groups first!)
+  - video-editor: For timeline editing (creates a node with embedded timeline DSL)
 - list_model_cards: List available model cards for a given asset kind (image/video/audio). Use this first to choose a model and parameters.
 - create_generation_node: Create PromptActionNodes with embedded prompts for image/video generation
-- run_generation_node: Run a generation node to produce the asset (call after create)
+- run_generation_node: Run a generation node to produce the asset (call after create), OR run a video-editor node to render its timeline
 - wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
 - search_canvas: Search nodes by content
 
@@ -261,6 +349,12 @@ You have access to canvas tools for creating and managing visual content:
 1. FIRST create a Group to contain your work (e.g., "Scene 1", "Character Designs")
 2. THEN create all content nodes with parentId pointing to that group
 3. NEVER leave nodes floating outside of a group!
+
+**Video Editor Workflow**:
+- Create a video-editor node: `create_canvas_node(node_type="video-editor", payload={"label": "Final Video"})`
+- This creates a node with an embedded timeline DSL
+- Pass the video-editor node_id to the Editor sub-agent to assemble the timeline
+- When ready, trigger rendering: `run_generation_node(node_id="editor-node-id")`
 
 IMPORTANT: PromptActionNode Architecture:
 - Prompt and action are now MERGED into a single node type

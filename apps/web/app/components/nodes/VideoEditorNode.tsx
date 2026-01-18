@@ -6,7 +6,7 @@ import { useVideoEditor } from '../VideoEditorContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
 import { normalizeStatus, isActiveStatus } from '../../../lib/assetStatus';
-import { autoInsertNode, NEEDS_LAYOUT_POSITION } from '../../../lib/layout';
+import { autoInsertNode } from '../../../lib/layout';
 
 const VideoEditorNode = ({ data, id }: NodeProps) => {
     const { openEditor } = useVideoEditor();

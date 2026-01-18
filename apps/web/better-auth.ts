@@ -4,7 +4,7 @@ import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { withCloudflare } from "better-auth-cloudflare"
 import { drizzle } from "drizzle-orm/d1"
-import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3"
+
 
 import * as betterAuthSchema from "./lib/db/better-auth.schema"
 

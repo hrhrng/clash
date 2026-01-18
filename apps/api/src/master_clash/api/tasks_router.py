@@ -24,7 +24,8 @@ from pydantic import BaseModel, Field
 
 from master_clash.json_utils import dumps as json_dumps
 from master_clash.json_utils import loads as json_loads
-from master_clash.services import d1, genai, generation_models, r2
+from master_clash.services import genai, generation_models, r2
+from master_clash.database.di import get_database
 from master_clash.services.generation_models import (
     ImageGenerationRequest,
     VideoGenerationRequest,
@@ -78,7 +79,7 @@ class TaskStatusResponse(BaseModel):
     node_id: str | None = None
 
 
-# === D1 Operations ===
+# === Database Operations ===
 
 async def create_task(
     task_id: str,
@@ -88,74 +89,103 @@ async def create_task(
     params: dict,
     callback_url: str | None = None,
 ) -> None:
-    """Create task in D1."""
+    """Create task in DB."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """INSERT INTO aigc_tasks 
-           (task_id, project_id, task_type, provider, status, params, 
-            created_at, updated_at, max_retries)
-           VALUES (?, ?, ?, 'python', ?, ?, ?, ?, 3)""",
-        [task_id, project_id, task_type, STATUS_PENDING, 
-         json_dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """INSERT INTO aigc_tasks
+               (task_id, project_id, task_type, provider, status, params,
+                created_at, updated_at, max_retries)
+               VALUES (?, ?, ?, 'python', ?, ?, ?, ?, 3)""",
+            [task_id, project_id, task_type, STATUS_PENDING,
+             json_dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def claim_task(task_id: str) -> bool:
     """Claim task with lease."""
     now = int(datetime.utcnow().timestamp() * 1000)
     lease_expires = now + LEASE_DURATION_MS
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
-           WHERE task_id = ? AND status = ?""",
-        [STATUS_PROCESSING, WORKER_ID, now, lease_expires, now, task_id, STATUS_PENDING]
-    )
-    return True
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+               WHERE task_id = ? AND status = ?""",
+            [STATUS_PROCESSING, WORKER_ID, now, lease_expires, now, task_id, STATUS_PENDING]
+        )
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 async def renew_lease(task_id: str) -> bool:
     """Renew task lease."""
     now = int(datetime.utcnow().timestamp() * 1000)
     lease_expires = now + LEASE_DURATION_MS
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
-           WHERE task_id = ? AND worker_id = ?""",
-        [now, lease_expires, now, task_id, WORKER_ID]
-    )
-    return True
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+               WHERE task_id = ? AND worker_id = ?""",
+            [now, lease_expires, now, task_id, WORKER_ID]
+        )
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 async def complete_task(task_id: str, result_url: str = None, result_data: dict = None) -> None:
     """Mark task completed."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, result_url = ?, result_data = ?, updated_at = ?, completed_at = ?
-           WHERE task_id = ?""",
-        [STATUS_COMPLETED, result_url, json_dumps(result_data) if result_data else None, now, now, task_id]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, result_url = ?, result_data = ?, updated_at = ?, completed_at = ?
+               WHERE task_id = ?""",
+            [STATUS_COMPLETED, result_url, json_dumps(result_data) if result_data else None, now, now, task_id]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def fail_task(task_id: str, error: str) -> None:
     """Mark task failed."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, error_message = ?, updated_at = ?
-           WHERE task_id = ?""",
-        [STATUS_FAILED, error, now, task_id]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, error_message = ?, updated_at = ?
+               WHERE task_id = ?""",
+            [STATUS_FAILED, error, now, task_id]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def get_task(task_id: str) -> dict | None:
-    """Get task from D1."""
-    return await d1.query_one("SELECT * FROM aigc_tasks WHERE task_id = ?", [task_id])
+    """Get task from DB."""
+    db = get_database()
+    try:
+        row = db.fetchone("SELECT * FROM aigc_tasks WHERE task_id = ?", [task_id])
+        if not row:
+            return None
+        # row is dict-like (psycopg dict_row or sqlite3.Row)
+        return dict(row)
+    finally:
+        db.close()
+
 
 
 async def callback_to_loro(
@@ -465,12 +495,17 @@ async def process_video_generation(task_id: str, params: dict) -> None:
                 })
                 return
             logger.info(f"[Tasks] Video task submitted: {external_task_id} via {submission.provider}")
-            
-            await d1.execute(
-                "UPDATE aigc_tasks SET external_task_id = ?, external_service = ? WHERE task_id = ?",
-                [external_task_id, submission.provider, task_id]
-            )
-            
+
+            db = get_database()
+            try:
+                db.execute(
+                    "UPDATE aigc_tasks SET external_task_id = ?, external_service = ? WHERE task_id = ?",
+                    [external_task_id, submission.provider, task_id]
+                )
+                db.commit()
+            finally:
+                db.close()
+
             max_polls = 60  # 60 * 30s = 30 minutes
             for i in range(max_polls):
                 await asyncio.sleep(30)

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import * as schema from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -14,7 +14,7 @@ const getDb = async () => {
         if (bindings.DB) {
             return drizzleD1(bindings.DB, { schema });
         }
-    } catch (e) {
+    } catch (_e) {
         // ignore
     }
 

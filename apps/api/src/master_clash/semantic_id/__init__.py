@@ -5,7 +5,7 @@ IDs are composed of three words from carefully curated wordlists, forming
 identifiers like "alpha-ocean-square" or "beta-mountain-circle".
 """
 
-from .d1_checker import D1IDChecker, create_d1_checker
+from .checker import IDChecker, create_id_checker
 from .db_integration import (
     InMemoryIDChecker,
     generate_unique_id_for_project,
@@ -28,9 +28,9 @@ __all__ = [
     "NATURE_ELEMENTS_WORDS",
     "GEOMETRY_ABSTRACT_WORDS",
     "ALL_WORDLISTS",
-    # D1 Database checker (production)
-    "D1IDChecker",
-    "create_d1_checker",
+    # Database checker (Postgres/SQLite)
+    "IDChecker",
+    "create_id_checker",
     # In-memory checker (testing)
     "InMemoryIDChecker",
     # Convenience functions

@@ -27,7 +27,6 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     const [isVideoReady, setIsVideoReady] = useState(false);
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const lastReadyUrlRef = useRef<string | undefined>(undefined);
-    const initialSizeRef = useRef<{ width: number; height: number } | null>(null);
     const didInitSizeRef = useRef(false);
     const pendingThumbnailCaptureRef = useRef(false);
     const videoUrlRef = useRef(videoUrl);
@@ -48,29 +47,23 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
         ? calculateScaledDimensions(data.naturalWidth, data.naturalHeight)
         : null;
 
-    // Debug: log natural dimensions and calculated size
-    console.log('[VideoNode] Natural dimensions from data:', {
-        id,
-        naturalWidth: data.naturalWidth,
-        naturalHeight: data.naturalHeight,
-        naturalDimensions,
-    });
-
-    // Debug: log video src and resolved URL
-    const resolvedVideoUrl = videoUrl ? resolveAssetUrl(videoUrl) : undefined;
-    console.log('[VideoNode] Video URL debug:', {
-        id,
-        originalSrc: data.src,
-        videoUrl,
-        resolvedUrl: resolvedVideoUrl,
-    });
-
     const hasPreview = Boolean(videoUrl);
     const measuredWidth = currentNode?.width ?? currentNode?.style?.width;
     const measuredHeight = currentNode?.height ?? currentNode?.style?.height;
 
-    if (!initialSizeRef.current) {
-        initialSizeRef.current = resolveInitialMediaSize({
+    // Use useState for stable initial size calculation
+    const [initialSize] = useState<{ width: number; height: number }>(() => {
+        // Log debug info only on initial calculation
+        console.log('[VideoNode] Calculating initial size:', {
+            id,
+            naturalWidth: data.naturalWidth,
+            naturalHeight: data.naturalHeight,
+            naturalDimensions,
+            originalSrc: data.src,
+            videoUrl,
+        });
+        
+        return resolveInitialMediaSize({
             status,
             hasPreview,
             measuredWidth,
@@ -78,10 +71,10 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
             naturalDimensions,
             aspectRatioDimensions,
         });
-    }
+    });
 
-    const nodeWidth = initialSizeRef.current.width;
-    const nodeHeight = initialSizeRef.current.height;
+    const nodeWidth = initialSize.width;
+    const nodeHeight = initialSize.height;
 
     // Load from cache if src changes
     useEffect(() => {

@@ -9,7 +9,7 @@
 
 import type { Node, Edge } from 'reactflow';
 import type { Point, Rect } from './types';
-import { getAbsoluteRect, getNodeSize, rectOverlaps } from './core/geometry';
+import { getNodeSize, rectOverlaps } from './core/geometry';
 
 /**
  * Maximum dimension for media nodes (matches VideoNode.MAX_MEDIA_DIMENSION)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Initialize the Master Clash database.
 
-This script sets up the SQLite/D1 database with all required tables
+This script sets up the SQLite/PostgreSQL database with all required tables
 for LangGraph checkpointing and metadata tracking.
 """
 
@@ -27,7 +27,7 @@ def main():
         print("\nNext steps:")
         print("  1. Configure DATABASE_URL in your .env file (sqlite or postgres/neon)")
         print("  2. Run: python examples/workflow_with_checkpoints.py")
-        print("  3. Check docs/D1_INTEGRATION.md for D1 and README for Postgres/Neon notes")
+        print("  3. Check README for Postgres/Neon setup instructions")
 
     except Exception as e:
         print(f"\n❌ Error initializing database: {e}")

@@ -121,7 +121,7 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Track pending local updates that haven't been acknowledged by server
-  const pendingUpdatesRef = useRef<Set<string>>(new Set());
+  
 
   // Update undo/redo state
   const updateUndoRedoState = useCallback(() => {
@@ -145,7 +145,7 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
       const nodeData = value as any;
       // Validate parentId
       if (nodeData.parentId && !nodeIds.has(nodeData.parentId)) {
-        const { parentId, ...rest } = nodeData;
+        const { parentId: _parentId, ...rest } = nodeData;
         nodes.push({ id: key, ...rest });
       } else {
         nodes.push({ id: key, ...nodeData });
@@ -315,7 +315,7 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
       console.error('[useLoroSync] WebSocket error:', error);
     };
 
-    ws.onclose = (event) => {
+    ws.onclose = (_event) => {
       setConnected(false);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       if (!isUnmountingRef.current) {
@@ -331,7 +331,7 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
       retryCountRef.current++;
       connect();
     }, delay);
-  }, [connect]);
+  }, [connect, retryCountRef]);
 
   // Only connect WebSocket AFTER initialization is complete
   useEffect(() => {

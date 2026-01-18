@@ -100,11 +100,6 @@ class Settings:
         self.r2_bucket_name: str | None = _env("R2_BUCKET_NAME")
         self.r2_public_url: str | None = _env("R2_PUBLIC_URL")
 
-        # Cloudflare D1 (checkpointer) - DEPRECATED: Use PostgreSQL instead
-        self.cloudflare_account_id: str | None = _env("CLOUDFLARE_ACCOUNT_ID")
-        self.cloudflare_d1_database_id: str | None = _env("CLOUDFLARE_D1_DATABASE_ID")
-        self.cloudflare_api_token: str | None = _env("CLOUDFLARE_API_TOKEN")
-
         # PostgreSQL (Neon) - for checkpointer, sessions, and agent data
         self.postgres_connection_string: str | None = _env("POSTGRES_CONNECTION_STRING")
 
@@ -132,15 +127,6 @@ class Settings:
         if self.r2_account_id:
             return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
         return None
-
-    @property
-    def use_d1_checkpointer(self) -> bool:
-        """DEPRECATED: Use use_postgres_checkpointer instead."""
-        return bool(
-            self.cloudflare_account_id
-            and self.cloudflare_d1_database_id
-            and self.cloudflare_api_token
-        )
 
     @property
     def use_postgres_checkpointer(self) -> bool:

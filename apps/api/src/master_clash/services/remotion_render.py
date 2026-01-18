@@ -31,15 +31,13 @@ settings = get_settings()
 @dataclass
 class RenderResult:
     """Result of video rendering."""
+
     success: bool
     r2_key: Optional[str] = None
     error: Optional[str] = None
 
 
-async def prepare_asset_urls(
-    timeline_dsl: Dict[str, Any],
-    frontend_url: str
-) -> Dict[str, Any]:
+async def prepare_asset_urls(timeline_dsl: Dict[str, Any], frontend_url: str) -> Dict[str, Any]:
     """
     Convert asset URLs in DSL to full HTTP URLs that Remotion CLI can access.
 
@@ -119,9 +117,7 @@ def get_entry_point() -> Path:
         # This is more complex, returning the directory for now
         return bundle_dir
 
-    raise FileNotFoundError(
-        f"Remotion entry not found. Looking for {local_entry}"
-    )
+    raise FileNotFoundError(f"Remotion entry not found. Looking for {local_entry}")
 
 
 async def render_video_with_remotion(
@@ -157,24 +153,45 @@ async def render_video_with_remotion(
             output_file = temp_path / f"{task_id}.mp4"
 
             # Prepare props JSON with processed DSL
-            props_json = json_dumps({
+            # Ensure durationInFrames is an integer
+            duration_frames = processed_dsl.get("durationInFrames", 300)
+            try:
+                duration_frames = int(duration_frames)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[Remotion] Invalid durationInFrames: {duration_frames}, defaulting to 300"
+                )
+                duration_frames = 300
+
+            props_dict = {
                 "tracks": processed_dsl.get("tracks", []),
                 "compositionWidth": processed_dsl.get("compositionWidth", 1920),
                 "compositionHeight": processed_dsl.get("compositionHeight", 1080),
                 "fps": processed_dsl.get("fps", 30),
-                "durationInFrames": processed_dsl.get("durationInFrames", 300),
-            })
+                "durationInFrames": duration_frames,
+            }
+            props_json = json_dumps(props_dict)
 
             # Log the timeline DSL for debugging
             logger.info(f"[Remotion] Timeline DSL for task {task_id}:")
             logger.info(f"[Remotion]   Tracks: {len(processed_dsl.get('tracks', []))} track(s)")
+            logger.info(
+                f"[Remotion]   Duration: {duration_frames} frames ({duration_frames / 30:.2f}s)"
+            )
+            logger.info(
+                f"[Remotion]   Composition: {props_dict.get('compositionWidth')}x{props_dict.get('compositionHeight')}"
+            )
+
             for i, track in enumerate(processed_dsl.get("tracks", [])):
-                logger.info(f"[Remotion]     Track {i}: {track.get('id', 'unknown')} - {len(track.get('items', []))} item(s)")
-                for j, item in enumerate(track.get('items', [])):
-                    logger.info(f"[Remotion]       Item {j}: type={item.get('type')}, from={item.get('from')}, duration={item.get('durationInFrames')}")
-            logger.info(f"[Remotion]   Composition: {processed_dsl.get('compositionWidth', 1920)}x{processed_dsl.get('compositionHeight', 1080)} @ {processed_dsl.get('fps', 30)}fps")
-            logger.info(f"[Remotion]   Duration: {processed_dsl.get('durationInFrames', 300)} frames")
-            logger.info(f"[Remotion]   Props JSON: {props_json[:500]}...")  # Log first 500 chars
+                logger.info(
+                    f"[Remotion]     Track {i}: {track.get('id', 'unknown')} - {len(track.get('items', []))} item(s)"
+                )
+                for j, item in enumerate(track.get("items", [])):
+                    logger.info(
+                        f"[Remotion]       Item {j}: type={item.get('type')}, from={item.get('from')}, duration={item.get('durationInFrames')}, src={str(item.get('src'))[:50]}"
+                    )
+
+            logger.info(f"[Remotion]   Props JSON (first 500 chars): {props_json}...")
 
             # Build Remotion CLI command
             # Using the entry point directly (source file or bundled directory)
@@ -206,7 +223,7 @@ async def render_video_with_remotion(
                     capture_output=True,
                     text=True,
                     timeout=1800,  # 30 minutes timeout
-                )
+                ),
             )
 
             # Log output for debugging
@@ -216,13 +233,14 @@ async def render_video_with_remotion(
                 logger.error(f"[Remotion] stderr: {result.stderr[:1000]}")
 
             if result.returncode != 0:
-                raise RuntimeError(f"Remotion CLI failed with code {result.returncode}: {result.stderr}")
+                raise RuntimeError(
+                    f"Remotion CLI failed with code {result.returncode}: {result.stderr}"
+                )
 
             # Check if output file exists
             if not output_file.exists():
                 return RenderResult(
-                    success=False,
-                    error="Render completed but output file not found"
+                    success=False, error="Render completed but output file not found"
                 )
 
             # Upload to R2

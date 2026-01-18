@@ -22,8 +22,8 @@ export const thumbnailCache = {
         try {
             const key = THUMBNAIL_PREFIX + hashString(src);
             localStorage.setItem(key, base64);
-        } catch (e) {
-            console.warn('[thumbnailCache] Failed to save to localStorage:', e);
+        } catch (_e) {
+            console.warn('[thumbnailCache] Failed to save to localStorage:', _e);
         }
     },
 
@@ -35,7 +35,7 @@ export const thumbnailCache = {
         try {
             const key = THUMBNAIL_PREFIX + hashString(src);
             return localStorage.getItem(key);
-        } catch (e) {
+        } catch (_e) {
             return null;
         }
     },

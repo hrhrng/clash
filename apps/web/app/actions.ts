@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { drizzle as drizzleD1 } from 'drizzle-orm/d1';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+
 import * as schema from '@/lib/db/schema';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { headers } from 'next/headers';
@@ -123,7 +123,7 @@ export async function getProject(id: string) {
  * This function is kept for backward compatibility but does nothing.
  * Canvas state is now managed entirely by Loro sync.
  */
-export async function saveProjectState(id: string, nodes: any, edges: any) {
+export async function saveProjectState(_id: string, _nodes: any, _edges: any) {
     // No-op: Loro handles canvas state sync
     console.log('[saveProjectState] No-op: Loro is the single source of truth');
 }
@@ -152,7 +152,7 @@ export async function deleteProject(id: string) {
 
 // Chat/Agent Actions
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+
 
 export type CommandType = 'ADD_NODE' | 'ADD_EDGE' | 'UPDATE_NODE' | 'DELETE_NODE';
 

@@ -1,5 +1,5 @@
 import ELK, { ElkExtendedEdge, ElkNode } from 'elkjs/lib/elk.bundled';
-import { Edge, Node, Position } from 'reactflow';
+import { Edge, Node } from 'reactflow';
 
 const elk = new ELK();
 
@@ -15,7 +15,7 @@ const defaultOptions = {
 };
 
 export const getLayoutedElements = async (nodes: Node[], edges: Edge[], options: any = {}) => {
-    const isHorizontal = options?.['elk.direction'] === 'RIGHT';
+    const _isHorizontal = options?.['elk.direction'] === 'RIGHT';
 
     // 1. Construct the ELK graph hierarchy
     // We need to nest nodes based on parentId

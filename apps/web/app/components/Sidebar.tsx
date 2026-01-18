@@ -59,22 +59,22 @@ export default function Sidebar() {
   return (
     <aside className="fixed top-0 left-0 flex h-screen w-72 flex-col border-r border-slate-200 bg-slate-50">
       {/* Logo Section */}
-      <div className="border-b border-slate-200 px-4 py-6">
-        <Link href="/" className="group">
+      <div className="px-6 py-8">
+        <Link href="/" className="group inline-block">
           <motion.div
-            className="flex items-center px-4"
+            className="flex items-center"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <span className="font-display font-medium text-3xl tracking-tight text-slate-900">
-              Clash
+            <span className="font-display text-4xl font-bold tracking-tighter text-gray-900 group-hover:text-brand transition-colors">
+              C/
             </span>
           </motion.div>
         </Link>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1.5 overflow-y-auto p-4">
+      <nav className="flex-1 space-y-2 px-4">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
@@ -82,15 +82,15 @@ export default function Sidebar() {
           return (
             <Link key={item.name} href={item.href}>
               <motion.div
-                className={`flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium transition-all ${
+                className={`flex items-center gap-4 rounded-2xl px-5 py-3.5 text-base font-medium transition-all ${
                   isActive
-                    ? 'bg-red-50 text-red-600'
-                    : 'text-gray-700 hover:bg-gray-100'
+                    ? 'bg-gray-900 text-white shadow-md'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                 }`}
-                whileHover={{ x: 2 }}
+                whileHover={{ x: 4 }}
                 whileTap={{ scale: 0.98 }}
               >
-                <Icon className="h-5 w-5" weight="duotone" />
+                <Icon className={`h-6 w-6 ${isActive ? 'text-brand' : ''}`} weight={isActive ? "fill" : "regular"} />
                 <span>{item.name}</span>
               </motion.div>
             </Link>
@@ -99,14 +99,14 @@ export default function Sidebar() {
       </nav>
 
       {/* Bottom Section */}
-      <div className="space-y-1.5 border-t border-slate-200 p-4">
+      <div className="space-y-2 p-4 pb-8">
         {/* Settings */}
         <motion.button
-          className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-100"
-          whileHover={{ x: 2 }}
+          className="flex w-full items-center gap-4 rounded-2xl px-5 py-3.5 text-base font-medium text-gray-600 transition-all hover:bg-gray-100 hover:text-gray-900"
+          whileHover={{ x: 4 }}
           whileTap={{ scale: 0.98 }}
         >
-          <GearSix className="h-5 w-5" weight="duotone" />
+          <GearSix className="h-6 w-6" weight="regular" />
           <span>Settings</span>
         </motion.button>
 

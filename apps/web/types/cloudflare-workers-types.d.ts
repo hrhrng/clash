@@ -7,7 +7,7 @@ declare module "@cloudflare/workers-types" {
     [key: string]: unknown
   }
 
-  export interface KVNamespace<TValue = unknown> {
+  export interface KVNamespace<_TValue = unknown> {
     [key: string]: unknown
   }
 }

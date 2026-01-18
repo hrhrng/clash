@@ -29,13 +29,17 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             default=None,
             description="Optional description (useful for group nodes)",
         )
+        timelineDsl: dict[str, Any] | None = Field(
+            default=None,
+            description="Timeline DSL structure for video-editor nodes (optional, will be initialized with defaults if not provided)",
+        )
 
         class Config:
             extra = "allow"
 
     class CreateCanvasNodeInput(BaseModel):
-        node_type: Literal["text", "group"] = Field(
-            description="Node type to create (text for notes/scripts, group for organization). NOTE: For prompts with generation, use create_generation_node instead."
+        node_type: Literal["text", "group", "video-editor"] = Field(
+            description="Node type to create (text for notes/scripts, group for organization, video-editor for timeline editing). NOTE: For prompts with generation, use create_generation_node instead."
         )
         payload: CanvasNodeData = Field(
             description="Structured payload for text/prompt/group nodes"
@@ -71,10 +75,23 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
         resolved_backend = backend(runtime) if callable(backend) else backend
 
         try:
+            # For video-editor nodes, initialize timelineDsl if not provided
+            node_data_dict = payload.model_dump(exclude_none=True)
+            if node_type == "video-editor" and "timelineDsl" not in node_data_dict:
+                node_data_dict["timelineDsl"] = {
+                    "version": "1.0.0",
+                    "fps": 30,
+                    "compositionWidth": 1920,
+                    "compositionHeight": 1080,
+                    "durationInFrames": 0,
+                    "tracks": []
+                }
+                logger.info("[create_canvas_node] Initialized default timelineDsl for video-editor node")
+
             result = resolved_backend.create_node(
                 project_id=project_id,
                 node_type=node_type,
-                data=payload.model_dump(exclude_none=True),
+                data=node_data_dict,
                 position=position,
                 parent_id=parent_id,
             )
@@ -128,6 +145,9 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         if resolved_type == "group":
                             default_width = 400
                             default_height = 400
+                        elif resolved_type == "video-editor":
+                            default_width = 800
+                            default_height = 600
                         else:
                             default_width = 300
                             default_height = 300

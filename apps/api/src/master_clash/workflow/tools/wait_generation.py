@@ -46,6 +46,10 @@ def create_wait_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
                     # If this is a generation node (action-badge), not an asset node - fail immediately
                     if node_type == "action-badge":
                         return f"Error: Node '{node_id}' is a generation node (action-badge), not an asset node. wait_for_generation only works with image/video asset nodes. Please pass the ID of the actual image or video node created by run_generation_node."
+
+                    # If this is a video-editor node - fail immediately
+                    if node_type == "video-editor":
+                        return f"Error: Node '{node_id}' is a video-editor node, not an asset node. wait_for_generation only works with image/video asset nodes. Please pass the ID of the actual video node created by run_generation_node (look for the 'video' node connected to this editor)."
                 
                 start_time = asyncio.get_event_loop().time()
                 while asyncio.get_event_loop().time() - start_time < timeout_seconds:

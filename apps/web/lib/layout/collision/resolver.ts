@@ -1,8 +1,8 @@
 import type { Node } from 'reactflow';
-import type { Rect, Point, ResolutionStep, ResolutionResult, CollisionInfo } from '../types';
+import type { Rect, Point, ResolutionStep, ResolutionResult } from '../types';
 import { getAbsoluteRect, getAbsolutePosition, rectOverlaps } from '../core/geometry';
 import { Mesh } from '../core/mesh';
-import { detectCollisionsForNode, detectAllCollisions } from './detector';
+import { detectCollisionsForNode } from './detector';
 import { getSiblings } from '../group/hierarchy';
 
 interface ResolverOptions {
@@ -25,7 +25,7 @@ function resolveNodeCollision(
     workingPositions: Map<string, Point>,
     nodes: Node[],
     mesh: Mesh,
-    options: Required<ResolverOptions>
+    _options: Required<ResolverOptions>
 ): ResolutionStep | null {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) return null;

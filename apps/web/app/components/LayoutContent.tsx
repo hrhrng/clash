@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import Sidebar from './Sidebar';
+import TopNavigation from './TopNavigation';
 
 export default function LayoutContent({
   children,
@@ -14,15 +14,15 @@ export default function LayoutContent({
   const isProjectDetailPage = pathname?.match(/^\/projects\/[^\/]+$/);
 
   if (isProjectDetailPage) {
-    // 项目详情页面：全屏，无sidebar
+    // 项目详情页面：全屏，无sidebar/navigation
     return <>{children}</>;
   }
 
-  // 其他页面：显示sidebar
+  // 其他页面：显示TopNavigation
   return (
     <>
-      <Sidebar />
-      <main className="ml-72">{children}</main>
+      <TopNavigation />
+      <main className="pt-24 min-h-screen bg-white">{children}</main>
     </>
   );
 }

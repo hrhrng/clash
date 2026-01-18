@@ -37,11 +37,5 @@ def get_database() -> Database:
         from master_clash.database.adapters.postgres_adapter import PostgresDatabase
 
         return PostgresDatabase(url)
-    if scheme == "d1":
-        # Expect env: CF_ACCOUNT_ID, CF_API_TOKEN, D1_DATABASE_ID
-        from master_clash.database.adapters.d1_adapter import D1Database
-
-        dbname = parsed.netloc or parsed.path.lstrip("/") or "default"
-        return D1Database(dbname)
 
     raise ValueError(f"Unsupported DATABASE_URL scheme: {scheme}")

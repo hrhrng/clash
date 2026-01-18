@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useReactFlow, Node, Edge } from 'reactflow';
-import type { Point, Size, Rect, OwnershipResult, LayoutManagerConfig, MeshConfig } from '../types';
+import type { Point, Size, Rect, OwnershipResult, LayoutManagerConfig } from '../types';
 import { Mesh, createMesh } from '../core/mesh';
 import { getAbsoluteRect, getAbsolutePosition, getNodeSize } from '../core/geometry';
 import { updateNodeOwnership, checkOwnershipChange } from '../group/ownership';
@@ -160,7 +160,7 @@ export interface UseLayoutManagerReturn {
 export function useLayoutManager(
     config: Partial<LayoutManagerConfig> = {}
 ): UseLayoutManagerReturn {
-    const { getNodes, setNodes, getNode } = useReactFlow();
+    const { getNodes, setNodes } = useReactFlow();
 
     const finalConfig = useMemo(() => ({
         ...DEFAULT_CONFIG,

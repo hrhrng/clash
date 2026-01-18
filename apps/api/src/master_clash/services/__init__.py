@@ -3,7 +3,6 @@ Services package.
 
 Provides clean interfaces to external services:
 - r2: Cloudflare R2 storage
-- d1: Cloudflare D1 database
 - genai: Google GenAI (Gemini)
 - kling: Kling Video AI
 - generation_models: Unified model registry + dispatchers
@@ -12,13 +11,12 @@ Provides clean interfaces to external services:
 - remotion_render: Remotion video rendering service
 """
 
-from master_clash.services import d1, genai, kling, r2, generation_models, kling_kie_client
+from master_clash.services import genai, generation_models, kling, kling_kie_client, r2
 from master_clash.services.gemini_asr import GeminiASRService
 from master_clash.services.video_intelligence import VideoIntelligenceService
 
 __all__ = [
     "r2",
-    "d1",
     "genai",
     "kling",
     "generation_models",

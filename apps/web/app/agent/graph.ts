@@ -1,7 +1,7 @@
 import { StateGraph, END } from '@langchain/langgraph';
-import { BaseMessage, HumanMessage, AIMessage } from '@langchain/core/messages';
+import { BaseMessage, AIMessage } from '@langchain/core/messages';
 // import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { z } from 'zod';
+
 
 // Define Command types matching actions.ts
 export type CommandType = 'ADD_NODE' | 'ADD_EDGE' | 'UPDATE_NODE' | 'DELETE_NODE';
@@ -31,7 +31,7 @@ export interface AgentState {
 // Router Node
 const routerNode = async (state: AgentState) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    const content = lastMessage.content as string;
+    const _content = lastMessage.content as string;
     const lowerContent = content.toLowerCase();
 
     let next = 'chat';
@@ -47,7 +47,7 @@ const routerNode = async (state: AgentState) => {
 // Chat Node
 const chatNode = async (state: AgentState) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    const content = lastMessage.content as string;
+    const _content = lastMessage.content as string;
 
     // const systemPrompt = `
     // You are an AI Copilot for a node-based video editor. 
@@ -87,7 +87,7 @@ const chatNode = async (state: AgentState) => {
 // Image Generation Node
 const generateImageNode = async (state: AgentState) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    const content = lastMessage.content as string;
+    const _content = lastMessage.content as string;
 
     // const result = await aigc.generateImage(content);
 
@@ -100,7 +100,7 @@ const generateImageNode = async (state: AgentState) => {
 // Video Generation Node
 const generateVideoNode = async (state: AgentState) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    const content = lastMessage.content as string;
+    const _content = lastMessage.content as string;
 
     // const result = await aigc.generateVideo(content);
 

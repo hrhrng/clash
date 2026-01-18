@@ -18,9 +18,9 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
 
     // Sync when data changes
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setLabel((prev: string) => (data.label && data.label !== prev ? data.label : prev));
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setContent((prev: string) => (data.content && data.content !== prev ? data.content : prev));
     }, [data.label, data.content]);
 

@@ -169,8 +169,8 @@ export class Mesh {
         // Find minimum push distance for each direction
         const pushRight = overlapRight + this.config.padding;
         const pushDown = overlapDown + this.config.padding;
-        const pushLeft = -(overlapLeft + this.config.padding);
-        const pushUp = -(overlapUp + this.config.padding);
+        const _pushLeft = -(overlapLeft + this.config.padding);
+        const _pushUp = -(overlapUp + this.config.padding);
 
         // Prefer horizontal push (right) as the default
         // Only push down if it requires significantly less movement

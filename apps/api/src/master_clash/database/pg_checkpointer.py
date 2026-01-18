@@ -36,14 +36,19 @@ async def get_async_connection_pool() -> AsyncConnectionPool:
                 "autocommit": True,
                 "prepare_threshold": 0,
                 "connect_timeout": 30,  # Connection timeout in seconds
-                "options": "-c statement_timeout=30000",  # Query timeout
+                # TCP Keepalive settings for production stability
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
             },
             # Pool timeout settings to prevent stale connections
             timeout=30,  # Timeout for getting connection from pool
             max_idle=300,  # Max idle time before connection is closed (5 min)
-            max_lifetime=600,  # Max connection lifetime (10 min)
-            reconfigure=True,  # Allow reconfiguration
+            max_lifetime=3600,  # Max connection lifetime (1 hour)
+            open=False,
         )
+        await _async_pool.open()
 
     return _async_pool
 
