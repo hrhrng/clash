@@ -3,7 +3,9 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { EditorState, TimelineDsl, Track } from '@master-clash/remotion-core';
+import type { Node, Edge } from 'reactflow';
 import { useOptionalLoroSyncContext } from './LoroSyncContext';
+import { autoInsertNode } from '@/lib/layout';
 
 /**
  * Convert R2 key to frontend view URL for displaying in editor
@@ -107,6 +109,8 @@ export function VideoEditorProvider({
     children,
     onAssetAddedToCanvas,
     onCanvasAssetLinked,
+    nodes = [],
+    edges = [],
 }: {
     children: ReactNode;
     onAssetAddedToCanvas?: (
@@ -115,6 +119,8 @@ export function VideoEditorProvider({
         editorNodeId: string
     ) => Promise<Asset | null> | Asset | null;
     onCanvasAssetLinked?: (asset: Asset & { sourceNodeId?: string }, editorNodeId: string) => void;
+    nodes?: Node[];
+    edges?: Edge[];
 }) {
     const loroSync = useOptionalLoroSyncContext();
     const [isOpen, setIsOpen] = useState(false);
@@ -246,13 +252,40 @@ export function VideoEditorProvider({
 
         // Create a new video node with the rendered content
         const newVideoNodeId = `video-${Date.now()}`;
+
+        // Use autoInsertNode for precise client-side layout
+        // Create temporary edge and node objects for calculation
+        const tempEdge = {
+            id: `temp-edge-${editorNodeId}-${newVideoNodeId}`,
+            source: editorNodeId,
+            target: newVideoNodeId,
+            type: 'default'
+        };
+        const currentNodes = nodes || [];
+        const currentEdges = edges || [];
+
+        const editorNode = currentNodes.find(n => n.id === editorNodeId);
+        const tempNode = {
+            id: newVideoNodeId,
+            type: 'video',
+            position: { x: 0, y: 0 },
+            data: {},
+            parentId: editorNode?.parentId,
+            width: state.compositionWidth > 500 ? 500 : state.compositionWidth, // Approx width
+            height: state.compositionHeight > 500 ? 500 : state.compositionHeight,
+        } as Node;
+
+        // Run auto-layout calculation
+        const layoutResult = autoInsertNode(newVideoNodeId, [...currentNodes, tempNode], [...currentEdges, tempEdge]);
+        const finalPosition = layoutResult.position;
+
+        console.log('[VideoEditorContext] Export calculated layout position:', finalPosition);
+
         const newVideoNode = {
             id: newVideoNodeId,
             type: 'video',
-            position: {
-                x: 100 + Math.random() * 200,
-                y: 100 + Math.random() * 200,
-            },
+            position: finalPosition,
+            parentId: editorNode?.parentId,
             data: {
                 label: `Rendered Video`,
                 src: null,  // Will be filled by callback when rendering completes
@@ -279,11 +312,19 @@ export function VideoEditorProvider({
         };
         loroSync.addEdge(edgeId, newEdge);
 
+        // Sync pushed nodes from layout result
+        if (layoutResult.pushedNodes.size > 0) {
+            console.log('[VideoEditorContext] Syncing pushed nodes:', layoutResult.pushedNodes.size);
+            layoutResult.pushedNodes.forEach((pos, nodeId) => {
+                loroSync.updateNode(nodeId, { position: pos });
+            });
+        }
+
         console.log('[VideoEditorContext] Export triggered - created new video node:', newVideoNodeId);
 
         // Note: The actual rendering will be triggered by NodeProcessor
         // when it detects the new video node with 'generating' status
-    }, [editorNodeId, loroSync]);
+    }, [editorNodeId, loroSync, nodes, edges]);
 
     const handleAssetUpload = useCallback(
         async (file: File, type: 'video' | 'image' | 'audio') => {

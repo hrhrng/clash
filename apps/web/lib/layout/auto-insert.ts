@@ -275,7 +275,11 @@ export function chainPushRight(
             if (n.id === nodeId) return false;
             if (n.parentId !== node.parentId) return false;
             if (n.type === 'group') return false;
-            if (workingPositions.get(n.id)?.x === NEEDS_LAYOUT_POSITION.x) return false;
+
+            const pos = workingPositions.get(n.id);
+            if (!pos) return false; // Skip nodes that don't have a position in working map
+
+            if (pos.x === NEEDS_LAYOUT_POSITION.x) return false;
             return true;
         });
 

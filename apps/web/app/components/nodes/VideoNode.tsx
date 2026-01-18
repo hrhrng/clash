@@ -116,7 +116,20 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
     useEffect(() => {
         const video = videoRef.current;
         if (!video || !videoUrl) return;
+
+        // Only set ready if we have data AND we're not waiting for a seek
         if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            // If we are currently seeking, wait for onSeeked
+            if (video.seeking) return;
+
+            // If the video is at 0s but is long enough to have a thumbnail at 1s,
+            // we probably haven't performed the initial seek yet (or onLoadedMetadata hasn't run).
+            // Don't show the video yet to avoid the "white frame 0" flash.
+            const duration = video.duration || 0;
+            if (duration >= 1.0 && video.currentTime < 0.1) {
+                return;
+            }
+
             setIsVideoReady(true);
             lastReadyUrlRef.current = videoUrl;
         }
@@ -284,21 +297,42 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                                 // Trigger thumbnail generation if needed
                                 if (!localThumbnail) {
                                     pendingThumbnailCaptureRef.current = true;
-                                    video.currentTime = 1.0;
                                 }
-                                setIsVideoReady(true);
-                                lastReadyUrlRef.current = videoUrl;
+
+                                // Always seek to 1.0s if possible to match the thumbnail frame.
+                                // This prevents the "white preview" issue where the video element
+                                // displays the frame at 0s (often white/black) after loading,
+                                // replacing the cached thumbnail which was captured at 1.0s.
+                                if (duration >= 1.0) {
+                                    video.currentTime = 1.0;
+                                } else if (duration > 0) {
+                                    // For very short videos, try to show something other than 0s if possible,
+                                    // or just leave it. If we can't seek to 1.0, we probably didn't capture
+                                    // a thumbnail at 1.0 either.
+                                }
+
+                                // Don't set isVideoReady(true) here - wait for onLoadedData/onCanPlay/onSeeked
+                                // to ensure the frame is actually rendered. This prevents white flashes.
                             }}
-                            onLoadedData={() => {
-                                setIsVideoReady(true);
-                                lastReadyUrlRef.current = videoUrl;
+                            onLoadedData={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (!video.seeking) {
+                                    setIsVideoReady(true);
+                                    lastReadyUrlRef.current = videoUrl;
+                                }
                             }}
-                            onCanPlay={() => {
-                                setIsVideoReady(true);
-                                lastReadyUrlRef.current = videoUrl;
+                            onCanPlay={(e) => {
+                                const video = e.target as HTMLVideoElement;
+                                if (!video.seeking) {
+                                    setIsVideoReady(true);
+                                    lastReadyUrlRef.current = videoUrl;
+                                }
                             }}
                             onSeeked={(e) => {
                                 const video = e.target as HTMLVideoElement;
+                                setIsVideoReady(true);
+                                lastReadyUrlRef.current = videoUrl;
+
                                 // Only capture thumbnail at exactly 1.0 second (our explicit seek)
                                 // This prevents capturing thumbnails from browser auto-seek or other operations
                                 if (video.videoWidth > 0 && Math.abs(video.currentTime - 1.0) < 0.1 && pendingThumbnailCaptureRef.current) {
@@ -393,6 +427,9 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                             }}
                             onSeeked={(e) => {
                                 const video = e.target as HTMLVideoElement;
+                                setIsVideoReady(true);
+                                lastReadyUrlRef.current = videoUrl;
+
                                 // Only capture thumbnail at exactly 1.0 second (our explicit seek)
                                 // This prevents capturing thumbnails from browser auto-seek or other operations
                                 if (video.videoWidth > 0 && Math.abs(video.currentTime - 1.0) < 0.1 && pendingThumbnailCaptureRef.current) {

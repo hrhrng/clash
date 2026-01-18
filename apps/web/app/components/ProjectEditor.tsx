@@ -1443,6 +1443,8 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                         if (!asset.sourceNodeId) return;
                         addAssetEdgeToEditor(asset.sourceNodeId, editorNodeId);
                     }}
+                    nodes={nodes}
+                    edges={edges}
                 >
                     <HideWhenEditorOpen>
                     <MediaViewerProvider>
