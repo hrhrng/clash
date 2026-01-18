@@ -89,6 +89,12 @@ export async function getProjects(limit = 10) {
             where: eq(projects.ownerId, userId),
             orderBy: [desc(projects.createdAt)],
             limit: limit,
+            with: {
+                assets: {
+                    limit: 4,
+                    orderBy: [desc(schema.assets.createdAt)],
+                }
+            }
         });
     } catch (error) {
         console.error('[getProjects] Failed to fetch projects:', error);

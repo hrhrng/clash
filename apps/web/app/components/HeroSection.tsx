@@ -30,9 +30,9 @@ export default function HeroSection() {
     };
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-[calc(60vh-6rem)] w-full max-w-5xl mx-auto px-6 pb-12">
+        <div className="flex flex-col items-center justify-center min-h-[75vh] w-full max-w-5xl mx-auto px-6">
             <motion.h1
-                className="mb-8 text-5xl md:text-6xl font-bold tracking-tighter text-gray-900 text-center"
+                className="mb-10 text-6xl md:text-7xl font-bold tracking-tighter text-gray-900 text-center"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
