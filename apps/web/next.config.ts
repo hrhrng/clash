@@ -40,6 +40,14 @@ const nextConfig: NextConfig = {
         destination: `${backendUrl}/api/describe`,
       },
       {
+        source: '/assets/:path*',
+        destination: `${syncServerUrl}/assets/:path*`,
+      },
+      {
+        source: '/thumbnails/:path*',
+        destination: `${syncServerUrl}/thumbnails/:path*`,
+      },
+      {
         source: '/api/v1/:path*',
         destination: `${backendUrl}/api/v1/:path*`,
       },

@@ -31,7 +31,7 @@ export interface AgentState {
 // Router Node
 const routerNode = async (state: AgentState) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    const _content = lastMessage.content as string;
+    const content = lastMessage.content as string;
     const lowerContent = content.toLowerCase();
 
     let next = 'chat';

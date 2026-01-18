@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import { useProject } from '../ProjectContext';
 import { useOptionalLoroSyncContext } from '../LoroSyncContext';
-import { createAsset } from '../../actions';
 import { useLayoutManager } from '@/lib/layout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
 import MilkdownEditor from '../MilkdownEditor';

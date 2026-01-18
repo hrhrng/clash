@@ -212,16 +212,46 @@ export async function processPendingNodes(
         };
 
         const result = await submitTask(env, taskType, projectId, nodeId, params);
-        
+
         // Clear processing lock
         processingNodes.delete(processingKey);
-        
+
         if (result.task_id) {
           updateNodeData(doc, nodeId, { pendingTask: result.task_id }, broadcast);
           submitted = true;
         } else {
           // Don't fail, just skip description
           updateNodeData(doc, nodeId, { status: 'fin' }, broadcast);
+        }
+      }
+
+      // Case 3: Video node with src but no coverUrl -> submit thumbnail extraction
+      if (nodeType === 'video' && status === 'completed' && src && !innerData.coverUrl) {
+        const processingKey = `${nodeId}:thumb`;
+        if (processingNodes.has(processingKey)) {
+          console.log(`[NodeProcessor] ⏭️ Skipping thumbnail for ${nodeId.slice(0, 8)} - already being processed`);
+          continue;
+        }
+        processingNodes.add(processingKey);
+
+        console.log(`[NodeProcessor] 🎬 Submitting thumbnail extraction for ${nodeId.slice(0, 8)}`);
+
+        const taskType = 'video_thumbnail';
+        const params = {
+          video_r2_key: src,
+          timestamp: 1.0,
+        };
+
+        const result = await submitTask(env, taskType, projectId, nodeId, params);
+
+        processingNodes.delete(processingKey);
+
+        if (result.task_id) {
+          updateNodeData(doc, nodeId, { pendingTask: result.task_id }, broadcast);
+          submitted = true;
+        } else {
+          // Don't fail if thumbnail extraction fails
+          console.warn(`[NodeProcessor] ⚠️ Thumbnail extraction failed for ${nodeId.slice(0, 8)}: ${result.error}`);
         }
       }
     }

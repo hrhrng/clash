@@ -1,7 +1,7 @@
 'use server';
 
-import { projects, messages } from '@/lib/db/schema';
-import { and, eq, desc, asc } from 'drizzle-orm';
+import { projects } from '@/lib/db/schema';
+import { and, eq, desc } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
@@ -58,6 +58,13 @@ async function ensureDevUserExists(db: Awaited<ReturnType<typeof getDb>>) {
 
 // Project Actions
 
+export type CommandType = 'ADD_NODE' | 'ADD_EDGE' | 'UPDATE_NODE' | 'DELETE_NODE';
+
+export interface Command {
+    type: CommandType;
+    payload: any;
+}
+
 export async function createProject(prompt: string) {
     const db = await getDb();
     const userId = await requireUserId();
@@ -68,8 +75,6 @@ export async function createProject(prompt: string) {
         ownerId: userId,
         name: prompt.length > 20 ? prompt.substring(0, 20) + '...' : prompt,
         description: prompt,
-        nodes: [], // Start with empty canvas
-        edges: [],
     }).returning();
 
     // Simple approach: Pass prompt via URL parameter
@@ -85,18 +90,103 @@ export async function getProjects(limit = 10) {
         if (userId === DEV_USER_ID) {
             await ensureDevUserExists(db)
         }
-        return await db.query.projects.findMany({
+
+        const projectsData = await db.query.projects.findMany({
             where: eq(projects.ownerId, userId),
             orderBy: [desc(projects.createdAt)],
             limit: limit,
-            with: {
-                assets: {
-                    limit: 12,
-                    // Sort by type (image < video, so images come first) then by creation time
-                    orderBy: [asc(schema.assets.type), desc(schema.assets.createdAt)],
-                }
-            }
         });
+
+        console.log('[getProjects] Raw projects found:', projectsData.length);
+
+        const loroSyncUrl = process.env.LORO_SYNC_URL || process.env.NEXT_PUBLIC_LORO_SYNC_URL || 'http://localhost:8787';
+        // Convert WebSocket URL to HTTP
+        const httpLoroUrl = loroSyncUrl.replace(/^ws/, 'http');
+
+        // Extract assets from Loro nodes for display
+        return await Promise.all(projectsData.map(async (project) => {
+            let nodes: any[] = [];
+
+            // 1. Try to fetch from Loro Sync Server
+            try {
+                // Determine protocol/url
+                const response = await fetch(`${httpLoroUrl}/sync/${project.id}/nodes`, {
+                    next: { revalidate: 0 } // Don't cache this fetch
+                });
+
+                if (response.ok) {
+                    nodes = await response.json();
+                }
+            } catch (e) {
+                // console.error(`[getProjects] Error fetching nodes from Loro for project ${project.id}:`, e);
+            }
+
+            // Extract assets from nodes for display
+            const assets = nodes
+                .filter((node: any) =>
+                    (node.type === 'image' || node.type === 'video') &&
+                    node.data?.src
+                )
+                .map((node: any) => {
+                    let src = node.data.src;
+
+                    // Normalize URL paths
+                    if (src) {
+                        if (src.startsWith('http://') || src.startsWith('https://')) {
+                            try {
+                                const srcUrl = new URL(src);
+                                if (srcUrl.pathname.startsWith('/assets/')) {
+                                    src = srcUrl.pathname.replace('/assets/', '');
+                                }
+                            } catch (e) {
+                                // Invalid URL, leave as is
+                            }
+                        }
+
+                        if (src.startsWith('projects/') || src.startsWith('/projects/')) {
+                            const cleanKey = src.startsWith('/') ? src.slice(1) : src;
+                            src = `/api/assets/view/${cleanKey}`;
+                        }
+                    }
+
+                    if (process.env.NODE_ENV === 'development') {
+                       // console.log(`[getProjects] Asset processed: ${node.id}, original: ${node.data.src}, final: ${src}`);
+                    }
+
+                    // For videos, use coverUrl if available
+                    let thumbnailUrl: string | null = null;
+                    if (node.type === 'video' && node.data.coverUrl) {
+                        thumbnailUrl = node.data.coverUrl;
+                        if (thumbnailUrl && (thumbnailUrl.startsWith('projects/') || thumbnailUrl.startsWith('/projects/'))) {
+                            const cleanKey = thumbnailUrl.startsWith('/') ? thumbnailUrl.slice(1) : thumbnailUrl;
+                            thumbnailUrl = `/api/assets/view/${cleanKey}`;
+                        }
+                    } else if (node.type === 'video') {
+                        return null;
+                    }
+
+                    return {
+                        id: node.id,
+                        url: thumbnailUrl || src,
+                        type: node.type as 'image' | 'video',
+                        storageKey: node.data.storageKey || '',
+                        createdAt: (() => {
+                            const parts = node.id.split('-');
+                            const lastPart = parts[parts.length - 1];
+                            const timestamp = parseInt(lastPart);
+                            return !isNaN(timestamp) && timestamp > 1600000000000
+                                ? new Date(timestamp)
+                                : project.updatedAt;
+                        })()
+                    };
+                })
+                .filter((asset): asset is NonNullable<typeof asset> => asset !== null);
+
+            return {
+                ...project,
+                assets
+            };
+        }));
     } catch (error) {
         console.error('[getProjects] Failed to fetch projects:', error);
         return [];
@@ -113,11 +203,6 @@ export async function getProject(id: string) {
         }
         return await db.query.projects.findFirst({
             where: and(eq(projects.id, id), eq(projects.ownerId, userId)),
-            with: {
-                messages: {
-                    orderBy: [asc(messages.createdAt)],
-                },
-            },
         });
     } catch (error) {
         console.error(`[getProject] Failed to fetch project ${id}:`, error);
@@ -157,176 +242,3 @@ export async function deleteProject(id: string) {
     revalidatePath('/projects');
 }
 
-// Chat/Agent Actions
-
-
-
-export type CommandType = 'ADD_NODE' | 'ADD_EDGE' | 'UPDATE_NODE' | 'DELETE_NODE';
-
-export interface Command {
-    type: CommandType;
-    payload: any;
-}
-
-import { graph, AgentState } from './agent/graph';
-import { HumanMessage } from '@langchain/core/messages';
-import { generateSemanticId } from '@/lib/utils/semanticId';
-
-// const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
-
-export async function sendMessage(projectId: string, content: string) {
-    const db = await getDb();
-    const userId = await requireUserId();
-    if (userId === DEV_USER_ID) {
-        await ensureDevUserExists(db)
-    }
-
-    const project = await db.query.projects.findFirst({
-        where: and(eq(projects.id, projectId), eq(projects.ownerId, userId)),
-        columns: { id: true },
-    });
-    if (!project) {
-        throw new Error('Project not found')
-    }
-
-    // 1. Save user message
-    await db.insert(messages).values({
-        content,
-        role: 'user',
-        projectId,
-    });
-
-    let agentResponseText = "I'm sorry, I couldn't process that request.";
-    let commands: Command[] = [];
-
-    try {
-        // 2. Invoke LangGraph
-        const inputs = {
-            messages: [new HumanMessage(content)],
-        };
-
-        const config = { configurable: { thread_id: projectId } };
-        const state = await graph.invoke(inputs, config) as unknown as AgentState;
-
-        const lastMessage = state.messages[state.messages.length - 1];
-        agentResponseText = lastMessage.content as string;
-        commands = state.commands || [];
-
-    } catch (error) {
-        console.error("AI Error:", error);
-        agentResponseText = "I encountered an error connecting to my brain. Please check the API key.";
-    }
-
-    await db.insert(messages).values({
-        content: agentResponseText,
-        role: 'assistant',
-        projectId,
-    });
-
-    revalidatePath(`/projects/${projectId}`);
-    return { success: true, commands };
-}
-
-
-
-export async function createAsset(data: {
-    id?: string; // Optional pre-allocated ID from backend
-    name: string;
-    projectId: string;
-    storageKey: string;
-    url: string;
-    type: 'image' | 'video';
-    status?: 'pending' | 'processing' | 'completed' | 'failed';
-    taskId?: string;
-    metadata: string;
-}) {
-    console.log('createAsset called with:', data);
-    try {
-        const db = await getDb();
-        const userId = await requireUserId();
-        if (userId === DEV_USER_ID) {
-            await ensureDevUserExists(db)
-        }
-
-        const project = await db.query.projects.findFirst({
-            where: and(eq(projects.id, data.projectId), eq(projects.ownerId, userId)),
-            columns: { id: true },
-        });
-        if (!project) {
-            throw new Error('Project not found')
-        }
-
-        // Use pre-allocated ID if provided, otherwise generate semantic ID for asset
-        let assetId = data.id || await generateSemanticId(data.projectId);
-
-        // Ensure taskId exists
-        const taskId = data.taskId || crypto.randomUUID();
-        const baseAssetData = { ...data, taskId };
-
-        // Insert asset first, retry once with a fresh ID if the pre-allocated one collides
-        let asset;
-        try {
-            [asset] = await db.insert(schema.assets).values({
-                ...baseAssetData,
-                id: assetId,
-                description: null // Start with null description
-            }).returning();
-        } catch (error: any) {
-            const message = String(error?.message || '');
-            const isIdConflict =
-                message.includes('UNIQUE constraint failed: asset.id') ||
-                message.includes('UNIQUE constraint failed: assets.id') ||
-                message.includes('SQLITE_CONSTRAINT');
-
-            if (!isIdConflict) {
-                throw error;
-            }
-
-            // Generate a new ID and retry once
-            assetId = await generateSemanticId(data.projectId);
-            console.warn('[createAsset] assetId collision, retrying with new id', { previous: data.id, retry: assetId });
-
-            [asset] = await db.insert(schema.assets).values({
-                ...baseAssetData,
-                id: assetId,
-                description: null
-            }).returning();
-        }
-
-        console.log('createAsset success:', asset);
-
-        // Trigger async description generation if completed immediately (e.g. upload)
-        if (data.status === 'completed') {
-            // Construct callback URL
-            const headersList = await headers();
-            const host = headersList.get('host');
-            const protocol = process.env.NODE_ENV === 'development' ? 'http' : 'https';
-            const callbackUrl = `${protocol}://${host}/api/internal/assets/update`;
-
-            // Fire and forget
-            fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8888'}/api/describe`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    url: data.url,
-                    task_id: taskId,
-                    callback_url: callbackUrl
-                }),
-            }).catch(err => console.error('Error triggering description generation:', err));
-        }
-
-        return asset;
-    } catch (error) {
-        console.error('createAsset failed:', error);
-        throw error;
-    }
-}
-
-export async function getAsset(id: string) {
-    const db = await getDb();
-    return await db.query.assets.findFirst({
-        where: eq(schema.assets.id, id),
-    });
-}

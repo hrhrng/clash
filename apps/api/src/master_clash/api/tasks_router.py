@@ -41,7 +41,7 @@ HEARTBEAT_INTERVAL_MS = 30 * 1000  # 30 seconds
 WORKER_ID = f"worker_{uuid.uuid4().hex[:8]}"  # Unique per process
 
 # Task types
-TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc", "video_render"]
+TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc", "video_render", "video_thumbnail"]
 
 # Status constants
 STATUS_PENDING = "pending"
@@ -567,6 +567,70 @@ async def _heartbeat_loop(task_id: str) -> None:
         pass
 
 
+async def process_video_thumbnail(task_id: str, params: dict) -> None:
+    """Extract video thumbnail."""
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎬 Processing video_thumbnail: {task_id}")
+
+        video_r2_key = params.get("video_r2_key")
+        project_id = params.get("project_id")
+        timestamp = params.get("timestamp", 1.0)
+
+        if not video_r2_key:
+            raise ValueError("video_r2_key is required")
+
+        # Call the thumbnail extraction endpoint directly
+        from master_clash.api.thumbnail_router import extract_video_frame
+
+        # Download video from R2
+        video_data, _ = await r2.fetch_object(video_r2_key)
+        logger.info(f"[Tasks] 📥 Downloaded video: {len(video_data)} bytes")
+
+        # Extract frame
+        thumbnail_data = await extract_video_frame(video_data, timestamp)
+        logger.info(f"[Tasks] 📸 Extracted frame: {len(thumbnail_data)} bytes")
+
+        # Generate cover R2 key
+        # Convert: projects/{id}/assets/video-xxx.mp4 -> projects/{id}/covers/video-xxx.jpg
+        from pathlib import Path
+        video_key_path = Path(video_r2_key)
+        video_filename = video_key_path.stem
+
+        cover_r2_key = f"projects/{project_id}/covers/{video_filename}.jpg"
+
+        # Upload thumbnail to R2
+        await r2.put_object(
+            key=cover_r2_key,
+            data=thumbnail_data,
+            content_type="image/jpeg"
+        )
+        logger.info(f"[Tasks] ✅ Uploaded thumbnail: {cover_r2_key}")
+
+        # Generate public URL
+        cover_url = f"/api/assets/view/{cover_r2_key}"
+
+        # Complete task
+        await complete_task(task_id, result_data={"cover_url": cover_url, "cover_r2_key": cover_r2_key})
+
+        # Callback to Loro
+        await callback_to_loro(callback_url, node_id, {
+            "coverUrl": cover_url,
+            "pendingTask": None,
+        })
+
+    except Exception as e:
+        logger.error(f"[Tasks] video_thumbnail failed: {e}", exc_info=True)
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "pendingTask": None,
+            "error": str(e)
+        })
+
+
 async def process_video_render(task_id: str, params: dict) -> None:
     """
     Render video using Remotion CLI with Timeline DSL.
@@ -654,6 +718,7 @@ async def submit_task(request: TaskSubmitRequest, background_tasks: BackgroundTa
         "image_desc": process_image_description,
         "video_desc": process_video_description,
         "video_render": process_video_render,
+        "video_thumbnail": process_video_thumbnail,
     }.get(request.task_type)
     
     if processor:

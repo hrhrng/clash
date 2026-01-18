@@ -76,7 +76,7 @@ import { calculateScaledDimensions } from './nodes/assetNodeSizing';
 const CHILD_NODE_Z_INDEX_BASE = 1000;
 
 interface ProjectEditorProps {
-    project: Project & { messages: Message[] };
+    project: Project; // messages removed
     initialPrompt?: string;
 }
 
@@ -540,53 +540,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         setSelectedNodes(nodes);
     }, []);
 
-    // Sync local state when prop changes (e.g. after agent action revalidation)
-    useEffect(() => {
-        if (project.nodes) {
-            const newNodes = (project.nodes as unknown as Node[]) || [];
-
-            setNodes((currentNodes) => {
-                const currentNodesMap = new Map(currentNodes.map(n => [n.id, n]));
-                const newNodesMap = new Map(newNodes.map(n => [n.id, n]));
-
-                // 1. Update existing nodes (preserve local position/dimensions if they exist)
-                // We only want to update DATA from the server, not position/layout, to prevent jumping.
-                // Unless it's a collaborative app where we expect position updates from others? 
-                // Assuming single-user for now: Trust local position.
-
-                const mergedNodes = newNodes.map(newNode => {
-                    const currentNode = currentNodesMap.get(newNode.id);
-                    if (currentNode) {
-                        return {
-                            ...newNode,
-                            // PRESERVE LOCAL POSITION & DIMENSIONS
-                            position: currentNode.position,
-                            width: currentNode.width,
-                            height: currentNode.height,
-                            style: currentNode.style,
-                            // Also preserve parentId if we trust local hierarchy more? 
-                            // Maybe not, let's trust server for structure but local for layout.
-                            // Actually, if we just dragged it, local parentId is newer.
-                            parentId: currentNode.parentId,
-                            extent: currentNode.extent,
-                        };
-                    }
-                    return newNode;
-                });
-
-                // 2. Add local-only nodes (that haven't been saved yet)
-                const localNodesToKeep = currentNodes.filter(n => !newNodesMap.has(n.id));
-
-                return [...sanitizeNodes(mergedNodes), ...localNodesToKeep];
-            });
-        }
-        if (project.edges) {
-            // Similar logic for edges? Edges don't have positions, but they have 'data'.
-            // For now, just replacing edges is usually fine unless we are editing edge data.
-            setEdges((project.edges as unknown as Edge[]) || []);
-        }
-    }, [project.nodes, project.edges, setNodes, setEdges]);
-
     // Sync connected assets to VideoEditorNode
     useEffect(() => {
         setNodes((currentNodes) => {
@@ -1040,7 +993,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 }
             }
 
-            const baseStyle: Record<string, number> = nodeType === 'group' ? { width: layoutWidth, height: layoutHeight, zIndex } : {};
+            const baseStyle: Record<string, string | number | undefined> = nodeType === 'group' ? { width: layoutWidth, height: layoutHeight, zIndex } : {};
             if (defaultWidth && defaultHeight) {
                 baseStyle.width = defaultWidth;
                 baseStyle.height = defaultHeight;
@@ -1637,7 +1590,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                 <div className="pointer-events-auto h-full">
                                     <ChatbotCopilot
                                         projectId={project.id}
-                                        initialMessages={project.messages}
+                                        initialMessages={[]} // No persisted messages anymore
                                         onCommand={handleCommand}
                                         width={sidebarWidth}
                                         onWidthChange={setSidebarWidth}

@@ -33,6 +33,7 @@ from master_clash.api.execute_router import router as execute_router
 from master_clash.api.session_router import router as session_router
 from master_clash.api.stream_emitter import StreamEmitter
 from master_clash.api.tasks_router import router as tasks_router
+from master_clash.api.thumbnail_router import router as thumbnail_router
 from master_clash.config import get_settings
 from master_clash.context import ProjectContext, set_project_context
 from master_clash.loro_sync import LoroSyncClient
@@ -67,6 +68,7 @@ app.include_router(describe_router)
 app.include_router(tasks_router)
 app.include_router(execute_router)
 app.include_router(session_router)
+app.include_router(thumbnail_router)
 
 
 class GenerateSemanticIDRequest(BaseModel):

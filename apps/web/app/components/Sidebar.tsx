@@ -62,13 +62,14 @@ export default function Sidebar() {
       <div className="px-6 py-8">
         <Link href="/" className="group inline-block">
           <motion.div
-            className="flex items-center"
+            className="flex items-center gap-1"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <span className="font-display text-4xl font-bold tracking-tighter text-gray-900 group-hover:text-brand transition-colors">
-              C/
+            <span className="font-display text-4xl font-bold tracking-tighter text-gray-900 group-hover:text-brand transition-colors leading-none">
+              C
             </span>
+            <div className="h-8 w-[6px] bg-brand -skew-x-[20deg] transform origin-center" />
           </motion.div>
         </Link>
       </div>

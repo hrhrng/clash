@@ -1,38 +1,51 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Plus, CalendarBlank, Trash } from '@phosphor-icons/react';
+import { Plus, Trash } from '@phosphor-icons/react';
 import Link from 'next/link';
-import { Project } from '@generated/client';
-import { deleteProject, createProject } from '../actions';
+import { createProject, deleteProject } from '../actions';
+
+interface Asset {
+    id: string;
+    url: string;
+    type: 'image' | 'video';
+    createdAt?: Date | string | number | null;
+}
+
+interface ProjectWithAssets {
+    id: string;
+    name: string;
+    createdAt: Date | string | number;
+    updatedAt: Date | string | number | null;
+    assets?: Asset[];
+}
 
 interface ProjectsClientProps {
-    projects: Project[];
+    projects: any[]; // Using relaxed type to accommodate Drizzle result with assets
 }
 
 export default function ProjectsClient({ projects }: ProjectsClientProps) {
     return (
-        <div className="min-h-screen bg-white">
-            <div className="mx-auto max-w-7xl px-12 py-16">
+        <div className="min-h-screen">
+            <div className="mx-auto max-w-[1600px] px-6 py-24 mt-12">
                 {/* Header */}
-                <header className="mb-12 flex items-start justify-between">
+                <header className="mb-12 flex items-center justify-between">
                     <div>
-                        <h1 className="mb-2 text-4xl font-bold text-gray-900">
+                        <h1 className="text-3xl font-bold tracking-tight text-gray-900">
                             Video Projects
                         </h1>
-                        <p className="text-base text-gray-600">
+                        <p className="mt-2 text-base text-gray-600">
                             Manage and track all your video creation projects
                         </p>
                     </div>
-                    {/* Button removed as per user request */}
                 </header>
 
                 {/* Projects Grid */}
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {/* Empty State Card */}
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {/* New Project Card */}
                     <motion.button
-                        className="group flex h-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 transition-all hover:border-red-200 hover:bg-red-50"
-                        whileHover={{ x: 2 }}
+                        className="group flex aspect-video flex-col items-center justify-center gap-4 rounded-[2rem] border-2 border-dashed border-gray-200 bg-white/50 transition-all hover:border-brand/30 hover:bg-white"
+                        whileHover={{ scale: 1.01 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={async () => {
                             const prompt = window.prompt('Enter a name or description for your new video project:');
@@ -41,13 +54,13 @@ export default function ProjectsClient({ projects }: ProjectsClientProps) {
                             }
                         }}
                     >
-                        <Plus
-                            className="mb-3 h-12 w-12 text-gray-400 transition-colors group-hover:text-red-500"
-                            weight="bold"
-                        />
-                        <span className="text-sm font-medium text-gray-500 transition-colors group-hover:text-red-600">
-                            Create New Video
-                        </span>
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm transition-transform group-hover:scale-110">
+                            <Plus
+                                className="h-8 w-8 text-gray-400 transition-colors group-hover:text-brand"
+                                weight="bold"
+                            />
+                        </div>
+                        <span className="text-lg font-medium text-gray-500 group-hover:text-gray-900">New Project</span>
                     </motion.button>
 
                     {projects.map((project) => (
@@ -59,31 +72,69 @@ export default function ProjectsClient({ projects }: ProjectsClientProps) {
     );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({ project }: { project: ProjectWithAssets }) {
     // Format date
-    const date = new Date(project.createdAt).toLocaleDateString('en-US', {
-        month: 'short',
+    const date = new Date(project.updatedAt || project.createdAt);
+    const formattedDate = new Intl.DateTimeFormat('en-US', {
+        month: 'long',
         day: 'numeric',
-    });
+        year: 'numeric'
+    }).format(date);
 
-    // Default thumbnail or derive from project
-    const thumbnail = "🎬";
+    // Asset Preview Logic
+    const allAssets = project.assets || [];
+    // Sort assets (images first, then new ones)
+    const displayAssets = [...allAssets]
+        .sort((a, b) => {
+             // 1. Prioritize images
+             if (a.type === 'image' && b.type !== 'image') return -1;
+             if (a.type !== 'image' && b.type === 'image') return 1;
+
+             // 2. Sort by createdAt (descending) - assuming createdAt might be available even if not in interface yet
+             // @ts-ignore
+             const dateA = new Date(a.createdAt || 0).getTime();
+             // @ts-ignore
+             const dateB = new Date(b.createdAt || 0).getTime();
+             return dateB - dateA;
+        })
+        .slice(0, 4);
+
+    const assetCount = displayAssets.length;
+    const gridClass = assetCount === 1 ? 'grid-cols-1' :
+                     assetCount === 2 ? 'grid-cols-2' :
+                     'grid-cols-2 grid-rows-2';
 
     return (
-        <Link href={`/projects/${project.id}`}>
+        <Link href={`/projects/${project.id}`} className="block group">
             <motion.div
-                className="group cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-white transition-all hover:border-red-200"
-                whileHover={{ x: 2 }}
+                className="relative aspect-video overflow-hidden rounded-[1.5rem] bg-gray-100 mb-4 transition-all hover:shadow-lg ring-1 ring-black/5"
+                whileHover={{ y: -2 }}
                 whileTap={{ scale: 0.98 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
             >
-                {/* Thumbnail */}
-                <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-6xl transition-all group-hover:from-red-50 group-hover:to-red-100">
-                    {thumbnail}
-                </div>
+                {assetCount === 0 ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-gray-50 text-gray-300">
+                        {/* Empty state */}
+                    </div>
+                ) : (
+                    <div className={`grid h-full w-full ${gridClass} gap-[2px] bg-white`}>
+                        {displayAssets.map((asset, index) => {
+                            const isLastOfThree = assetCount === 3 && index === 2;
+                            return (
+                                <div key={asset.id} className={`relative overflow-hidden bg-gray-100 ${isLastOfThree ? 'col-span-2' : ''}`}>
+                                    {/* Dashboard shows thumbnails directly - no special handling needed */}
+                                    <img
+                                        src={asset.url}
+                                        alt="Asset"
+                                        className="h-full w-full object-cover"
+                                    />
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
 
-                {/* Delete Button */}
-                <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
+                {/* Delete Button (Hover) */}
+                <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100 z-10">
                     <button
                         onClick={async (e) => {
                             e.preventDefault();
@@ -97,16 +148,17 @@ function ProjectCard({ project }: { project: Project }) {
                         <Trash className="h-4 w-4" weight="bold" />
                     </button>
                 </div>
-
-                {/* Content */}
-                <div className="p-4">
-                    <h3 className="mb-2 text-base font-bold text-gray-900">{project.name}</h3>
-                    <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <CalendarBlank className="h-4 w-4" weight="duotone" />
-                        <span>{date}</span>
-                    </div>
-                </div>
             </motion.div>
+
+            {/* Text Content */}
+            <div className="px-1">
+                <h3 className="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors truncate">
+                    {project.name || 'Untitled'}
+                </h3>
+                <p className="mt-1 text-xs text-gray-500">
+                    {formattedDate}
+                </p>
+            </div>
         </Link>
     );
 }
