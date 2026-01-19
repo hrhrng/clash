@@ -5,7 +5,6 @@ Provides the arrange_images_in_timeline tool for arranging assets in a video edi
 """
 
 import logging
-from typing import Any
 
 from langchain.tools import BaseTool, ToolRuntime
 from pydantic import BaseModel, Field
@@ -96,10 +95,10 @@ def create_arrange_timeline_tool(backend: CanvasBackendProtocol) -> BaseTool:
                 item = VideoTrackItem(
                     id=f"clip-{asset['id']}-{current_frame}",
                     type=asset_type,
-                    assetId=asset['id'],
+                    asset_id=asset['id'],
                     from_=current_frame,
-                    durationInFrames=duration_per_image,
-                    startAt=0
+                    duration_in_frames=duration_per_image,
+                    start_at=0
                 )
                 items.append(item)
                 current_frame += duration_per_image
@@ -125,7 +124,7 @@ def create_arrange_timeline_tool(backend: CanvasBackendProtocol) -> BaseTool:
                 dsl.tracks.append(new_track)
 
             # Update duration
-            dsl.durationInFrames = current_frame
+            dsl.duration_in_frames = current_frame
 
             # 4. Update Node
             # We need to update the node's data with the new DSL

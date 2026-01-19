@@ -5,6 +5,7 @@ middleware, agents, and tools.
 """
 
 from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -16,8 +17,9 @@ class VideoTrackItem(BaseModel):
         default="video",
         description="Type of the clip item"
     )
-    assetId: str | None = Field(
+    asset_id: str | None = Field(
         default=None,
+        alias="assetId",
         description="ID of the asset node (for video/image/audio)"
     )
     from_: int = Field(
@@ -25,12 +27,14 @@ class VideoTrackItem(BaseModel):
         default=0,
         description="Start frame in the timeline"
     )
-    durationInFrames: int = Field(
+    duration_in_frames: int = Field(
         default=0,
+        alias="durationInFrames",
         description="Duration of the clip in frames"
     )
-    startAt: int = Field(
+    start_at: int = Field(
         default=0,
+        alias="startAt",
         description="Start frame within the source asset (trim start)"
     )
     # Style/Transform properties
@@ -54,15 +58,27 @@ class VideoTrack(BaseModel):
     name: str | None = Field(default=None, description="Track name")
     type: str = Field(default="main", description="Track type (main, overlay, audio)")
 
+    class Config:
+        populate_by_name = True
+
 
 class TimelineDSL(BaseModel):
     """Root structure for the video editor DSL."""
     version: str = Field(default="1.0.0", description="DSL version")
     fps: int = Field(default=30, description="Frames per second")
-    compositionWidth: int = Field(default=1920, description="Canvas width")
-    compositionHeight: int = Field(default=1080, description="Canvas height")
-    durationInFrames: int = Field(
+    composition_width: int = Field(
+        default=1920,
+        alias="compositionWidth",
+        description="Canvas width"
+    )
+    composition_height: int = Field(
+        default=1080,
+        alias="compositionHeight",
+        description="Canvas height"
+    )
+    duration_in_frames: int = Field(
         default=0,
+        alias="durationInFrames",
         description="Total duration (usually calculated from max end frame)"
     )
     tracks: list[VideoTrack] = Field(
@@ -72,3 +88,4 @@ class TimelineDSL(BaseModel):
 
     class Config:
         extra = "allow"
+        populate_by_name = True
