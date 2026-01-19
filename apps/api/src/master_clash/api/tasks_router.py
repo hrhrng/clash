@@ -196,14 +196,40 @@ async def callback_to_loro(
     """
     Callback to Loro Sync Server with node updates.
     Fire-and-forget with simple retry.
+
+    IMPORTANT:
+    - Does NOT overwrite 'completed' status with 'failed'
+    - Protects already-completed nodes from background task failures
     """
     if not callback_url or not node_id:
         return
-    
+
     import httpx
-    
+
+    # 🛡️ Safety check: If trying to set status to 'failed', first check current node status
+    # Do NOT overwrite 'completed' status with 'failed' (prevents race conditions)
+    if updates.get("status") == "failed":
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Get current node status from Loro Sync
+                check_resp = await client.get(f"{callback_url}/node/{node_id}")
+                if check_resp.status_code == 200:
+                    current_node = check_resp.json()
+                    current_status = current_node.get("data", {}).get("status")
+
+                    # If node is already completed, skip this update
+                    if current_status in ("completed", "fin"):
+                        logger.info(
+                            f"[Callback] 🛡️ Skipping 'failed' update for node {node_id[:8]} "
+                            f"(already {current_status})"
+                        )
+                        return
+        except Exception as e:
+            # If check fails, continue with update (fail-safe: allow the update)
+            logger.warning(f"[Callback] ⚠️ Status check failed, proceeding with update: {e}")
+
     payload = {"nodeId": node_id, "updates": updates}
-    
+
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -214,9 +240,9 @@ async def callback_to_loro(
                 logger.warning(f"[Callback] ⚠️ Attempt {attempt+1} failed: {resp.status_code}")
         except Exception as e:
             logger.warning(f"[Callback] ⚠️ Attempt {attempt+1} error: {e}")
-        
+
         await asyncio.sleep(1)
-    
+
     logger.error(f"[Callback] ❌ Failed after 3 attempts for node {node_id[:8]}")
 
 

@@ -153,35 +153,22 @@ def create_generation_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         node_data = proposal.get("nodeData") or {}
                         parent_id_from_proposal = proposal.get("groupId")
 
+                        # Determine node position strategy
+                        # CRITICAL: Avoid calling get_all_nodes() - it causes performance bottlenecks
+                        # when there are many nodes on the canvas, especially with parallel calls.
+                        # Instead, let the frontend handle auto-layout for optimal performance.
                         if position is not None:
+                            # Use explicitly provided position
                             node_position = position
                         elif parent_id_from_proposal:
+                            # Nodes inside a group: use relative position within group
                             node_position = {"x": 50.0, "y": 50.0}
                         else:
-                            # Calculate rightmost position for root-level nodes
-                            existing_nodes = loro_client.get_all_nodes() or {}
-                            max_right_edge = 0.0
-                            rightmost_y = 100.0  # Default Y position
-
-                            for existing in existing_nodes.values():
-                                if not existing:
-                                    continue
-                                # Only consider root-level nodes (no parentId)
-                                if existing.get("parentId"):
-                                    continue
-
-                                existing_pos = existing.get("position") or {}
-                                existing_width = existing.get("width", 300)
-                                try:
-                                    right_edge = float(existing_pos.get("x", 0.0)) + float(existing_width)
-                                    if right_edge > max_right_edge:
-                                        max_right_edge = right_edge
-                                        rightmost_y = float(existing_pos.get("y", 100.0))
-                                except (TypeError, ValueError):
-                                    continue
-
-                            # Place to the right of the rightmost node, aligned with its Y
-                            node_position = {"x": max_right_edge + 100.0, "y": rightmost_y}
+                            # Root-level nodes: use NEEDS_LAYOUT_POSITION marker for frontend auto-layout
+                            # Frontend will calculate the optimal position based on existing nodes and edges
+                            # This avoids expensive get_all_nodes() calls and prevents agent hangs
+                            node_position = {"x": -1, "y": -1}  # NEEDS_LAYOUT_POSITION
+                            logger.info(f"[LoroSync] Using frontend auto-layout for node {result.node_id}")
 
                         # Set default dimensions for action-badge nodes (matching frontend ProjectEditor.tsx)
                         default_width = 320

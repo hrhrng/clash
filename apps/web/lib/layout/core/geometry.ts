@@ -24,7 +24,9 @@ export function getNodeSize(type: string): Size {
         case 'action-badge':
             return { width: 320, height: 220 };
         case 'video-editor':
-            return { width: 250, height: 200 };
+            // VideoEditorNode renders with min-w-[400px] max-w-[600px] and aspect-video
+            // Using 400px width (min width) and ~225px height (16:9 aspect ratio)
+            return { width: 400, height: 225 };
         default:
             return { width: 300, height: 300 };
     }

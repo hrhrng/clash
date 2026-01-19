@@ -37,7 +37,6 @@ from master_clash.workflow.tools import (
     create_wait_generation_tool,
     create_search_nodes_tool,
     create_list_model_cards_tool,
-    create_arrange_timeline_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -390,7 +389,6 @@ You have access to canvas tools for creating and managing visual content:
 - run_generation_node: Run a generation node to produce the asset (call after create), OR run a video-editor node to render its timeline
 - wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
 - search_canvas: Search nodes by content
-- arrange_images_in_timeline: Arrange a list of image/asset nodes sequentially in a video-editor timeline.
 
 **CRITICAL: Always Organize in Groups**
 1. FIRST create a Group to contain your work (e.g., "Scene 1", "Character Designs")
@@ -400,7 +398,8 @@ You have access to canvas tools for creating and managing visual content:
 **Video Editor Workflow**:
 - Create a video-editor node: `create_canvas_node(node_type="video-editor", payload={"label": "Final Video"})`
 - This creates a node with an embedded timeline DSL
-- Pass the video-editor node_id to the Editor sub-agent to assemble the timeline
+- The user or Editor sub-agent can manually arrange assets in the timeline through the UI
+- The frontend automatically links assets to the video-editor when they are added to the timeline
 - When ready, trigger rendering: `run_generation_node(node_id="editor-node-id")`
 
 IMPORTANT: PromptActionNode Architecture:
@@ -435,5 +434,4 @@ Workflow:
             create_run_generation_tool(self.backend),
             create_wait_generation_tool(self.backend),
             create_search_nodes_tool(self.backend),
-            create_arrange_timeline_tool(self.backend),
         ]

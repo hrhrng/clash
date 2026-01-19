@@ -17,11 +17,46 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
     const [previewSrc, setPreviewSrc] = useState<string | null>(null);
 
     // Extract first frame source from timeline
+    // Force re-render trigger for Loro updates
+    const [loroUpdateTrigger, setLoroUpdateTrigger] = React.useState(0);
+
+    // Subscribe to Loro changes for this specific node
+    React.useEffect(() => {
+        if (!loroSync?.doc) return;
+
+        const nodesMap = loroSync.doc.getMap('nodes');
+
+        // Subscribe to changes on this node
+        const unsubscribe = nodesMap.subscribe((event) => {
+            if (event.diff.updated) {
+                for (const [nodeId] of event.diff.updated) {
+                    if (nodeId === id) {
+                        console.log('[VideoEditorNode] Loro node updated, triggering preview refresh for:', id);
+                        setLoroUpdateTrigger(prev => prev + 1);
+                    }
+                }
+            }
+        });
+
+        return () => {
+            unsubscribe();
+        };
+    }, [id, loroSync?.doc]);
+
+    // Update preview whenever data or Loro changes
     React.useEffect(() => {
         let timelineDsl = data.timelineDsl;
         if (loroSync?.doc) {
             const loroNode = loroSync.doc.getMap('nodes').get(id) as any;
-            timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
+            const loroDsl = loroNode?.data?.timelineDsl;
+            if (loroDsl) {
+                // Clone to ensure we have a plain object
+                try {
+                    timelineDsl = JSON.parse(JSON.stringify(loroDsl));
+                } catch (e) {
+                    timelineDsl = loroDsl;
+                }
+            }
         }
 
         if (timelineDsl?.tracks) {
@@ -39,12 +74,14 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
             }
 
             if (earliestItem) {
+                console.log('[VideoEditorNode] Setting preview src:', earliestItem.src);
                 setPreviewSrc(earliestItem.src);
                 return;
             }
         }
+        console.log('[VideoEditorNode] No preview src found, clearing preview');
         setPreviewSrc(null);
-    }, [data.timelineDsl, id, loroSync]);
+    }, [data.timelineDsl, id, loroSync?.doc, loroUpdateTrigger]);
 
     const handleOpenEditor = useCallback(() => {
         // Derive connected assets dynamically from edges
@@ -382,7 +419,7 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
 
     return (
         <div
-            className="group relative min-w-[400px] max-w-[600px]"
+            className="group relative w-[400px]"
             onDoubleClick={handleOpenEditor}
         >
             {/* Main Card */}

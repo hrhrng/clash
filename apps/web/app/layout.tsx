@@ -22,7 +22,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ClashFlow - Video Agent',
+  title: 'Clash - Video Agent',
   description: 'AI-powered video creation and editing platform',
 };
 

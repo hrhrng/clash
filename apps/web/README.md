@@ -1,4 +1,4 @@
-# Frontend - Clash Flow
+# Frontend - Clash
 
 Next.js application deployed to Cloudflare Workers using OpenNextJS.
 

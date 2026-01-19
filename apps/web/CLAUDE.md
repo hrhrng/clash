@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-Clash Flow is a modern SaaS dashboard application built with Next.js 16, React 19, and TypeScript. It features a neo-brutalist design system with bold borders, thick shadows, and a distinctive color palette.
+Clash is a modern SaaS dashboard application built with Next.js 16, React 19, and TypeScript. It features a neo-brutalist design system with bold borders, thick shadows, and a distinctive color palette.
 
 ## Development Commands
 

@@ -138,7 +138,16 @@ export function VideoEditorProvider({
         nextTimelineDsl?: TimelineDslType | null,
         nextAvailableAssets: Array<Asset & { sourceNodeId?: string }> = []
     ) => {
-        console.log('[VideoEditorContext] openEditor called with newAssets:', newAssets.length, newAssets);
+        console.log('[VideoEditorContext] openEditor called');
+        console.log('[VideoEditorContext] 1. Incoming Assets:', newAssets.length, newAssets);
+
+        // Log Agent-generated DSL if present
+        if (nextTimelineDsl) {
+            console.log('[VideoEditorContext] 2. Agent Generated DSL:', JSON.stringify(nextTimelineDsl, null, 2));
+        } else {
+            console.log('[VideoEditorContext] 2. No Agent DSL provided (Fresh Editor)');
+        }
+
         // Deduplicate assets before setting
         const seenKeys = new Set<string>();
         const deduplicatedAssets = newAssets.filter(asset => {
@@ -153,10 +162,64 @@ export function VideoEditorProvider({
         setAssets(deduplicatedAssets);
         setEditorNodeId(nodeId);
 
+        // Hydrate DSL with asset sources if missing (critical for Player which relies on src)
+        let hydratedDsl = nextTimelineDsl;
+        if (hydratedDsl && hydratedDsl.tracks) {
+             hydratedDsl = {
+                 ...hydratedDsl,
+                 tracks: hydratedDsl.tracks.map(track => ({
+                     ...track,
+                     items: track.items.map(item => {
+                         let newItem = { ...item };
+
+                         // 1. Ensure ID exists
+                         if (!newItem.id) {
+                             newItem.id = `item-auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                         }
+
+                         // 1.5 Handle legacy snake_case keys from backend (asset_id -> assetId)
+                         if ((newItem as any).asset_id && !newItem.assetId) {
+                             newItem.assetId = (newItem as any).asset_id;
+                         }
+                         if ((newItem as any).duration_in_frames && !newItem.durationInFrames) {
+                             newItem.durationInFrames = (newItem as any).duration_in_frames;
+                         }
+                         if ((newItem as any).start_at && !newItem.startAt) {
+                             newItem.startAt = (newItem as any).start_at;
+                         }
+
+                         // 2. Hydrate from Asset (src, type)
+                         if (newItem.assetId && (!newItem.src || !newItem.type)) {
+                             const asset = deduplicatedAssets.find(a => a.id === newItem.assetId);
+                             if (asset) {
+                                 console.log(`[VideoEditorContext] Hydrating item ${newItem.id} from asset ${asset.id}`);
+                                 if (!newItem.src) newItem.src = asset.src;
+                                 if (!newItem.type) newItem.type = asset.type;
+                             } else {
+                                 console.warn(`[VideoEditorContext] Could not find asset for item ${newItem.id} with assetId ${newItem.assetId}`);
+                             }
+                         }
+
+                         // 3. Normalize Type (lowercase)
+                         if (newItem.type) {
+                             newItem.type = newItem.type.toLowerCase() as any;
+                         } else {
+                             // Default to image if still missing? Or solid?
+                             // Leaving it undefined might cause issues, let's default to 'image' if we have src, else 'solid'??
+                             // Best to leave it and let renderer handle fallback or gray block.
+                         }
+
+                         return newItem;
+                     })
+                 }))
+             };
+             console.log('[VideoEditorContext] 3. Hydrated DSL (Ready for Editor):', JSON.stringify(hydratedDsl, null, 2));
+        }
+
         // Convert R2 keys to view URLs for editor display
-        const convertedTimelineDsl = nextTimelineDsl ? {
-            ...nextTimelineDsl,
-            tracks: convertTracksToViewUrls(nextTimelineDsl.tracks),
+        const convertedTimelineDsl = hydratedDsl ? {
+            ...hydratedDsl,
+            tracks: convertTracksToViewUrls(hydratedDsl.tracks),
         } : null;
         setTimelineDsl(convertedTimelineDsl);
 

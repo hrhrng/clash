@@ -57,7 +57,7 @@ import {
     createMesh,
     getNestingDepth,
     isDescendant,
-    relayoutByTopology,
+    relayoutToGrid,
     needsAutoLayout,
     autoInsertNode,
     applyAutoInsertResult,
@@ -708,10 +708,10 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 layoutWidth = 300;
                 layoutHeight = 150;
             } else if (nodeType === 'video-editor') {
-                defaultWidth = 250;
-                defaultHeight = 200;
-                layoutWidth = 250;
-                layoutHeight = 200;
+                defaultWidth = 400;
+                defaultHeight = 225;
+                layoutWidth = 400;
+                layoutHeight = 225;
             }
             if (nodeType === 'image' || nodeType === 'video') {
                 defaultWidth = undefined;
@@ -1250,41 +1250,45 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
     const relayoutParent = useCallback(
         (parentId: string | undefined) => {
             setNodes((current) => {
-                // Use topology-based layout instead of grid layout
-                let updated = relayoutByTopology(current, edges, {
-                    columnGap: 120,
-                    rowGap: 80,
-                    scopeParentId: parentId,
-                    centerInColumn: true,
-                });
+                // First, ensure all group sizes are up-to-date before layout
+                let updated = [...current];
 
-                // Resize the affected parent group (and its ancestors) after children move.
-                if (parentId) {
-                    const mergedScales = new Map<string, { width: number; height: number }>();
-                    const directChildren = updated.filter((n) => n.parentId === parentId);
-                    for (const child of directChildren) {
-                        const scales = recursiveGroupScale(child.id, updated);
-                        for (const [groupId, size] of scales.entries()) {
-                            const prev = mergedScales.get(groupId);
-                            if (!prev) mergedScales.set(groupId, size);
-                            else
-                                mergedScales.set(groupId, {
-                                    width: Math.max(prev.width, size.width),
-                                    height: Math.max(prev.height, size.height),
-                                });
-                        }
-                    }
-                    if (mergedScales.size > 0) {
-                        updated = applyGroupScales(updated, mergedScales);
+                // Update all group sizes in the scope
+                const nodesToCheck = current.filter((n) => n.parentId === parentId);
+                const mergedScales = new Map<string, { width: number; height: number }>();
+
+                // For each node in scope, check if it or its ancestors (groups) need resizing
+                for (const node of nodesToCheck) {
+                    const scales = recursiveGroupScale(node.id, updated);
+                    for (const [groupId, size] of scales.entries()) {
+                        const prev = mergedScales.get(groupId);
+                        if (!prev) mergedScales.set(groupId, size);
+                        else
+                            mergedScales.set(groupId, {
+                                width: Math.max(prev.width, size.width),
+                                height: Math.max(prev.height, size.height),
+                            });
                     }
                 }
+
+                if (mergedScales.size > 0) {
+                    updated = applyGroupScales(updated, mergedScales);
+                }
+
+                // Now perform layout with correct group sizes
+                updated = relayoutToGrid(updated, {
+                    gapX: 120,
+                    gapY: 100,
+                    centerInCell: true,
+                    scopeParentId: parentId,
+                });
 
                 updated = applyAutoZIndex(updated);
                 applyLayoutPatchesToLoro(loroSync, collectLayoutNodePatches(current, updated));
                 return updated;
             });
         },
-        [setNodes, applyAutoZIndex, loroSync, edges]
+        [setNodes, applyAutoZIndex, loroSync]
     );
 
     const onLayout = useCallback(() => {
@@ -1327,46 +1331,41 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
                         {/* Main Canvas Area */}
                         <div className="flex flex-1 overflow-hidden relative">
-                            {/* Header Panel - Aligned with Left Toolbar */}
-                            <div id="editor-header" className="absolute top-6 left-6 z-[60] flex items-center gap-4 rounded-full bg-white/80 backdrop-blur-xl border border-slate-200 shadow-sm px-5 py-3 transition-all hover:bg-white/90 pointer-events-auto">
-                                <Link href="/" className="group flex items-center justify-center">
+                            {/* Logo + Project Name - No Background */}
+                            <div id="editor-header" className="absolute top-6 left-[36px] z-[60] flex items-center pointer-events-auto">
+                                <Link href="/" className="group">
                                     <motion.div
-                                        className="flex items-center justify-center"
+                                        className="flex items-center gap-1"
                                         whileHover={{ scale: 1.05 }}
                                         whileTap={{ scale: 0.95 }}
                                     >
-                                        <span className="font-display text-2xl font-bold tracking-tighter text-gray-900 leading-none">
-                                            Clash
+                                        <span className="font-display text-4xl font-bold tracking-tighter text-gray-900 leading-none">
+                                            C
                                         </span>
+                                        <div className="h-8 w-[6px] bg-brand -skew-x-[20deg] transform origin-center" />
                                     </motion.div>
                                 </Link>
 
-                                {/* Separator */}
-                                <div className="h-6 w-px bg-slate-200" />
+                                {/* Separator - Aligned with Toolbar Right Edge (88px from viewport left) */}
+                                <div className="absolute left-[52px] h-8 w-px bg-slate-300" />
 
-                                {/* Project Name */}
-                                <div className="grid items-center justify-items-start">
-                                    {/* Invisible span to set width */}
-                                    <span className="invisible col-start-1 row-start-1 text-lg font-display font-medium px-1 whitespace-pre">
-                                        {projectName || 'Untitled'}
-                                    </span>
-                                    <input
-                                        className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-lg font-display font-medium text-slate-900 focus:outline-none focus:ring-0 rounded px-1 -ml-1 placeholder-slate-400"
-                                        size={1}
-                                        value={projectName}
-                                        onChange={(e) => setProjectName(e.target.value)}
-                                        onBlur={() => {
-                                            if (projectName !== project.name) {
-                                                updateProjectName(project.id, projectName);
-                                            }
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.currentTarget.blur();
-                                            }
-                                        }}
-                                    />
-                                </div>
+                                {/* Project Name Input */}
+                                <input
+                                    className="absolute left-[65px] bg-transparent text-base font-display font-medium text-slate-900 focus:outline-none focus:ring-0 placeholder-slate-400 min-w-[60px]"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    onBlur={() => {
+                                        if (projectName !== project.name) {
+                                            updateProjectName(project.id, projectName);
+                                        }
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.currentTarget.blur();
+                                        }
+                                    }}
+                                    placeholder="Untitled"
+                                />
                             </div>
                             <div className="absolute inset-0 z-0">
                                 <ReactFlow
@@ -1396,8 +1395,8 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                             </div>
 
                             {/* Left Toolbar - Vertical Palette */}
-                            <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4 pointer-events-none">
-                                 <div className="pointer-events-auto flex flex-col items-center gap-4 rounded-full border border-slate-200 bg-white/80 py-6 px-3 shadow-lg backdrop-blur-xl transition-all">
+                            <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-2 pointer-events-none">
+                                 <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-full border border-slate-200 bg-white/80 py-6 px-3 shadow-lg backdrop-blur-xl transition-all">
                                     {toolbarMenu.map((item) => {
                                         const Icon = item.icon;
                                         const isActive = activeMenu === item.id;

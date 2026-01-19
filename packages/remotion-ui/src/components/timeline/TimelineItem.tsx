@@ -108,7 +108,12 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   // Get asset data (for thumbnail and waveform)
   const asset = React.useMemo(() => {
     if (item.type === 'video' || item.type === 'audio' || item.type === 'image') {
-      // Items have src directly, not assetId
+      // Priority 1: Lookup by assetId (if present)
+      if ('assetId' in item && item.assetId) {
+        const found = assets.find((a) => a.id === item.assetId);
+        if (found) return found;
+      }
+      // Priority 2: Fallback to lookup by src (legacy/direct link)
       return assets.find((a) => a.src === item.src) ?? null;
     }
     return null;

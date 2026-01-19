@@ -10,11 +10,12 @@ export default function LayoutContent({
 }) {
   const pathname = usePathname();
 
-  // 检查是否是项目详情页面
+  // 检查是否是项目详情页面或 Landing Page
   const isProjectDetailPage = pathname?.match(/^\/projects\/[^\/]+$/);
+  const isLandingPage = pathname === '/landing';
 
-  if (isProjectDetailPage) {
-    // 项目详情页面：全屏，无sidebar/navigation
+  if (isProjectDetailPage || isLandingPage) {
+    // 全屏页面，无sidebar/navigation
     return <>{children}</>;
   }
 

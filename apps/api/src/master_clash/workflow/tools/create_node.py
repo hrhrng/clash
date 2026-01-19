@@ -109,30 +109,10 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         elif parent_id_from_proposal:
                             node_position = {"x": 50.0, "y": 50.0}
                         else:
-                            # Calculate rightmost position for root-level nodes
-                            existing_nodes = loro_client.get_all_nodes() or {}
-                            max_right_edge = 0.0
-                            rightmost_y = 100.0  # Default Y position
-
-                            for existing in existing_nodes.values():
-                                if not existing:
-                                    continue
-                                # Only consider root-level nodes (no parentId)
-                                if existing.get("parentId"):
-                                    continue
-
-                                existing_pos = existing.get("position") or {}
-                                existing_width = existing.get("width", 300)
-                                try:
-                                    right_edge = float(existing_pos.get("x", 0.0)) + float(existing_width)
-                                    if right_edge > max_right_edge:
-                                        max_right_edge = right_edge
-                                        rightmost_y = float(existing_pos.get("y", 100.0))
-                                except (TypeError, ValueError):
-                                    continue
-
-                            # Place to the right of the rightmost node, aligned with its Y
-                            node_position = {"x": max_right_edge + 100.0, "y": rightmost_y}
+                            # Use frontend auto-layout instead of calculating position manually
+                            # This avoids the expensive get_all_nodes() call which can cause hangs
+                            node_position = {"x": -1, "y": -1}  # NEEDS_LAYOUT_POSITION
+                            logger.info(f"[LoroSync] Using frontend auto-layout for node {result.node_id}")
 
                         # Set default dimensions based on node type (matching frontend ProjectEditor.tsx)
                         resolved_type = proposal.get("nodeType") or node_type
@@ -140,8 +120,8 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                             default_width = 400
                             default_height = 400
                         elif resolved_type == "video-editor":
-                            default_width = 250
-                            default_height = 200
+                            default_width = 400
+                            default_height = 225
                         else:
                             default_width = 300
                             default_height = 300
