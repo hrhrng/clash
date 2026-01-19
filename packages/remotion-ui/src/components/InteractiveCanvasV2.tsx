@@ -2,7 +2,6 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { VideoComposition } from '@master-clash/remotion-components';
 import type { Track, Item, ItemProperties } from '@master-clash/remotion-core';
-import { findTopItemAtPoint } from './canvas/hitTest';
 
 interface InteractiveCanvasProps {
   tracks: Track[];
@@ -42,7 +41,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   onUpdateItem,
   onSelectItem,
   playing = false,
-  onSeek,
+  onSeek: _onSeek,
   onFrameUpdate,
   onPlayingChange,
 }) => {
@@ -50,9 +49,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const selectionBoxRef = useRef<HTMLDivElement>(null);
   const itemsDomMapRef = useRef<Map<string, HTMLElement>>(new Map());
-  const itemBoundsCache = useRef<Map<string, DOMRect>>(new Map());
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [hoverHandle, setHoverHandle] = useState<DragMode>(null);
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -201,11 +198,11 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   }, [getBaseMetrics, zoom, panOffset, compositionWidth, compositionHeight]);
 
   // 4. 尺寸标量转换 (0-1 -> Screen Px)
-  const scalarToScreen = useCallback((w: number) => {
-    const metrics = getBaseMetrics();
-    if (!metrics) return 0;
-    return w * compositionWidth * metrics.scaleX * zoom;
-  }, [getBaseMetrics, zoom, compositionWidth]);
+  // const scalarToScreen = useCallback((w: number) => {
+  //   const metrics = getBaseMetrics();
+  //   if (!metrics) return 0;
+  //   return w * compositionWidth * metrics.scaleX * zoom;
+  // }, [getBaseMetrics, zoom, compositionWidth]);
 
 
   // 找到选中的 item
@@ -520,7 +517,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
       const startY = dragState.startProperties.y ?? 0;
 
       switch (dragState.mode) {
-        case 'move':
+        case 'move': {
           // 移动：直接加 Delta (因为 x,y 也是 Composition Pixels)
           let nextX = startX + deltaX;
           let nextY = startY + deltaY;
@@ -595,11 +592,12 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
           newProperties.x = nextX;
           newProperties.y = nextY;
           break;
+        }
 
         case 'scale-tl':
         case 'scale-tr':
         case 'scale-bl':
-        case 'scale-br':
+        case 'scale-br': {
           // 缩放
           // 需要考虑旋转，这里简化处理，使用距离变化
           // 更好的方式是将鼠标点投影到对象局部坐标系，这里先实现中心缩放或简单的方向缩放
@@ -620,8 +618,9 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
           newProperties.width = Math.max(0.01, dragState.startProperties.width * scale);
           newProperties.height = Math.max(0.01, dragState.startProperties.height * scale);
           break;
+        }
 
-        case 'rotate':
+        case 'rotate': {
           // 旋转
           // 计算当前鼠标相对于 Item 中心的角度
           const angle = Math.atan2(currentPoint.y - startY, currentPoint.x - startX) * (180 / Math.PI);
@@ -646,6 +645,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
 
           newProperties.rotation = nextRotation;
           break;
+        }
       }
 
       // 更新 item properties
@@ -698,8 +698,8 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
     // 转换宽高到屏幕像素
     // 注意：normalizedToScreen 包含 zoom 和 scale
     // width(0-1) -> ScreenPx = width * compositionWidth * scaleX * zoom
-    const widthScreen = scalarToScreen(propW);
-    const heightScreen = scalarToScreen(propH * (compositionHeight / compositionWidth)) * (compositionWidth / compositionHeight);
+    // const widthScreen = scalarToScreen(propW);
+    // const heightScreen = scalarToScreen(propH * (compositionHeight / compositionWidth)) * (compositionWidth / compositionHeight);
     // 上面 scalarToScreen 只用了 scaleX，如果像素非正方形可能有问题，但通常 scaleX=scaleY
     // 更安全的写法：
     const metrics = getBaseMetrics();
@@ -724,77 +724,77 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
   const bounds = selectedItemData ? getItemRenderInfo(selectedItemData.item) : null;
 
   // 统一的指针按下处理（同时处理选中和拖动）
-  const handlePointerDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (!onSelectItem) return;
+  // const handlePointerDown = useCallback(
+  //   (e: React.MouseEvent) => {
+  //     if (!onSelectItem) return;
 
-      const target = e.target as HTMLElement;
-      if (target.closest('.control-handle') || target.closest('.zoom-controls')) {
-        return;
-      }
-      if (target.tagName === 'BUTTON' || target.closest('button')) {
-        return;
-      }
+  //     const target = e.target as HTMLElement;
+  //     if (target.closest('.control-handle') || target.closest('.zoom-controls')) {
+  //       return;
+  //     }
+  //     if (target.tagName === 'BUTTON' || target.closest('button')) {
+  //       return;
+  //     }
 
-      const point = screenToPropertySpace(e.clientX, e.clientY);
+  //     const point = screenToPropertySpace(e.clientX, e.clientY);
 
-      console.log('[InteractiveCanvas] Click at:', point);
+  //     console.log('[InteractiveCanvas] Click at:', point);
 
-      const hitTarget = findTopItemAtPoint(
-        point.x,
-        point.y,
-        tracks,
-        currentFrame,
-        compositionWidth,
-        compositionHeight
-      );
+  //     const hitTarget = findTopItemAtPoint(
+  //       point.x,
+  //       point.y,
+  //       tracks,
+  //       currentFrame,
+  //       compositionWidth,
+  //       compositionHeight
+  //     );
 
-      if (hitTarget) {
-        console.log('[InteractiveCanvas] Clicked item:', hitTarget.itemId);
-        if (selectedItemId !== hitTarget.itemId) {
-          onSelectItem(hitTarget.itemId);
-        }
+  //     if (hitTarget) {
+  //       console.log('[InteractiveCanvas] Clicked item:', hitTarget.itemId);
+  //       if (selectedItemId !== hitTarget.itemId) {
+  //         onSelectItem(hitTarget.itemId);
+  //       }
 
-        const itemData = tracks
-          .flatMap((t) => t.items.map((i) => ({ trackId: t.id, item: i })))
-          .find((x) => x.item.id === hitTarget.itemId);
+  //       const itemData = tracks
+  //         .flatMap((t) => t.items.map((i) => ({ trackId: t.id, item: i })))
+  //         .find((x) => x.item.id === hitTarget.itemId);
 
-        if (itemData) {
-          e.preventDefault();
-          e.stopPropagation();
+  //       if (itemData) {
+  //         e.preventDefault();
+  //         e.stopPropagation();
 
-          // startX/Y needs to be in Property Space (Composition Pixels)
-          setDragState({
-            mode: 'move',
-            startX: point.x,
-            startY: point.y,
-            startProperties: {
-              x: itemData.item.properties?.x ?? 0,
-              y: itemData.item.properties?.y ?? 0,
-              width: itemData.item.properties?.width ?? 1,
-              height: itemData.item.properties?.height ?? 1,
-              rotation: itemData.item.properties?.rotation ?? 0,
-              opacity: itemData.item.properties?.opacity ?? 1,
-            },
-            item: itemData.item,
-            trackId: itemData.trackId,
-          });
-        }
-      } else {
-        console.log('[InteractiveCanvas] Clicked empty area, deselecting');
-        onSelectItem(null);
-      }
-    },
-    [
-      tracks,
-      currentFrame,
-      compositionWidth,
-      compositionHeight,
-      selectedItemId,
-      onSelectItem,
-      screenToPropertySpace,
-    ]
-  );
+  //         // startX/Y needs to be in Property Space (Composition Pixels)
+  //         setDragState({
+  //           mode: 'move',
+  //           startX: point.x,
+  //           startY: point.y,
+  //           startProperties: {
+  //             x: itemData.item.properties?.x ?? 0,
+  //             y: itemData.item.properties?.y ?? 0,
+  //             width: itemData.item.properties?.width ?? 1,
+  //             height: itemData.item.properties?.height ?? 1,
+  //             rotation: itemData.item.properties?.rotation ?? 0,
+  //             opacity: itemData.item.properties?.opacity ?? 1,
+  //           },
+  //           item: itemData.item,
+  //           trackId: itemData.trackId,
+  //         });
+  //       }
+  //     } else {
+  //       console.log('[InteractiveCanvas] Clicked empty area, deselecting');
+  //       onSelectItem(null);
+  //     }
+  //   },
+  //   [
+  //     tracks,
+  //     currentFrame,
+  //     compositionWidth,
+  //     compositionHeight,
+  //     selectedItemId,
+  //     onSelectItem,
+  //     screenToPropertySpace,
+  //   ]
+  // );
 
   // 计算画布的实际显示尺寸（保持宽高比）
   const aspectRatio = compositionWidth / compositionHeight;
@@ -1010,7 +1010,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
             height="100%"
             fill="transparent"
             style={{ pointerEvents: 'all' }}
-            onMouseDown={(e) => {
+            onMouseDown={(_e) => {
               console.log('[InteractiveCanvas] Clicked empty background, deselecting');
               onSelectItem?.(null);
             }}
@@ -1157,8 +1157,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
                   e.stopPropagation();
                   handleMouseDown(e as any, `scale-${pos}` as DragMode);
                 }}
-                onMouseEnter={() => setHoverHandle(`scale-${pos}` as DragMode)}
-                onMouseLeave={() => setHoverHandle(null)}
               />
             ))}
 
@@ -1181,8 +1179,6 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
                 e.stopPropagation();
                 handleMouseDown(e as any, 'rotate');
               }}
-              onMouseEnter={() => setHoverHandle('rotate')}
-              onMouseLeave={() => setHoverHandle(null)}
             />
             <line
               className="control-handle"

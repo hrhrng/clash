@@ -45,6 +45,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
     startProperties: ItemProperties;
     startRect: { left: number; top: number; width: number; height: number };
     startRotation: number;
+    startPointer?: { x: number; y: number };
   } | null>(null);
   const isInteractingRef = useRef(false);
   const rafUpdateRef = useRef<number | null>(null);
@@ -787,7 +788,8 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
           />
         )}
         {moveableTarget && (
-          <style jsx global>{`
+          <style dangerouslySetInnerHTML={{
+            __html: `
             .moveable-control-box {
               border: 2px solid #0066ff;
             }
@@ -800,7 +802,7 @@ export const InteractiveCanvas: React.FC<InteractiveCanvasProps> = ({
               border: 2px solid #0066ff;
               background: #ffffff;
             }
-          `}</style>
+          `}} />
         )}
       </div>
     </div>

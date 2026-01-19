@@ -2,8 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import type { Track, Asset, Item } from '@master-clash/remotion-core';
 import { TimelineItem } from './TimelineItem';
-import { colors, timeline, typography, borderRadius, shadows, withOpacity } from './styles';
-import { frameToPixels, secondsToFrames } from './utils/timeFormatter';
+import { colors, timeline, typography, borderRadius } from './styles';
+import { secondsToFrames } from './utils/timeFormatter';
 import { useEditor } from '@master-clash/remotion-core';
 
 interface TimelineTrackProps {
@@ -23,7 +23,7 @@ interface TimelineTrackProps {
 
 export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   track,
-  durationInFrames,
+  durationInFrames: _durationInFrames,
   pixelsPerFrame,
   isSelected,
   selectedItemId,
@@ -41,7 +41,6 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(track.name);
 
-  const totalWidth = frameToPixels(durationInFrames, pixelsPerFrame);
 
   const handleTrackClick = useCallback(() => {
     onSelectTrack();

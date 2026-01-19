@@ -64,7 +64,7 @@ export function AgentCard({ agentName, status, children, isExpanded: initialExpa
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${pConfig.bg} ${(pConfig as any).ring || ''} relative flex items-center justify-center`}>
+                    <div className={`p-2 rounded-xl ${pConfig.bg} ${(pConfig as any).ring || ''} relative flex items-center justify-center`}>
                         <PersonaIcon
                             className={`w-4 h-4 ${pConfig.color}`}
                             weight="duotone"

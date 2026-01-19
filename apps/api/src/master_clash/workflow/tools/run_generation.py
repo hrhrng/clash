@@ -144,10 +144,10 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
                 # Generate asset ID
                 from master_clash.semantic_id import (
-                    create_d1_checker,
+                    create_id_checker,
                     generate_unique_id_for_project,
                 )
-                checker = create_d1_checker()
+                checker = create_id_checker()
                 asset_id = generate_unique_id_for_project(project_id, checker)
 
                 # Get position from Loro
@@ -280,10 +280,10 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
             # Generate asset ID
             from master_clash.semantic_id import (
-                create_d1_checker,
+                create_id_checker,
                 generate_unique_id_for_project,
             )
-            checker = create_d1_checker()
+            checker = create_id_checker()
             asset_id = generate_unique_id_for_project(project_id, checker)
 
             gen_type = "image" if action_type == "image-gen" else "video"

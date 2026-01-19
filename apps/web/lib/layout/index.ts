@@ -82,6 +82,22 @@ export type { UseLayoutManagerReturn } from './hooks/useLayoutManager';
 // Grid relayout
 export { relayoutToGrid } from './grid/relayout';
 
+// Topology relayout
+export {
+    relayoutByTopology,
+    relayoutMultipleScopes,
+    relayoutAllScopes,
+    buildTopologyGraph,
+    assignColumns,
+    calculateTopologyInsertPosition,
+} from './topology';
+export type {
+    TopologyLayoutOptions,
+    TopologyGraphInfo,
+    ColumnAssignment,
+    ColumnInfo,
+} from './topology';
+
 // Auto-insert (for nodes added by Python backend or frontend actions)
 export {
     NEEDS_LAYOUT_POSITION,

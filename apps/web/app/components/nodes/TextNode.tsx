@@ -147,7 +147,7 @@ const TextNode = ({ data, selected, id }: NodeProps) => {
                     onDoubleClick={(e) => e.stopPropagation()}
                 >
                     <input
-                        className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
+                        className="bg-transparent text-lg font-bold font-display text-slate-500 focus:text-slate-900 focus:outline-none"
                         value={label}
                         onChange={handleLabelChange}
                         placeholder="Text Node"

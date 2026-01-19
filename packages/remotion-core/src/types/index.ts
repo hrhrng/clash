@@ -140,3 +140,8 @@ export type EditorAction =
   | { type: 'REMOVE_ASSET'; payload: string }
   | { type: 'SET_COMPOSITION_SIZE'; payload: { width: number; height: number } }
   | { type: 'SET_DURATION'; payload: number };
+
+export type TimelineDsl = Pick<
+  EditorState,
+  'tracks' | 'compositionWidth' | 'compositionHeight' | 'fps' | 'durationInFrames'
+>;

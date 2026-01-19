@@ -11,6 +11,7 @@ from langchain.tools import BaseTool, ToolRuntime
 from pydantic import BaseModel, Field
 
 from master_clash.workflow.backends import CanvasBackendProtocol
+from master_clash.workflow.share_types import TimelineDSL
 
 logger = logging.getLogger(__name__)
 
@@ -78,14 +79,7 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             # For video-editor nodes, initialize timelineDsl if not provided
             node_data_dict = payload.model_dump(exclude_none=True)
             if node_type == "video-editor" and "timelineDsl" not in node_data_dict:
-                node_data_dict["timelineDsl"] = {
-                    "version": "1.0.0",
-                    "fps": 30,
-                    "compositionWidth": 1920,
-                    "compositionHeight": 1080,
-                    "durationInFrames": 0,
-                    "tracks": []
-                }
+                node_data_dict["timelineDsl"] = TimelineDSL().model_dump()
                 logger.info("[create_canvas_node] Initialized default timelineDsl for video-editor node")
 
             result = resolved_backend.create_node(
@@ -146,8 +140,8 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                             default_width = 400
                             default_height = 400
                         elif resolved_type == "video-editor":
-                            default_width = 800
-                            default_height = 600
+                            default_width = 250
+                            default_height = 200
                         else:
                             default_width = 300
                             default_height = 300

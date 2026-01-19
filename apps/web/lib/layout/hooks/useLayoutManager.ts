@@ -10,7 +10,6 @@ import {
     needsAutoLayout,
     autoInsertNode,
     applyAutoInsertResult,
-    type AutoInsertResult,
 } from '../auto-insert';
 
 /**

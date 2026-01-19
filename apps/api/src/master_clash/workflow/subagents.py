@@ -386,8 +386,8 @@ Your Workflow:
       "items": [
         {
           "assetId": "asset-id-here",
-          "startTime": 0,
-          "duration": 5
+          "from": 0,
+          "durationInFrames": 150
         }
       ]
     }

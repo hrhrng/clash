@@ -5,7 +5,7 @@ import { Play, Pause, X, SpeakerHigh, SkipBack, SkipForward, Spinner } from '@ph
 import { resolveAssetUrl } from '../../../lib/utils/assets';
 import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
-const AudioNode = ({ data, selected, id }: NodeProps) => {
+const AudioNode = ({ data, selected, id: _id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Audio Node');
     const [isPlaying, setIsPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -174,7 +174,7 @@ const AudioNode = ({ data, selected, id }: NodeProps) => {
                     onDoubleClick={(e) => e.stopPropagation()}
                 >
                     <input
-                        className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
+                        className="bg-transparent text-lg font-bold font-display text-slate-500 focus:text-slate-900 focus:outline-none"
                         value={label}
                         onChange={(evt) => {
                             setLabel(evt.target.value);

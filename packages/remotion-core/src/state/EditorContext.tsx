@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import type { EditorState, EditorAction, Track, Item, Asset } from '../types';
+import type { EditorState, EditorAction, Item } from '../types';
 
 // Initial state
 const initialState: EditorState = {

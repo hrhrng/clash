@@ -261,6 +261,19 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
     }
   }, []);
 
+  // Forward declaration for recursion
+  const connectRef = useRef<() => void>(() => {});
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    const delay = Math.min(500 * Math.pow(1.5, retryCountRef.current), 5000);
+    reconnectTimeoutRef.current = setTimeout(() => {
+      retryCountRef.current++;
+      // Call the latest connect function via ref to avoid circular dependency
+      connectRef.current();
+    }, delay);
+  }, []);
+
   // Connect function - only called after initialization
   const connect = useCallback(() => {
     if (isUnmountingRef.current) return;
@@ -322,16 +335,12 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
         scheduleReconnect();
       }
     };
-  }, [projectId, syncServerUrl, doc]);
+  }, [projectId, syncServerUrl, doc, scheduleReconnect]);
 
-  const scheduleReconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-    const delay = Math.min(500 * Math.pow(1.5, retryCountRef.current), 5000);
-    reconnectTimeoutRef.current = setTimeout(() => {
-      retryCountRef.current++;
-      connect();
-    }, delay);
-  }, [connect, retryCountRef]);
+  // Keep ref updated
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // Only connect WebSocket AFTER initialization is complete
   useEffect(() => {
@@ -425,6 +434,7 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
   }, [doc, undoManager, updateUndoRedoState]);
 
   return {
+    projectId,
     doc,
     connected,
     addNode,

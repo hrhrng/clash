@@ -14,6 +14,26 @@ import { applyLayoutPatchesToLoro, collectLayoutNodePatches } from '../../lib/lo
 
 type ModelParams = Record<string, string | number | boolean>;
 
+// Helper to extract meaningful label from prompt content
+const extractLabelFromPrompt = (promptText: string, fallback: string): string => {
+    if (!promptText || promptText.trim() === '') return fallback;
+
+    // Remove markdown headers and get first non-empty line
+    const lines = promptText
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#') && line !== 'Prompt' && line !== 'Enter your prompt here...');
+
+    if (lines.length === 0) return fallback;
+
+    // Take first 50 chars of first meaningful line
+    const firstLine = lines[0];
+    if (firstLine.length > 50) {
+        return firstLine.substring(0, 50) + '...';
+    }
+    return firstLine;
+};
+
 const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     const [isHovered, setIsHovered] = useState(false);
     const [showModal, setShowModal] = useState(false);
@@ -139,11 +159,11 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
 
     // Sync content and label when data changes (from Loro or other sources)
     useEffect(() => {
-        if (data.label && data.label !== label) {
-            setLabel(data.label);
+        if (data.label) {
+            setLabel((prev: string) => (prev !== data.label ? data.label : prev));
         }
-        if (data.content !== undefined && data.content !== content) {
-            setContent(data.content);
+        if (data.content !== undefined) {
+            setContent((prev: string) => (prev !== data.content ? data.content : prev));
         }
     }, [data.label, data.content]);
 
@@ -273,63 +293,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
     };
 
     // Auto-run effect
-    useEffect(() => {
-        const requiredUpstreams: string[] = Array.isArray(data.upstreamNodeIds) ? data.upstreamNodeIds : [];
-        console.log('[ActionBadge] useEffect triggered', {
-            autoRun: data.autoRun,
-            upstreamNodeIds: requiredUpstreams,
-            nodeId: id,
-            edgesCount: edges.length,
-            isExecuting
-        });
-
-        if (data.autoRun && !isExecuting) {
-            if (requiredUpstreams.length > 0) {
-                const connectedSources = edges.filter(e => e.target === id).map(e => e.source);
-                const allConnected = requiredUpstreams.every((uid: string) => connectedSources.includes(uid));
-
-                if (!allConnected) {
-                    console.log('[ActionBadge] Waiting for upstream connections...', {
-                        required: requiredUpstreams,
-                        connected: connectedSources
-                    });
-                    return;
-                }
-            }
-
-            // Clear the flag to prevent infinite loops
-            console.log('[ActionBadge] Executing auto-run!');
-            data.autoRun = false;
-
-            // Small delay to ensure React Flow state is fully synced
-            setTimeout(() => {
-                handleExecute();
-            }, 500);
-        }
-    }, [data.autoRun, edges, data.upstreamNodeIds, id, isExecuting]);
-
-    // Helper to extract meaningful label from prompt content
-    const extractLabelFromPrompt = (promptText: string, fallback: string): string => {
-        if (!promptText || promptText.trim() === '') return fallback;
-
-        // Remove markdown headers and get first non-empty line
-        const lines = promptText
-            .split('\n')
-            .map(line => line.trim())
-            .filter(line => line && !line.startsWith('#') && line !== 'Prompt' && line !== 'Enter your prompt here...');
-
-        if (lines.length === 0) return fallback;
-
-        // Take first 50 chars of first meaningful line
-        const firstLine = lines[0];
-        if (firstLine.length > 50) {
-            return firstLine.substring(0, 50) + '...';
-        }
-        return firstLine;
-    };
-
-    // Execute action: generate image or video
-    const handleExecute = async () => {
+    const handleExecute = useCallback(async () => {
         setIsExecuting(true);
         setError(null);
 
@@ -343,7 +307,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
 
             // PRIORITY 1: Use embedded content if available
             let prompt = content && content.trim() !== '# Prompt\nEnter your prompt here...' ? content : '';
-            
+
             // PRIORITY 2: Fallback to connected prompt/text nodes
             if (!prompt) {
                 const promptNode = connectedNodes.find(n => n?.type === 'prompt');
@@ -519,7 +483,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                             : 'Selected video model requires at least one reference image node');
                     }
                 }
-                
+
                 // Debug: log image sources
                 console.log('[ActionBadge] Image nodes found:', imageNodes.length);
                 console.log('[ActionBadge] Image sources:', imageNodes.map(n => n?.data?.src));
@@ -639,7 +603,63 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
         } finally {
             setIsExecuting(false);
         }
-    };
+    }, [
+        id,
+        content,
+        data.prompt,
+        data.preAllocatedAssetId,
+        projectId,
+        actionType,
+        modelParams,
+        modelId,
+        referenceMode,
+        referenceRequirement,
+        getEdges,
+        getNodes,
+        setNodes,
+        addNodeWithAutoLayout,
+        loroSync,
+        addEdges
+    ]);
+
+    // Helper to extract meaningful label from prompt content (already moved outside)
+
+
+    // Execute action: generate image or video
+    useEffect(() => {
+        const requiredUpstreams: string[] = Array.isArray(data.upstreamNodeIds) ? data.upstreamNodeIds : [];
+        console.log('[ActionBadge] useEffect triggered', {
+            autoRun: data.autoRun,
+            upstreamNodeIds: requiredUpstreams,
+            nodeId: id,
+            edgesCount: edges.length,
+            isExecuting
+        });
+
+        if (data.autoRun && !isExecuting) {
+            if (requiredUpstreams.length > 0) {
+                const connectedSources = edges.filter(e => e.target === id).map(e => e.source);
+                const allConnected = requiredUpstreams.every((uid: string) => connectedSources.includes(uid));
+
+                if (!allConnected) {
+                    console.log('[ActionBadge] Waiting for upstream connections...', {
+                        required: requiredUpstreams,
+                        connected: connectedSources
+                    });
+                    return;
+                }
+            }
+
+            // Clear the flag to prevent infinite loops
+            console.log('[ActionBadge] Executing auto-run!');
+            data.autoRun = false;
+
+            // Small delay to ensure React Flow state is fully synced
+            setTimeout(() => {
+                handleExecute();
+            }, 500);
+        }
+    }, [data, data.autoRun, edges, data.upstreamNodeIds, id, isExecuting, handleExecute]);
 
     const renderParamControl = (param: ModelParameter) => {
         const currentValue = modelParams[param.id] ?? param.defaultValue ?? (param.type === 'boolean' ? false : '');
@@ -841,7 +861,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                     onDoubleClick={(e) => e.stopPropagation()}
                 >
                     <input
-                        className={`bg-transparent text-lg font-bold ${colorClass} focus:outline-none`}
+                        className={`bg-transparent text-lg font-bold font-display ${colorClass} focus:outline-none`}
                         value={label}
                         onChange={handleLabelChange}
                         placeholder="Prompt"
@@ -899,6 +919,7 @@ const PromptActionNode = ({ data, selected, id }: NodeProps) => {
                                                 className="relative"
                                                 title={img.label}
                                             >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
                                                 <img
                                                     src={resolveAssetUrl(img.src)}
                                                     alt={img.label}

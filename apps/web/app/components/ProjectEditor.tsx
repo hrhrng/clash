@@ -12,28 +12,26 @@ import ReactFlow, {
     Connection,
     Edge,
     Node,
-    Panel,
     NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     FilmSlate,
     TextT,
-    ChatText,
-    Article,
     Image as ImageIcon,
-    Plus,
-    PaintBrush,
     SpeakerHigh,
     MagicWand,
+    Sparkle,
     ArrowCounterClockwise,
     ArrowClockwise,
+    UploadSimple,
+    Square,
 } from '@phosphor-icons/react';
 import Link from 'next/link';
-import { Project, Message } from '@generated/client';
+import { Project } from '@generated/client';
 import ChatbotCopilot from './ChatbotCopilot';
-import { saveProjectState, updateProjectName } from '../actions';
+import { updateProjectName } from '../actions';
 import VideoNode from './nodes/VideoNode';
 import ImageNode from './nodes/ImageNode';
 import TextNode from './nodes/TextNode';
@@ -46,7 +44,6 @@ import { ProjectProvider } from './ProjectContext';
 import { VideoEditorProvider, useVideoEditor } from './VideoEditorContext';
 import { getLayoutedElements } from '@/lib/utils/elkLayout';
 import { LayoutActionsProvider } from './LayoutActionsContext';
-import { normalizeStatus, isActiveStatus } from '@/lib/assetStatus';
 import {
     getAbsoluteRect,
     getAbsolutePosition,
@@ -60,13 +57,12 @@ import {
     createMesh,
     getNestingDepth,
     isDescendant,
-    relayoutToGrid,
+    relayoutByTopology,
     needsAutoLayout,
     autoInsertNode,
     applyAutoInsertResult,
 } from '@/lib/layout';
 import { generateSemanticId } from '@/lib/utils/semanticId';
-import { resolveAssetUrl } from '@/lib/utils/assets';
 import { useLoroSync } from '../hooks/useLoroSync';
 import { LoroSyncProvider } from './LoroSyncContext';
 import { MODEL_CARDS } from '@clash/shared-types';
@@ -119,44 +115,10 @@ const sanitizeNodes = (nodes: Node[]): Node[] => {
     return nodes.map(node => {
         if (node.parentId && !nodeIds.has(node.parentId)) {
             console.warn(`[Sanitize] Removing invalid parentId ${node.parentId} from node ${node.id}`);
-            const { parentId, ...rest } = node;
             // Reset to absolute position (or keep relative as absolute)
             // Since parent is missing, we can't calculate true absolute, so we just keep the values
+            const { parentId: _, ...rest } = node;
             return { ...rest, parentId: undefined, extent: undefined };
-        }
-        return node;
-    });
-};
-
-// Migration: Convert old prompt nodes to new PromptActionNode format
-const migrateOldNodes = (nodes: Node[]): Node[] => {
-    return nodes.map(node => {
-        if (node.type === 'prompt') {
-            console.log(`[Migration] Converting old PromptNode ${node.id} to PromptActionNode`);
-            const targetDefaults = (node.data.actionType || 'image-gen') === 'video-gen'
-                ? defaultVideoModel
-                : defaultImageModel;
-            return {
-                ...node,
-                type: 'action-badge',
-                data: {
-                    ...node.data,
-                    actionType: node.data.actionType || 'image-gen', // Default to image generation
-                    content: node.data.content || '# Prompt\nEnter your prompt here...',
-                    modelId: node.data.modelId || targetDefaults?.id || 'nano-banana-pro',
-                    model: node.data.modelId || targetDefaults?.id || 'nano-banana-pro',
-                    modelParams: { ...(targetDefaults?.defaultParams ?? {}), ...(node.data.modelParams ?? {}) },
-                    referenceMode: node.data.referenceMode || targetDefaults?.input.referenceMode || 'single',
-                },
-                // Update dimensions for new layout
-                width: 320,
-                height: 220,
-                style: {
-                    ...node.style,
-                    width: 320,
-                    height: 220,
-                }
-            };
         }
         return node;
     });
@@ -171,7 +133,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
     const [nodes, setNodes] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-    const [selectedTool, setSelectedTool] = useState<string | null>(null);
+    const [activeMenu, setActiveMenu] = useState<string | null>(null);
     const [projectName, setProjectName] = useState(project.name);
 
     // Loro CRDT sync
@@ -540,75 +502,6 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         setSelectedNodes(nodes);
     }, []);
 
-    // Sync connected assets to VideoEditorNode
-    useEffect(() => {
-        setNodes((currentNodes) => {
-            let hasChanges = false;
-            const updatedNodes = currentNodes.map((node) => {
-                if (node.type === 'video-editor') {
-                    // Find all edges connected to this node's 'assets' handle
-                    const connectedEdges = edges.filter(
-                        (e) => e.target === node.id && e.targetHandle === 'assets'
-                    );
-
-                    // Map edges to source nodes and extract asset data
-                    const newInputs = connectedEdges.map((edge) => {
-                        const sourceNode = currentNodes.find((n) => n.id === edge.source);
-                        if (!sourceNode) return null;
-
-                        // Extract relevant data based on node type
-                        if (['image', 'video', 'audio'].includes(sourceNode.type || '')) {
-                            const statusValue = sourceNode.data?.status;
-                            const isGeneratingVideo = sourceNode.type === 'video'
-                                && typeof statusValue === 'string'
-                                && isActiveStatus(normalizeStatus(statusValue));
-                            if (isGeneratingVideo) return null;
-                            return {
-                                id: sourceNode.id,
-                                type: sourceNode.type,
-                                src: resolveAssetUrl(sourceNode.data.src),
-                                name: sourceNode.data.label || sourceNode.type,
-                                width: sourceNode.data.naturalWidth,
-                                height: sourceNode.data.naturalHeight,
-                                duration: sourceNode.data.duration, // Video/audio duration in seconds
-                                sourceNodeId: sourceNode.id, // For deduplication
-                            };
-                        }
-                        return null;
-                    }).filter(Boolean); // Remove nulls
-
-
-                    // Compare with existing inputs to avoid unnecessary updates
-                    const currentInputs = node.data.inputs || [];
-                    const isDifferent = JSON.stringify(newInputs) !== JSON.stringify(currentInputs);
-
-                    if (isDifferent) {
-                        hasChanges = true;
-                        return {
-                            ...node,
-                            data: {
-                                ...node.data,
-                                inputs: newInputs,
-                            },
-                        };
-                    }
-                }
-                return node;
-            });
-
-            return hasChanges ? updatedNodes : currentNodes;
-        });
-    }, [edges, nodes, setNodes]); // Intentionally omitting 'nodes' from dependency to avoid infinite loop, 
-    // but we need access to current nodes. setNodes(callback) gives us current nodes.
-    // However, we need source node data. If source node data changes (e.g. image generated), 
-    // we want to update. 
-    // If we omit 'nodes', we won't trigger on source node updates.
-    // If we include 'nodes', we risk loops.
-    // SOLUTION: Use a specific selector or check for specific data changes.
-    // For now, let's try including 'nodes' but rely on the JSON.stringify check to stop the loop.
-    // React Flow's setNodes with callback is safe, but the effect triggering is the issue.
-    // Let's add 'nodes' to dependency but rely on the strict check.
-
     // Auto-save logic removed: Loro is the single source of truth.
 
 
@@ -673,21 +566,32 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [loroSync]);
 
-    const assetTools = [
-        { id: 'text', label: 'Text', icon: TextT },
-        { id: 'image', label: 'Image', icon: ImageIcon },
-        { id: 'video', label: 'Video', icon: FilmSlate },
-        { id: 'audio', label: 'Audio', icon: SpeakerHigh },
+    const toolbarMenu = [
+        {
+            id: 'assets',
+            label: 'Assets',
+            icon: UploadSimple,
+            items: [
+                { id: 'image', label: 'Image', icon: ImageIcon },
+                { id: 'video', label: 'Video', icon: FilmSlate },
+                { id: 'audio', label: 'Audio', icon: SpeakerHigh },
+            ]
+        },
+        {
+            id: 'actions',
+            label: 'Actions',
+            icon: Sparkle,
+            items: [
+                { id: 'action-badge-image', label: 'Image Gen', icon: ImageIcon },
+                { id: 'action-badge-video', label: 'Video Gen', icon: FilmSlate },
+            ]
+        },
         { id: 'video-editor', label: 'Editor', icon: FilmSlate },
-        { id: 'group', label: 'Group', icon: Plus },
+        { id: 'group', label: 'Group', icon: Square },
+        { id: 'text', label: 'Text', icon: TextT },
     ];
 
-    const actionTools = [
-        { id: 'action-badge-image', label: 'Prompt + Gen Image', icon: ImageIcon },
-        { id: 'action-badge-video', label: 'Prompt + Gen Video', icon: FilmSlate },
-    ];
-
-    const addNode = (type: string, extraData: any = {}) => {
+    const addNode = useCallback((type: string, extraData: any = {}) => {
         let nodeType = type;
         let nodeData: any = { label: `New ${type}`, ...extraData };
         const imageModelDefaults = {
@@ -726,7 +630,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
         } else if (type === 'context') {
             // Remap context creation to text node style but keep label if needed, or just treat as text
             nodeData = { label: 'Context', content: '# Context\nAdd background information here...', ...nodeData };
-            // Note: We are using TextNode component for 'context' type now (via nodeTypes map), 
+            // Note: We are using TextNode component for 'context' type now (via nodeTypes map),
             // so it will render as a TextNode.
         } else if (type === 'video-editor') {
             nodeData = { label: 'Video Editor', inputs: [], ...nodeData };
@@ -1048,7 +952,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             return finalNodes;
         });
         return newNodeId;
-    };
+    }, [nodes, selectedNodes, setNodes, loroSync, applyAutoZIndex]);
 
     const updateNode = useCallback((nodeId: string, updates: Partial<Node>) => {
         setNodes((nds) =>
@@ -1341,12 +1245,18 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
             default:
                 console.warn('Unknown command type:', command.type);
         }
-    }, [nodes, edges, setNodes, setEdges]);
+    }, [nodes, edges, setNodes, setEdges, project.id]);
 
     const relayoutParent = useCallback(
         (parentId: string | undefined) => {
             setNodes((current) => {
-                let updated = relayoutToGrid(current, { gapX: 80, gapY: 80, centerInCell: true, scopeParentId: parentId });
+                // Use topology-based layout instead of grid layout
+                let updated = relayoutByTopology(current, edges, {
+                    columnGap: 120,
+                    rowGap: 80,
+                    scopeParentId: parentId,
+                    centerInColumn: true,
+                });
 
                 // Resize the affected parent group (and its ancestors) after children move.
                 if (parentId) {
@@ -1374,7 +1284,7 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                 return updated;
             });
         },
-        [setNodes, applyAutoZIndex, loroSync, recursiveGroupScale, applyGroupScales]
+        [setNodes, applyAutoZIndex, loroSync, edges]
     );
 
     const onLayout = useCallback(() => {
@@ -1417,43 +1327,45 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
 
                         {/* Main Canvas Area */}
                         <div className="flex flex-1 overflow-hidden relative">
-                            {/* Header Panel - Moved out of ReactFlow to prevent layout shifts */}
-                            <div id="editor-header" className="absolute top-4 left-4 z-[60] pointer-events-none">
-                                <div className="pointer-events-auto flex items-center gap-3 rounded-lg border border-slate-200/60 bg-white/80 px-4 py-3 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90">
-                                    <Link href="/">
-                                        <motion.button
-                                            className="group flex h-8 items-center justify-center rounded-full bg-transparent text-slate-900 transition-colors"
-                                            whileHover={{ scale: 1.05 }}
-                                            whileTap={{ scale: 0.95 }}
-                                        >
-                                            <span className="font-display font-medium text-2xl tracking-tight">
-                                                Clash
-                                            </span>
-                                        </motion.button>
-                                    </Link>
-                                    <span className="text-slate-300 text-xl font-light">/</span>
-                                    <div className="grid items-center justify-items-start">
-                                        {/* Invisible span to set width */}
-                                        <span className="invisible col-start-1 row-start-1 text-sm font-bold px-1 whitespace-pre">
-                                            {projectName || 'Untitled'}
+                            {/* Header Panel - Aligned with Left Toolbar */}
+                            <div id="editor-header" className="absolute top-6 left-6 z-[60] flex items-center gap-4 rounded-full bg-white/80 backdrop-blur-xl border border-slate-200 shadow-sm px-5 py-3 transition-all hover:bg-white/90 pointer-events-auto">
+                                <Link href="/" className="group flex items-center justify-center">
+                                    <motion.div
+                                        className="flex items-center justify-center"
+                                        whileHover={{ scale: 1.05 }}
+                                        whileTap={{ scale: 0.95 }}
+                                    >
+                                        <span className="font-display text-2xl font-bold tracking-tighter text-gray-900 leading-none">
+                                            Clash
                                         </span>
-                                        <input
-                                            className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-sm font-bold text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 rounded px-1 -ml-1"
-                                            size={1}
-                                            value={projectName}
-                                            onChange={(e) => setProjectName(e.target.value)}
-                                            onBlur={() => {
-                                                if (projectName !== project.name) {
-                                                    updateProjectName(project.id, projectName);
-                                                }
-                                            }}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    e.currentTarget.blur();
-                                                }
-                                            }}
-                                        />
-                                    </div>
+                                    </motion.div>
+                                </Link>
+
+                                {/* Separator */}
+                                <div className="h-6 w-px bg-slate-200" />
+
+                                {/* Project Name */}
+                                <div className="grid items-center justify-items-start">
+                                    {/* Invisible span to set width */}
+                                    <span className="invisible col-start-1 row-start-1 text-lg font-display font-medium px-1 whitespace-pre">
+                                        {projectName || 'Untitled'}
+                                    </span>
+                                    <input
+                                        className="col-start-1 row-start-1 w-full min-w-0 bg-transparent text-lg font-display font-medium text-slate-900 focus:outline-none focus:ring-0 rounded px-1 -ml-1 placeholder-slate-400"
+                                        size={1}
+                                        value={projectName}
+                                        onChange={(e) => setProjectName(e.target.value)}
+                                        onBlur={() => {
+                                            if (projectName !== project.name) {
+                                                updateProjectName(project.id, projectName);
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.currentTarget.blur();
+                                            }
+                                        }}
+                                    />
                                 </div>
                             </div>
                             <div className="absolute inset-0 z-0">
@@ -1480,111 +1392,122 @@ export default function ProjectEditor({ project, initialPrompt }: ProjectEditorP
                                         style={{ backgroundColor: 'var(--canvas-bg)' }}
                                     />
 
-
-
-                                    {/* Left Toolbar */}
-                                    {/* Bottom Dock Tools */}
-                                    <Panel
-                                        position="bottom-center"
-                                        className="m-4 mb-8 z-50 transition-all duration-300 ease-spring"
-                                        style={{
-                                            transform: `translate(calc(-50 % - ${!isSidebarCollapsed ? sidebarWidth / 2 : 0}px), 0)`
-                                        }}
-                                    >
-                                        <div
-                                            className="flex items-center gap-4 rounded-xl border border-slate-200/60 bg-white/80 p-3 shadow-lg backdrop-blur-xl transition-all hover:shadow-xl hover:bg-white/90 hover:-translate-y-1"
-                                        >
-
-                                            {/* Assets Section */}
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Assets</span>
-                                                {assetTools.map((tool) => {
-                                                    const Icon = tool.icon;
-                                                    return (
-                                                        <motion.button
-                                                            key={tool.id}
-                                                            onClick={() => handleToolClick(tool.id)}
-                                                            className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                            whileHover={{ scale: 1.1, y: -2 }}
-                                                            whileTap={{ scale: 0.95 }}
-                                                            title={tool.label}
-                                                        >
-                                                            <Icon className="h-5 w-5" weight="regular" />
-                                                        </motion.button>
-                                                    );
-                                                })}
-                                            </div>
-
-                                            <div className="h-8 w-px bg-slate-200" />
-
-                                            {/* Actions Section */}
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider mr-1">Actions</span>
-                                                {actionTools.map((tool) => {
-                                                    const Icon = tool.icon;
-                                                    return (
-                                                        <motion.button
-                                                            key={tool.id}
-                                                            onClick={() => handleToolClick(tool.id)}
-                                                            className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                            whileHover={{ scale: 1.1, y: -2 }}
-                                                            whileTap={{ scale: 0.95 }}
-                                                            title={tool.label}
-                                                        >
-                                                            <Icon className="h-5 w-5" weight="regular" />
-                                                        </motion.button>
-                                                    );
-                                                })}
-
-                                                {/* Auto Layout Button */}
-                                                <motion.button
-                                                    onClick={onLayout}
-                                                    className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-slate-700 transition-all hover:bg-slate-100 hover:text-slate-900 border border-slate-200/50"
-                                                    whileHover={{ scale: 1.1, y: -2 }}
-                                                    whileTap={{ scale: 0.95 }}
-                                                    title="Auto Layout"
-                                                >
-                                                    <MagicWand className="h-5 w-5" weight="regular" />
-                                                </motion.button>
-                                            </div>
-
-                                            <div className="h-8 w-px bg-slate-200" />
-
-                                            {/* History Section */}
-                                            <div className="flex items-center gap-1">
-                                                <motion.button
-                                                    onClick={() => loroSync.undo()}
-                                                    disabled={!loroSync.canUndo}
-                                                    className={`flex h-10 w-10 items-center justify-center rounded-lg transition-all border border-slate-200/50 ${
-                                                        loroSync.canUndo 
-                                                        ? "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 shadow-sm" 
-                                                        : "bg-slate-50/50 text-slate-300 cursor-not-allowed"
-                                                    }`}
-                                                    whileHover={loroSync.canUndo ? { scale: 1.1, y: -2 } : {}}
-                                                    whileTap={loroSync.canUndo ? { scale: 0.95 } : {}}
-                                                    title="Undo (Cmd+Z)"
-                                                >
-                                                    <ArrowCounterClockwise className="h-5 w-5" weight="bold" />
-                                                </motion.button>
-                                                <motion.button
-                                                    onClick={() => loroSync.redo()}
-                                                    disabled={!loroSync.canRedo}
-                                                    className={`flex h-10 w-10 items-center justify-center rounded-lg transition-all border border-slate-200/50 ${
-                                                        loroSync.canRedo 
-                                                        ? "bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 shadow-sm" 
-                                                        : "bg-slate-50/50 text-slate-300 cursor-not-allowed"
-                                                    }`}
-                                                    whileHover={loroSync.canRedo ? { scale: 1.1, y: -2 } : {}}
-                                                    whileTap={loroSync.canRedo ? { scale: 0.95 } : {}}
-                                                    title="Redo (Cmd+Shift+Z)"
-                                                >
-                                                    <ArrowClockwise className="h-5 w-5" weight="bold" />
-                                                </motion.button>
-                                            </div>
-
-                                        </div>
-                                    </Panel>
                                 </ReactFlow>
+                            </div>
+
+                            {/* Left Toolbar - Vertical Palette */}
+                            <div className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4 pointer-events-none">
+                                 <div className="pointer-events-auto flex flex-col items-center gap-4 rounded-full border border-slate-200 bg-white/80 py-6 px-3 shadow-lg backdrop-blur-xl transition-all">
+                                    {toolbarMenu.map((item) => {
+                                        const Icon = item.icon;
+                                        const isActive = activeMenu === item.id;
+                                        // Check if item has 'items' property (submenu)
+                                        const hasSubmenu = 'items' in item;
+
+                                        return (
+                                            <div key={item.id} className="relative">
+                                                <motion.button
+                                                    onClick={() => {
+                                                        if (hasSubmenu) {
+                                                            setActiveMenu(isActive ? null : item.id);
+                                                        } else {
+                                                            handleToolClick(item.id);
+                                                            setActiveMenu(null);
+                                                        }
+                                                    }}
+                                                    className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+                                                        isActive
+                                                        ? "bg-slate-900 text-white shadow-md"
+                                                        : "bg-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                                                    }`}
+                                                    whileHover={{ scale: 1.05 }}
+                                                    whileTap={{ scale: 0.95 }}
+                                                    title={item.label}
+                                                >
+                                                    <Icon className="h-5 w-5" weight={isActive ? "fill" : "regular"} />
+                                                </motion.button>
+
+                                                {/* Submenu Flyout */}
+                                                <AnimatePresence>
+                                                    {isActive && hasSubmenu && (
+                                                        <motion.div
+                                                            initial={{ opacity: 0, x: 10, scale: 0.95 }}
+                                                            animate={{ opacity: 1, x: 20, scale: 1 }}
+                                                            exit={{ opacity: 0, x: 10, scale: 0.95 }}
+                                                            className="absolute left-full top-0 ml-4 flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-xl backdrop-blur-xl min-w-[140px] z-50"
+                                                        >
+                                                            {/* Submenu Title */}
+                                                            <div className="px-2 py-1 text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">
+                                                                {item.label}
+                                                            </div>
+                                                            {(item as any).items.map((subItem: any) => {
+                                                                const SubIcon = subItem.icon;
+                                                                return (
+                                                                    <motion.button
+                                                                        key={subItem.id}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleToolClick(subItem.id);
+                                                                            setActiveMenu(null);
+                                                                        }}
+                                                                        className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors text-left"
+                                                                        whileHover={{ x: 2 }}
+                                                                    >
+                                                                        <SubIcon className="h-4 w-4" />
+                                                                        <span>{subItem.label}</span>
+                                                                    </motion.button>
+                                                                );
+                                                            })}
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
+                                        );
+                                    })}
+
+                                    {/* Divider */}
+                                    <div className="w-8 h-px bg-slate-200" />
+
+                                    {/* Helper Tools (Undo/Redo/Layout) */}
+                                    <motion.button
+                                         onClick={onLayout}
+                                         className="flex h-10 w-10 items-center justify-center rounded-full bg-transparent text-slate-500 transition-all hover:bg-slate-100 hover:text-slate-900"
+                                         whileHover={{ scale: 1.05 }}
+                                         whileTap={{ scale: 0.95 }}
+                                         title="Auto Layout"
+                                     >
+                                         <MagicWand className="h-5 w-5" weight="regular" />
+                                     </motion.button>
+
+                                     <motion.button
+                                         onClick={() => loroSync.undo()}
+                                         disabled={!loroSync.canUndo}
+                                         className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+                                             loroSync.canUndo
+                                             ? "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                                             : "text-slate-300 cursor-not-allowed"
+                                         }`}
+                                         whileHover={loroSync.canUndo ? { scale: 1.05 } : {}}
+                                         whileTap={loroSync.canUndo ? { scale: 0.95 } : {}}
+                                         title="Undo"
+                                     >
+                                         <ArrowCounterClockwise className="h-5 w-5" weight="bold" />
+                                     </motion.button>
+                                     <motion.button
+                                         onClick={() => loroSync.redo()}
+                                         disabled={!loroSync.canRedo}
+                                         className={`flex h-10 w-10 items-center justify-center rounded-full transition-all ${
+                                             loroSync.canRedo
+                                             ? "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                                             : "text-slate-300 cursor-not-allowed"
+                                         }`}
+                                         whileHover={loroSync.canRedo ? { scale: 1.05 } : {}}
+                                         whileTap={loroSync.canRedo ? { scale: 0.95 } : {}}
+                                         title="Redo"
+                                     >
+                                         <ArrowClockwise className="h-5 w-5" weight="bold" />
+                                     </motion.button>
+                                 </div>
                             </div>
 
                             <div id="copilot-container" className="fixed right-0 top-0 bottom-0 z-40 pointer-events-none">

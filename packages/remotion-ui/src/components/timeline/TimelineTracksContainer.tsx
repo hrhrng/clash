@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { useEditor } from '@master-clash/remotion-core';
-import type { Track, Asset, Item } from '@master-clash/remotion-core';
-import { colors, timeline, spacing, shadows, getItemColor, withOpacity, borderRadius } from './styles';
+import type { Asset, Item } from '@master-clash/remotion-core';
+import { colors, timeline, spacing, shadows } from './styles';
 import { secondsToFrames } from './utils/timeFormatter';
 import { TimelineItem } from './TimelineItem';
 import { currentDraggedAsset, currentAssetDragOffset } from '../AssetPanel';
@@ -120,7 +120,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
   const viewportRef = useRef<HTMLDivElement>(null);
   const handleInsertDropRef = useRef<((e: React.DragEvent, position: number) => void) | null>(null);
 
-  const [scrollSync, setScrollSync] = useState({ x: 0, y: 0 });
+  const [, setScrollSync] = useState({ x: 0, y: 0 });
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [insertPosition, setInsertPosition] = useState<number | null>(null);
   // Show insert guideline only while a drag is actually active
@@ -316,7 +316,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
 
     // Check if this is an existing item being moved
     const dragType = e.dataTransfer.getData('dragType');
-    const itemId = e.dataTransfer.getData('itemId');
+    // const itemId = e.dataTransfer.getData('itemId'); // unused
     const sourceTrackId = e.dataTransfer.getData('trackId');
 
 
@@ -378,7 +378,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
 
     const isQuickAdd = (e.dataTransfer.getData('quickAdd') || globalDragData.quickAdd) === 'true';
     const quickAddType = e.dataTransfer.getData('quickAddType') || globalDragData.quickAddType;
-    const assetData = e.dataTransfer.getData('asset') || globalDragData.asset;
+    // const assetData = e.dataTransfer.getData('asset') || globalDragData.asset; // unused
 
     // If we still don't have assetId, try to get it from currentDraggedAsset
     let finalIsQuickAdd = isQuickAdd;
@@ -675,6 +675,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
               setInsertPosition(null);
               setIsDraggingOver(false);
             } else {
+              // Intentionally empty
             }
           }}
           onDragOver={(e) => {
@@ -786,7 +787,7 @@ export const TimelineTracksContainer: React.FC<TimelineTracksContainerProps> = (
                   }}
                 >
                   {/* 使用 TimelineItem 组件保留所有功能 */}
-                  {track.items.map((item, itemIndex) => {
+                  {track.items.map((item) => {
                     // 检测相邻的 item（用于 Roll Edit）
                     const sortedItems = [...track.items].sort((a, b) => a.from - b.from);
                     const currentIndex = sortedItems.findIndex(i => i.id === item.id);

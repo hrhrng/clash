@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useRef, useEffect } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { colors, timeline, zIndex, shadows, animations } from './styles';
 import { formatTime, frameToPixels } from './utils/timeFormatter';
@@ -23,14 +23,14 @@ export const TimelinePlayhead: React.FC<TimelinePlayheadProps> = React.memo(({
   currentFrame,
   pixelsPerFrame,
   fps,
-  timelineHeight,
+  timelineHeight: _timelineHeight,
   onSeek,
   onDragStart,
   onDragEnd,
   scrollLeft = 0,
   leftOffset = 0,
-  durationInFrames = Infinity,
-  onPlayEnd,
+  durationInFrames: _durationInFrames = Infinity,
+  onPlayEnd: _onPlayEnd,
 }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isHovered, setIsHovered] = useState(false);

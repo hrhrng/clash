@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { Editor, rootCtx, defaultValueCtx } from '@milkdown/core';
 import { commonmark } from '@milkdown/preset-commonmark';
 import { nord } from '@milkdown/theme-nord';
@@ -44,7 +44,7 @@ const ensureStartingParagraph = $prose(() => {
 function MilkdownEditorInner({ value, onChange }: MilkdownEditorProps) {
     const wrapperRef = useRef<HTMLDivElement>(null);
 
-    const { get } = useEditor((root) =>
+    useEditor((root) =>
         Editor.make()
             .config((ctx) => {
                 ctx.set(rootCtx, root);

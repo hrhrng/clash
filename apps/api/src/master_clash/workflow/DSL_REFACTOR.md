@@ -175,7 +175,7 @@ task_delegation(
 dsl = read_dsl(node_id="editor-xyz789")
 # Returns empty timeline structure
 
-# Editor adds clips
+# Editor adds items
 patch_dsl(
     node_id="editor-xyz789",
     patch=[
@@ -184,16 +184,16 @@ patch_dsl(
             "path": "/tracks/-",
             "value": {
                 "id": "track-main",
-                "clips": [
+                "items": [
                     {
                         "assetId": "scene1-abc",
-                        "startTime": 0,
-                        "duration": 5
+                        "from": 0,
+                        "durationInFrames": 150
                     },
                     {
                         "assetId": "scene2-def",
-                        "startTime": 5,
-                        "duration": 5
+                        "from": 150,
+                        "durationInFrames": 150
                     }
                 ]
             }

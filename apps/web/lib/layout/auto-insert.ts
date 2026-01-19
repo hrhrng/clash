@@ -9,6 +9,7 @@
 
 import type { Node, Edge } from 'reactflow';
 import type { Point, Rect } from './types';
+import { calculateTopologyInsertPosition } from './topology/vertical-packing';
 import { getNodeSize, rectOverlaps } from './core/geometry';
 
 /**
@@ -331,7 +332,12 @@ export interface AutoInsertResult {
 }
 
 /**
- * Main entry point: auto-insert a node with chain-push collision resolution
+ * Main entry point: auto-insert a node using topology-based positioning
+ *
+ * New behavior:
+ * - Calculates the correct topology column based on dependencies
+ * - Places node at the bottom of that column
+ * - No chain-push needed (incremental placement)
  */
 export function autoInsertNode(
     nodeId: string,
@@ -347,25 +353,24 @@ export function autoInsertNode(
         };
     }
 
-    // Find reference node
-    const referenceNode = findReferenceNode(nodeId, nodes, edges);
-
-    // Calculate insertion position
-    const position = calculateInsertPosition(node, referenceNode, nodes);
-
-    // Create updated nodes array with the new position
-    const nodesWithPosition = nodes.map((n) =>
-        n.id === nodeId ? { ...n, position } : n
+    // Use topology-based positioning
+    const { column, position } = calculateTopologyInsertPosition(
+        nodeId,
+        nodes,
+        edges,
+        {
+            rowGap: DEFAULT_GAP,
+            columnGap: 120,
+            scopeParentId: node.parentId,
+        }
     );
 
-    // Chain-push to resolve overlaps
-    const pushedNodes = chainPushRight(nodeId, nodesWithPosition);
-
+    // No chain-push needed with topology layout - nodes are placed at bottom of column
     return {
         position,
-        pushedNodes,
-        hasReference: !!referenceNode,
-        referenceNodeId: referenceNode?.id,
+        pushedNodes: new Map(), // No nodes pushed
+        hasReference: column > 0, // Has reference if not in column 0
+        referenceNodeId: undefined, // We don't track specific reference anymore
     };
 }
 

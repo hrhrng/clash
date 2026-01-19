@@ -14,7 +14,7 @@ import type { Track, Item } from '@master-clash/remotion-core';
 // console.log('🎬 VideoComposition.tsx module loaded!');
 
 // Component to render individual items
-const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFrom?: number; endFrame?: number; globalEndFrame?: number; trackZIndex: number; itemsDomMapRef?: React.RefObject<Map<string, HTMLElement>> }> = ({ item, durationInFrames, visibleFrom, endFrame, globalEndFrame, trackZIndex, itemsDomMapRef }) => {
+const ItemComponent: React.FC<{ item: Item; durationInFrames: number; visibleFrom?: number; endFrame?: number; globalEndFrame?: number; trackZIndex: number; itemsDomMapRef?: React.RefObject<Map<string, HTMLElement>> }> = ({ item, durationInFrames: _durationInFrames, visibleFrom, endFrame, globalEndFrame, trackZIndex, itemsDomMapRef }) => {
   const frame = useCurrentFrame();
 
   // Apply transform properties

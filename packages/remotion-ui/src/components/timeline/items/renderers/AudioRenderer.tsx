@@ -1,10 +1,9 @@
 import React from 'react';
-import type { Item, Asset, AudioItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
 import { colors } from '../../styles';
 
-export const AudioRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, height }) => {
-  const audio = item as AudioItem;
+export const AudioRenderer: React.FC<ItemRenderProps> = ({ item: _item, asset, width, height }) => {
+  // const audio = item as AudioItem; // unused
   const waveform = asset?.waveform;
 
   return (

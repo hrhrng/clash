@@ -117,7 +117,7 @@ export async function getProjects(limit = 10) {
                 if (response.ok) {
                     nodes = await response.json();
                 }
-            } catch (e) {
+            } catch (_e) {
                 // console.error(`[getProjects] Error fetching nodes from Loro for project ${project.id}:`, e);
             }
 
@@ -138,7 +138,7 @@ export async function getProjects(limit = 10) {
                                 if (srcUrl.pathname.startsWith('/assets/')) {
                                     src = srcUrl.pathname.replace('/assets/', '');
                                 }
-                            } catch (e) {
+                            } catch (_e) {
                                 // Invalid URL, leave as is
                             }
                         }

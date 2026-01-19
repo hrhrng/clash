@@ -22,7 +22,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const [imageUrl, setImageUrl] = useState<string | undefined>(data.src);
     const [description, setDescription] = useState(data.description || '');
     const [showDescription, setShowDescription] = useState(false);
-    const initialSizeRef = useRef<{ width: number; height: number } | null>(null);
+    // Removed initialSizeRef
     const didInitSizeRef = useRef(false);
 
     // Get current node dimensions
@@ -40,19 +40,17 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
     const measuredWidth = currentNode?.width ?? currentNode?.style?.width;
     const measuredHeight = currentNode?.height ?? currentNode?.style?.height;
 
-    if (!initialSizeRef.current) {
-        initialSizeRef.current = resolveInitialMediaSize({
-            status,
-            hasPreview,
-            measuredWidth,
-            measuredHeight,
-            naturalDimensions,
-            aspectRatioDimensions,
-        });
-    }
+    const [initialSize] = useState(() => resolveInitialMediaSize({
+        status,
+        hasPreview,
+        measuredWidth,
+        measuredHeight,
+        naturalDimensions,
+        aspectRatioDimensions,
+    }));
 
-    const nodeWidth = initialSizeRef.current.width;
-    const nodeHeight = initialSizeRef.current.height;
+    const nodeWidth = initialSize.width;
+    const nodeHeight = initialSize.height;
 
     // Sync state with props when they change (e.g. from Loro sync)
     useEffect(() => {
@@ -111,7 +109,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                 onDoubleClick={(e) => e.stopPropagation()}
             >
                 <input
-                    className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
+                    className="bg-transparent text-lg font-bold font-display text-slate-500 focus:text-slate-900 focus:outline-none"
                     value={label}
                     onChange={(evt) => {
                         const newLabel = evt.target.value;
@@ -148,6 +146,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
             >
                 {(status === 'completed' || status === 'fin') && imageUrl ? (
                     <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={resolveAssetUrl(imageUrl)}
                             alt={label}
@@ -173,6 +172,7 @@ const ImageNode = ({ data, selected, id }: NodeProps) => {
                     </div>
                 ) : status === 'uploading' && imageUrl ? (
                     <div className="relative" style={{ width: '100%', height: '100%' }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={resolveAssetUrl(imageUrl)}
                             alt={label}

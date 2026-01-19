@@ -20,13 +20,14 @@ from langchain.messages import SystemMessage
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from master_clash.workflow.backends import (
     CanvasBackendProtocol,
     NodeInfo,
     StateCanvasBackend,
 )
+from master_clash.workflow.share_types import TimelineDSL
 from master_clash.workflow.tools import (
     create_list_nodes_tool,
     create_read_node_tool,
@@ -36,6 +37,7 @@ from master_clash.workflow.tools import (
     create_wait_generation_tool,
     create_search_nodes_tool,
     create_list_model_cards_tool,
+    create_arrange_timeline_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,7 +104,7 @@ DSL Tools:
 Example workflow:
 1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
 2. You read the current state: read_dsl(node_id="editor-abc123")
-3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {...}}])
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {"id": "t1", "items": [...]}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -127,7 +129,7 @@ DSL Tools:
 Example workflow:
 1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
 2. You read the current state: read_dsl(node_id="editor-abc123")
-3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {...}}])
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {"id": "t1", "items": [...]}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -140,6 +142,9 @@ Example workflow:
 
     def _generate_timeline_tools(self) -> list[BaseTool]:
         """Generate timeline tools."""
+        # We need backend access for arrange_timeline, but TimelineMiddleware currently doesn't hold backend reference.
+        # CanvasMiddleware holds backend.
+        # We should probably move arrange_timeline to CanvasMiddleware or pass backend to TimelineMiddleware.
         return [self._read_dsl_tool(), self._patch_dsl_tool()]
 
     def _read_dsl_tool(self) -> BaseTool:
@@ -267,6 +272,13 @@ Example workflow:
                 # Apply JSON Patch
                 patched_dsl = jsonpatch.apply_patch(current_dsl, patch)
 
+                # Validate against schema
+                try:
+                    TimelineDSL.model_validate(patched_dsl)
+                except ValidationError as e:
+                    logger.error(f"DSL validation failed for node {node_id}: {e}")
+                    return f"Error: Invalid DSL structure: {e}"
+
                 # Update node in Loro
                 updated_data = {**data, "timelineDsl": patched_dsl}
 
@@ -274,8 +286,7 @@ Example workflow:
                 # This ensures the video-editor node is connected to the assets it uses
                 asset_ids = set()
                 for track in patched_dsl.get("tracks", []):
-                    # Support both items (new) and clips (old) for backward compatibility
-                    items = track.get("items") or track.get("clips") or []
+                    items = track.get("items") or []
                     for item in items:
                         if "assetId" in item:
                             asset_ids.add(item["assetId"])
@@ -379,6 +390,7 @@ You have access to canvas tools for creating and managing visual content:
 - run_generation_node: Run a generation node to produce the asset (call after create), OR run a video-editor node to render its timeline
 - wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
 - search_canvas: Search nodes by content
+- arrange_images_in_timeline: Arrange a list of image/asset nodes sequentially in a video-editor timeline.
 
 **CRITICAL: Always Organize in Groups**
 1. FIRST create a Group to contain your work (e.g., "Scene 1", "Character Designs")
@@ -423,4 +435,5 @@ Workflow:
             create_run_generation_tool(self.backend),
             create_wait_generation_tool(self.backend),
             create_search_nodes_tool(self.backend),
+            create_arrange_timeline_tool(self.backend),
         ]

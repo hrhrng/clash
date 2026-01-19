@@ -33,7 +33,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   pixelsPerFrame,
   fps,
   onSeek,
-  zoom,
+  zoom: _zoom,
   scrollLeft,
   viewportWidth,
   contentEndInFrames,

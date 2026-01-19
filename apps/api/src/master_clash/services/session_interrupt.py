@@ -584,13 +584,36 @@ async def get_session_history_from_events(thread_id: str) -> list[dict[str, Any]
 
     display_items = []
 
-    # Track current active block for incremental updates
-    # This mimics the frontend's logic
+    # Map of tool_id -> agent_card item (for updating status later)
+    agent_cards_map = {}
+
+    # Stack of contexts. Each context is a list where new items should be appended.
+    # Level 0 is the main display_items list.
+    # Level 1+ are the 'logs' arrays of active agent cards.
+    context_stack = [display_items]
+
+    # Stack of active agent_id/tool_id to know when to pop the context
+    active_agent_stack = []
+
+    def generate_id():
+        import random
+        import string
+        import time
+        return str(int(time.time() * 1000)) + "".join(
+            random.choices(string.ascii_lowercase + string.digits, k=7)
+        )
+
     for event in events:
         etype = event["event_type"]
         data = event["payload"]
 
+        # Current list to append to
+        current_list = context_stack[-1]
+
         if etype == "user_message":
+            # User messages always go to the root (display_items)
+            # You might want them nested if a sub-agent asks a question,
+            # but usually user messages are top-level interactions.
             display_items.append(
                 {
                     "id": f"user-{int(time.time() * 1000)}-{len(display_items)}",
@@ -605,78 +628,188 @@ async def get_session_history_from_events(thread_id: str) -> list[dict[str, Any]
             agent = data.get("agent", "Director")
             agent_id = data.get("agent_id")
 
-            # Find or create a message item
-            last_item = display_items[-1] if display_items else None
-            if (
-                last_item
-                and last_item["type"] == "message"
-                and last_item.get("role") == "assistant"
-                and last_item.get("agent_id") == agent_id
-            ):
-                last_item["content"] += content
-            else:
-                display_items.append(
-                    {
-                        "id": f"msg-{int(time.time() * 1000)}-{len(display_items)}",
-                        "type": "message",
-                        "role": "assistant",
-                        "agent": agent,
-                        "agent_id": agent_id,
+            # Check if we can append to the last message if it's the same agent
+            last_item = current_list[-1] if current_list else None
+
+            # Logic for appending to existing message or creating new one
+            # For AgentLogs (nested), structure is slightly different (AgentLog interface)
+            # but we use the same generic "message" type or "text" type mapping in frontend?
+            # Frontend AgentCard expects: { type: 'text', content: string | node }
+
+            if len(context_stack) > 1:
+                # Inside an agent card
+                if (
+                    last_item
+                    and last_item.get("type") == "text"
+                    # We assume sequential text from same agent is one block
+                ):
+                    # If content is string, append
+                    if isinstance(last_item.get("content"), str):
+                        last_item["content"] += content
+                else:
+                    current_list.append({
+                        "id": generate_id(),
+                        "type": "text",
                         "content": content,
-                    }
-                )
+                        "taskName": agent # Optional metadata
+                    })
+            else:
+                # Top level
+                if (
+                    last_item
+                    and last_item["type"] == "message"
+                    and last_item.get("role") == "assistant"
+                    and last_item.get("agent_id") == agent_id
+                ):
+                    last_item["content"] += content
+                else:
+                    current_list.append(
+                        {
+                            "id": f"msg-{int(time.time() * 1000)}-{len(display_items)}",
+                            "type": "message",
+                            "role": "assistant",
+                            "agent": agent,
+                            "agent_id": agent_id,
+                            "content": content,
+                        }
+                    )
 
         elif etype == "thinking":
             content = data.get("content", "")
             agent = data.get("agent")
             agent_id = data.get("agent_id")
 
-            last_item = display_items[-1] if display_items else None
-            if (
-                last_item
-                and last_item["type"] == "thinking"
-                and last_item.get("agent_id") == agent_id
-            ):
-                last_item["content"] += content
-            else:
-                display_items.append(
-                    {
-                        "id": f"think-{int(time.time() * 1000)}-{len(display_items)}",
+            last_item = current_list[-1] if current_list else None
+
+            if len(context_stack) > 1:
+                # Inside agent card
+                if last_item and last_item.get("type") == "thinking":
+                    last_item["content"] += content
+                else:
+                    current_list.append({
+                        "id": generate_id(),
                         "type": "thinking",
-                        "agent": agent,
-                        "agent_id": agent_id,
-                        "content": content,
-                    }
-                )
+                        "content": content
+                    })
+            else:
+                # Top level
+                if (
+                    last_item
+                    and last_item["type"] == "thinking"
+                    and last_item.get("agent_id") == agent_id
+                ):
+                    last_item["content"] += content
+                else:
+                    current_list.append(
+                        {
+                            "id": f"think-{int(time.time() * 1000)}-{len(display_items)}",
+                            "type": "thinking",
+                            "agent": agent,
+                            "agent_id": agent_id,
+                            "content": content,
+                        }
+                    )
 
         elif etype == "tool_start":
-            display_items.append(
-                {
-                    "id": data.get("id"),
-                    "type": "agent_card" if data.get("tool") == "task_delegation" else "tool_call",
+            tool_name = data.get("tool")
+            tool_id = data.get("id")
+
+            if tool_name == "task_delegation":
+                # Start of a sub-agent
+                agent_name = data.get("input", {}).get("agent", "Specialist")
+
+                new_card = {
+                    "id": tool_id,
+                    "type": "agent_card",
                     "props": {
-                        "agentId": data.get("id")
-                        if data.get("tool") == "task_delegation"
-                        else None,
-                        "agentName": data.get("input", {}).get("agent", "Specialist")
-                        if data.get("tool") == "task_delegation"
-                        else None,
-                        "toolName": data.get("tool"),
-                        "args": data.get("input"),
+                        "agentId": tool_id,
+                        "agentName": agent_name,
                         "status": "working",
+                        "persona": agent_name.lower(),
                         "logs": [],
                     },
                 }
-            )
+
+                current_list.append(new_card)
+
+                # Store reference for status updates
+                agent_cards_map[tool_id] = new_card
+
+                # Push new context
+                context_stack.append(new_card["props"]["logs"])
+                active_agent_stack.append(tool_id)
+
+            else:
+                # Normal tool call
+                # Structure for AgentLog inside card vs top level might differ
+                # Top level: type="tool_call"
+                # Inside card: type="tool_call", toolProps=...
+
+                tool_item = {
+                    "id": tool_id,
+                    "type": "tool_call",
+                    "props": {
+                        "toolName": tool_name,
+                        "args": data.get("input"),
+                        "status": "working",
+                        "indent": False,
+                    },
+                }
+
+                # If inside card, wrap it to match AgentLog interface
+                if len(context_stack) > 1:
+                    current_list.append({
+                        "id": tool_id,
+                        "type": "tool_call",
+                        "toolProps": tool_item["props"]
+                    })
+                else:
+                    current_list.append(tool_item)
 
         elif etype == "tool_end":
             item_id = data.get("id")
-            for item in display_items:
-                if item.get("id") == item_id or item.get("props", {}).get("agentId") == item_id:
-                    item["props"]["status"] = data.get("status", "success")
-                    item["props"]["result"] = data.get("result")
-                    break
+            status = data.get("status", "success")
+            result = data.get("result")
 
-        # ... Other event types can be added here (timeline_edit, etc.)
+            # Check if this closes an active delegation
+            if active_agent_stack and active_agent_stack[-1] == item_id:
+                # Pop context
+                context_stack.pop()
+                active_agent_stack.pop()
+
+                # Update the card status
+                if item_id in agent_cards_map:
+                    agent_cards_map[item_id]["props"]["status"] = status
+                    # We don't usually show result for agent card, but we could
+            else:
+                # Update normal tool call
+                # We need to find it in the current list (or check active context)
+                # Since we don't have a map for all tool calls, we iterate back?
+                # Or we can just search recursively if needed, but typically tool_end follows tool_start
+                # in the same context.
+
+                # Simplification: search in current_list first
+                found = False
+                for item in reversed(current_list):
+                    # Top level tool call
+                    if item.get("id") == item_id:
+                        if "props" in item:
+                            item["props"]["status"] = status
+                            item["props"]["result"] = result
+                        found = True
+                        break
+
+                    # Nested tool call (AgentLog)
+                    if item.get("type") == "tool_call" and item.get("id") == item_id:
+                        if "toolProps" in item:
+                            item["toolProps"]["status"] = status
+                            item["toolProps"]["result"] = result
+                        found = True
+                        break
+
+                # If not found in current context (maybe edge case?), we could search up stack,
+                # but valid event streams should nest correctly.
+
+        # ... Handle other events like node updates if needed
 
     return display_items

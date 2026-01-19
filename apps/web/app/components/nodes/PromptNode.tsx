@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
-import { ChatText, X } from '@phosphor-icons/react';
+import { X } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import MilkdownEditor from '../MilkdownEditor';

@@ -144,7 +144,7 @@ When delegating to the **Editor** agent to assemble a video timeline:
    ```
    task_delegation(
      agent="Editor",
-     instruction="Assemble the video timeline using video-editor node: editor-abc-123. Add clips from the generated assets.",
+     instruction="Assemble the video timeline using video-editor node: editor-abc-123. Add items from the generated assets.",
      context={{"editor_node_id": "editor-abc-123"}}
    )
    ```

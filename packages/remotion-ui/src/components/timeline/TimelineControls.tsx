@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { colors, typography } from './styles';
+import { colors } from './styles';
 
 interface ZoomControlProps {
   zoom: number;

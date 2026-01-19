@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PaperPlaneRight, CaretLeft, CaretRight, Sparkle, Plus, ClockCounterClockwise, StopCircle, Trash } from '@phosphor-icons/react';
+import { PaperPlaneRight, CaretLeft, CaretRight, Plus, ClockCounterClockwise, StopCircle, Trash } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
 import { Command } from '../actions';
 import { useChat } from '@ai-sdk/react';
@@ -10,7 +10,7 @@ import { UserMessage } from './copilot/UserMessage';
 import { AgentCard, AgentLog } from './copilot/AgentCard';
 import { ToolCall } from './copilot/ToolCall';
 import { ApprovalCard } from './copilot/ApprovalCard';
-import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
+import { NodeProposalCard } from './copilot/NodeProposalCard';
 import { ThinkingProcess } from './copilot/ThinkingProcess';
 import { TodoList, TodoItem } from './copilot/TodoList';
 import { ThinkingIndicator } from './copilot/ThinkingIndicator';
@@ -28,6 +28,10 @@ const resolveApiBaseUrl = () => {
 };
 
 const API_BASE_URL = resolveApiBaseUrl();
+
+const generateId = () => {
+    return Date.now().toString() + Math.random().toString(36).substring(2, 9);
+};
 
 
 interface Message {
@@ -59,21 +63,21 @@ interface ChatbotCopilotProps {
 export default function ChatbotCopilot({
     projectId,
     initialMessages,
-    onCommand,
+    onCommand: _onCommand,
     width,
     onWidthChange,
     isCollapsed,
     onCollapseChange,
     selectedNodes = [],
-    onAddNode,
-    onAddEdge,
+    onAddNode: _onAddNode,
+    onAddEdge: _onAddEdge,
     onUpdateNode,
-    findNodeIdByName,
+    findNodeIdByName: _findNodeIdByName,
     nodes = [],
-    edges = [],
+    edges: _edges = [],
     initialPrompt
 }: ChatbotCopilotProps) {
-    const { messages, status, sendMessage } = useChat({
+    const { messages, status } = useChat({
         initialMessages: initialMessages.map(m => ({
             id: m.id,
             role: m.role as 'user' | 'assistant',
@@ -83,7 +87,7 @@ export default function ChatbotCopilot({
     } as any);
 
     const [displayItems, setDisplayItems] = useState<any[]>([]);
-    const [isAutoPilot, setIsAutoPilot] = useState(true);
+    const [isAutoPilot, _setIsAutoPilot] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingStatus, setProcessingStatus] = useState('Thinking');
     const isAutoPilotRef = useRef(isAutoPilot);
@@ -92,9 +96,7 @@ export default function ChatbotCopilot({
         isAutoPilotRef.current = isAutoPilot;
     }, [isAutoPilot]);
 
-    const generateId = () => {
-        return Date.now().toString() + Math.random().toString(36).substring(2, 9);
-    };
+    // generateId moved outside component
 
     const [threadId, setThreadId] = useState<string>('');
 
@@ -169,13 +171,13 @@ export default function ChatbotCopilot({
     const eventSourceRef = useRef<EventSource | null>(null);
 
     // Typewriter effect state
-    const [isTyping, setIsTyping] = useState(false);
+    const [_isTyping, setIsTyping] = useState(false);
     const textQueueRef = useRef<string>('');
     const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    const handleNewSession = () => {
+    const handleNewSession = useCallback(() => {
         console.log('[ChatbotCopilot] Starting new session reset');
-        
+
         // 1. Close active EventSource
         if (eventSourceRef.current) {
             console.log('[ChatbotCopilot] Closing active EventSource for new session');
@@ -198,12 +200,12 @@ export default function ChatbotCopilot({
         setSessionStatus('idle');
         setIsProcessing(false);
         setProcessingStatus('');
-        
+
         // 4. Reset sub-agent states and todos
         setTodoItems([]);
-        
+
         console.log('[ChatbotCopilot] New session initiated:', newThreadId);
-    };
+    }, []);
 
     // Deletes a session and all its data
     const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
@@ -285,7 +287,7 @@ export default function ChatbotCopilot({
         } catch (err) {
             console.error('[ChatbotCopilot] Error loading history:', err);
         }
-    }, [projectId]);
+    }, []);
 
     // Load initial history
     useEffect(() => {
@@ -378,7 +380,7 @@ export default function ChatbotCopilot({
                 id: m.id
             })));
         }
-    }, [initialMessages]);
+    }, [initialMessages, displayItems.length]);
 
     // Flush remaining text immediately
     const flushTypewriter = useCallback(() => {
@@ -481,10 +483,10 @@ export default function ChatbotCopilot({
     // Map agent name -> agent_id (delegation tool_call_id) so late events without agent_id can still attach
     const agentNameToIdRef = useRef<Record<string, string>>({});
 
-    const scrollToBottom = () => {
+    const scrollToBottom = useCallback(() => {
         if (!shouldStickToBottom) return;
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    }, [shouldStickToBottom]);
 
     const handleScroll = () => {
         const container = scrollContainerRef.current;
@@ -507,43 +509,22 @@ export default function ChatbotCopilot({
         expectedNodeId?: string; // Wait for this node to exist
     } | null>(null);
 
-    // Effect to handle pending resume after nodes update
-    useEffect(() => {
-        if (pendingResume) {
-            // If we are waiting for a specific node, check if it exists
-            if (pendingResume.expectedNodeId) {
-                const nodeExists = nodes.some(n => n.id === pendingResume.expectedNodeId);
-                if (!nodeExists) {
-                    // Not ready yet, keep waiting
-                    return;
-                }
-                console.log(`[ChatbotCopilot] Node ${pendingResume.expectedNodeId} found. Resuming stream...`);
-            } else if (nodes.length === 0) {
-                // If not waiting for specific node, but nodes are empty (unlikely in this flow but good safety), wait
-                return;
-            }
-
-            console.log('[ChatbotCopilot] Resuming stream...', pendingResume);
-            runStreamScenario(pendingResume.userInput, pendingResume.resume, pendingResume.inputData);
-            setPendingResume(null);
-        }
-    }, [nodes, pendingResume]);
 
     // Helper to resolve name to ID using current nodes (via ref)
-    const resolveName = (name: string) => {
-        console.log(`[ChatbotCopilot] resolveName called for: "${name}"`);
-        const currentNodes = nodesRef.current;
-        console.log(`[ChatbotCopilot] Current nodes available (ref):`, currentNodes.map(n => ({ id: n.id, label: n.data?.label })));
-        const node = currentNodes.find(n => n.data?.label === name);
-        if (node) {
-            console.log(`[ChatbotCopilot] Found match! ID: ${node.id}`);
-        } else {
-            console.warn(`[ChatbotCopilot] No match found for "${name}"`);
-        }
-        return node?.id;
-    };
+    // const resolveName = (name: string) => {
+    //     console.log(`[ChatbotCopilot] resolveName called for: "${name}"`);
+    //     const currentNodes = nodesRef.current;
+    //     console.log(`[ChatbotCopilot] Current nodes available (ref):`, currentNodes.map(n => ({ id: n.id, label: n.data?.label })));
+    //     const node = currentNodes.find(n => n.data?.label === name);
+    //     if (node) {
+    //         console.log(`[ChatbotCopilot] Found match! ID: ${node.id}`);
+    //     } else {
+    //         console.warn(`[ChatbotCopilot] No match found for "${name}"`);
+    //     }
+    //     return node?.id;
+    // };
 
-    const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
+    const runStreamScenario = useCallback(async (userInput: string, resume: boolean = false, inputData?: any) => {
         setIsProcessing(true);
         setProcessingStatus('Thinking');
         setSessionStatus('running');
@@ -589,7 +570,7 @@ export default function ChatbotCopilot({
             retryCount = 0; // Reset retry count on successful connection
         };
 
-        eventSource.onerror = (e) => {
+        eventSource.onerror = (_e) => {
             // EventSource fires onerror on normal close - check if it's expected
             if (normalEnd) {
                 console.log('[ChatbotCopilot] SSE Stream closed (expected).');
@@ -874,7 +855,7 @@ export default function ChatbotCopilot({
                     // Special handling for task_delegation
                     if (data.tool === 'task_delegation') {
                         const targetAgent = data.input.agent;
-                        const instruction = data.input.instruction;
+                        // const instruction = data.input.instruction; // Unused
                         const toolCallId = data.id || generateId();
                         // Use task_delegation tool_call_id as the AgentCard ID for precise matching
                         const agentCardId = `agent-${toolCallId}`;
@@ -1343,7 +1324,7 @@ export default function ChatbotCopilot({
                 const data = JSON.parse(e.data);
                 console.log('[ChatbotCopilot] Received rerun_generation_node:', data);
 
-                const { nodeId, assetId, nodeData } = data;
+                const { nodeId, assetId, nodeData: _nodeData } = data;
 
                 if (!nodeId || !assetId) {
                     console.error('[ChatbotCopilot] Missing nodeId or assetId in rerun_generation_node event');
@@ -1394,7 +1375,29 @@ export default function ChatbotCopilot({
                 console.error('[ChatbotCopilot] Error parsing rerun_generation_node event:', err);
             }
         });
-    };
+    }, [projectId, threadId, selectedNodes, onUpdateNode, nodes, flushTypewriter, processTypewriterQueue]);
+
+    // Effect to handle pending resume after nodes update
+    useEffect(() => {
+        if (pendingResume) {
+            // If we are waiting for a specific node, check if it exists
+            if (pendingResume.expectedNodeId) {
+                const nodeExists = nodes.some(n => n.id === pendingResume.expectedNodeId);
+                if (!nodeExists) {
+                    // Not ready yet, keep waiting
+                    return;
+                }
+                console.log(`[ChatbotCopilot] Node ${pendingResume.expectedNodeId} found. Resuming stream...`);
+            } else if (nodes.length === 0) {
+                // If not waiting for specific node, but nodes are empty (unlikely in this flow but good safety), wait
+                return;
+            }
+
+            console.log('[ChatbotCopilot] Resuming stream...', pendingResume);
+            runStreamScenario(pendingResume.userInput, pendingResume.resume, pendingResume.inputData);
+            setPendingResume(null);
+        }
+    }, [nodes, pendingResume, runStreamScenario]);
 
     const handleSubmit = async (e?: React.FormEvent) => {
         e?.preventDefault();
@@ -1426,7 +1429,7 @@ export default function ChatbotCopilot({
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isCollapsed, displayItems, shouldStickToBottom]);
+    }, [messages, isCollapsed, displayItems, shouldStickToBottom, scrollToBottom]);
 
     // Auto-send initial prompt if provided (simplified approach)
     const hasAutoStartedRef = useRef(false);
@@ -1448,7 +1451,7 @@ export default function ChatbotCopilot({
                 runStreamScenario(initialPrompt, false);
             }, 500);
         }
-    }, [initialPrompt, projectId, router]); // Depend on necessary values
+    }, [initialPrompt, projectId, router, runStreamScenario]); // Depend on necessary values
 
     const startResizing = () => {
         setIsResizing(true);
@@ -1489,7 +1492,7 @@ export default function ChatbotCopilot({
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={() => onCollapseChange(false)}
-                        className="absolute right-4 top-4 z-50 flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200/60 bg-white/80 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90"
+                        className="absolute right-4 top-4 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-slate-200/60 bg-white/80 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
                     >
@@ -1499,7 +1502,7 @@ export default function ChatbotCopilot({
             </AnimatePresence>
 
             <motion.div
-                className={`h-full bg-white/60 backdrop-blur-xl flex flex-col relative ${isCollapsed ? '' : 'border-l border-white/20 shadow-2xl'}`}
+                className={`h-full bg-white/80 backdrop-blur-xl flex flex-col relative ${isCollapsed ? '' : 'border-l border-slate-200 shadow-xl'}`}
                 style={{ width: isCollapsed ? 0 : `${width}px` }}
                 animate={{ width: isCollapsed ? 0 : width }}
                 transition={isResizing ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
@@ -1516,7 +1519,7 @@ export default function ChatbotCopilot({
                     <>
                         <motion.button
                             onClick={() => onCollapseChange(true)}
-                            className="absolute left-2 top-4 z-20 p-2 flex items-center justify-center hover:bg-gray-100/50 rounded-lg transition-all"
+                            className="absolute left-2 top-4 z-20 p-2 flex items-center justify-center hover:bg-gray-100/50 rounded-full transition-all"
                             whileHover={{ scale: 1.1 }}
                             whileTap={{ scale: 0.9 }}
                         >
@@ -1527,7 +1530,7 @@ export default function ChatbotCopilot({
                         <div className="absolute right-4 top-4 z-20 flex items-center gap-1">
                             <motion.button
                                 onClick={handleNewSession}
-                                className="p-2 rounded-lg hover:bg-gray-100/50 text-slate-600 transition-colors"
+                                className="p-2 rounded-full hover:bg-gray-100/50 text-slate-600 transition-colors"
                                 whileHover={{ scale: 1.1 }}
                                 whileTap={{ scale: 0.9 }}
                                 title="New Session"
@@ -1537,7 +1540,7 @@ export default function ChatbotCopilot({
                             <motion.button
                                 onClick={handleHistoryClick}
                                 ref={historyButtonRef}
-                                className="p-2 rounded-lg hover:bg-gray-100/50 text-slate-600 transition-colors relative"
+                                className="p-2 rounded-full hover:bg-gray-100/50 text-slate-600 transition-colors relative"
                                 whileHover={{ scale: 1.1 }}
                                 whileTap={{ scale: 0.9 }}
                                 title="History"
@@ -1561,7 +1564,7 @@ export default function ChatbotCopilot({
                                     className="absolute top-14 right-4 z-30 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden"
                                 >
                                     <div className="p-3 border-b border-slate-100 bg-slate-50">
-                                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Session History</h3>
+                                        <h3 className="font-display text-xs font-semibold text-slate-500 uppercase tracking-wider">Session History</h3>
                                     </div>
                                     <div className="max-h-60 overflow-y-auto">
                                         {sessionHistory.length === 0 ? (
@@ -1586,7 +1589,7 @@ export default function ChatbotCopilot({
                                                     <div className="flex items-center gap-2">
                                                         <motion.button
                                                             onClick={(e) => deleteSession(item.threadId, e)}
-                                                            className="p-1.5 rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                                                            className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
                                                             whileHover={{ scale: 1.1 }}
                                                             whileTap={{ scale: 0.9 }}
                                                             title="Delete Session"
@@ -1638,9 +1641,9 @@ export default function ChatbotCopilot({
                                                                 ul: ({ children }: any) => <ul className="list-disc pl-4 mb-4 space-y-1">{children}</ul>,
                                                                 ol: ({ children }: any) => <ol className="list-decimal pl-4 mb-4 space-y-1">{children}</ol>,
                                                                 li: ({ children }: any) => <li className="mb-1">{children}</li>,
-                                                                h1: ({ children }: any) => <h1 className="text-2xl font-bold mb-4 mt-6">{children}</h1>,
-                                                                h2: ({ children }: any) => <h2 className="text-xl font-bold mb-3 mt-5">{children}</h2>,
-                                                                h3: ({ children }: any) => <h3 className="text-lg font-bold mb-2 mt-4">{children}</h3>,
+                                                                h1: ({ children }: any) => <h1 className="font-display text-2xl font-bold mb-4 mt-6">{children}</h1>,
+                                                                h2: ({ children }: any) => <h2 className="font-display text-xl font-bold mb-3 mt-5">{children}</h2>,
+                                                                h3: ({ children }: any) => <h3 className="font-display text-lg font-bold mb-2 mt-4">{children}</h3>,
                                                                 code: ({ className, children, ...props }: any) => {
                                                                     const match = /language-(\w+)/.exec(className || '');
                                                                     const isInline = !match && !String(children).includes('\n');
@@ -1698,23 +1701,24 @@ export default function ChatbotCopilot({
                                         exit={{ opacity: 0, y: 10, scale: 0.9 }}
                                         className="absolute bottom-[80px] right-6 z-20 pointer-events-auto"
                                     >
-                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
+                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-full border border-slate-200 shadow-sm flex items-center gap-2">
                                             <div className="flex -space-x-2">
                                                 {selectedNodes.filter(n => n.data?.src).slice(0, 3).map((node) => {
                                                     const src = resolveAssetUrl(node.data.src);
                                                     // Choice 1: Reference images (for generated videos, this is the most reliable start frame)
                                                     // Choice 2: Legacy thumbnail in node data
                                                     // Choice 3: Local storage cache (canvas capture)
-                                                    const thumbnail = (node.data.referenceImageUrls && node.data.referenceImageUrls[0]) || 
-                                                                    node.data.thumbnail || 
+                                                    const thumbnail = (node.data.referenceImageUrls && node.data.referenceImageUrls[0]) ||
+                                                                    node.data.thumbnail ||
                                                                     thumbnailCache.get(node.data.src);
-                                                    
-                                                    const isVideo = node.type === 'video' || 
-                                                                   node.data?.actionType === 'video-gen' || 
+
+                                                    const isVideo = node.type === 'video' ||
+                                                                   node.data?.actionType === 'video-gen' ||
                                                                    /\.(mp4|mov|webm)$/i.test(node.data?.src || '');
                                                     return (
                                                         <div key={node.id} className="w-6 h-6 rounded-md ring-2 ring-white overflow-hidden bg-slate-100 flex items-center justify-center">
                                                             {thumbnail ? (
+                                                                /* eslint-disable-next-line @next/next/no-img-element */
                                                                 <img src={resolveAssetUrl(thumbnail)} alt="" className="w-full h-full object-cover" />
                                                             ) : isVideo ? (
                                                                 <video
@@ -1725,6 +1729,7 @@ export default function ChatbotCopilot({
                                                                     playsInline
                                                                 />
                                                             ) : (
+                                                                /* eslint-disable-next-line @next/next/no-img-element */
                                                                 <img src={src} alt="" className="w-full h-full object-cover" />
                                                             )}
                                                         </div>
@@ -1758,26 +1763,26 @@ export default function ChatbotCopilot({
                                         value={input}
                                         onChange={(e) => setInput(e.target.value)}
                                         placeholder={isProcessing ? "Agent is thinking..." : (selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message...")}
-                                        className={`flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        className={`flex-1 px-6 py-4 bg-white backdrop-blur-xl rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         disabled={isLoading || isProcessing}
                                     />
                                     {sessionStatus === 'running' ? (
                                         <motion.button
                                             type="button"
                                             onClick={handleStop}
-                                            className="px-4 py-4 rounded-matrix transition-all flex items-center justify-center gap-2 bg-red-500/90 text-white shadow-lg hover:bg-red-600"
+                                            className="px-6 py-4 rounded-full transition-all flex items-center justify-center gap-2 bg-red-500/90 text-white shadow-lg hover:bg-red-600"
                                             whileHover={{ scale: 1.05, y: -2 }}
                                             whileTap={{ scale: 0.95 }}
                                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                                         >
-                                            <StopCircle className="w-4 h-4" weight="fill" />
+                                            <StopCircle className="w-5 h-5" weight="fill" />
                                             <span className="text-sm font-medium">Stop</span>
                                         </motion.button>
                                     ) : (
                                         <motion.button
                                             type="submit"
                                             disabled={!input.trim() || isLoading || isProcessing}
-                                            className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim() && !isProcessing
+                                            className={`h-[54px] w-[54px] rounded-full transition-all flex items-center justify-center ${input.trim() && !isProcessing
                                                 ? 'bg-gray-900/90 text-white shadow-lg'
                                                 : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
                                                 }`}
@@ -1785,7 +1790,7 @@ export default function ChatbotCopilot({
                                             whileTap={input.trim() ? { scale: 0.95 } : {}}
                                             transition={{ type: "spring", stiffness: 400, damping: 25 }}
                                         >
-                                            <PaperPlaneRight className="w-4 h-4" weight="fill" />
+                                            <PaperPlaneRight className="w-5 h-5" weight="fill" />
                                         </motion.button>
                                     )}
                                 </form>

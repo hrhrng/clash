@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
+/* eslint-disable @next/next/no-img-element */
 import { Handle, Position, NodeProps, useReactFlow, useNodes } from 'reactflow';
 import { FilmSlate, TextT } from '@phosphor-icons/react';
 import { useMediaViewer } from '../MediaViewerContext';
@@ -212,7 +213,7 @@ const VideoNode = ({ data, selected, id }: NodeProps) => {
                 onDoubleClick={(e) => e.stopPropagation()}
             >
                 <input
-                    className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
+                    className="bg-transparent text-lg font-bold font-display text-slate-500 focus:text-slate-900 focus:outline-none"
                     value={label}
                     onChange={(evt) => {
                         const newLabel = evt.target.value;

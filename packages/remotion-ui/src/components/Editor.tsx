@@ -8,47 +8,36 @@ import { thumbnailCache, generateVideoThumbnail } from '../utils/thumbnailCache'
 
 const AssetInitializer = ({ assets }: { assets: any[] }) => {
   const { dispatch, state } = useEditor();
-  const initializedRef = React.useRef(false);
   const addedAssetsRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
-    console.log('[AssetInitializer] Effect triggered, assets:', assets.length, assets);
+    // console.log('[AssetInitializer] Effect triggered, assets:', assets.length);
     if (!assets || assets.length === 0) return;
 
-    // Prevent double-initialization (React Strict Mode or re-renders)
-    if (initializedRef.current) {
-      console.log('[AssetInitializer] Already initialized, skipping');
-      return;
-    }
-    initializedRef.current = true;
-    console.log('[AssetInitializer] Initializing assets...');
+    // We removed the strict initializedRef check to allow prop updates to add new assets.
+    // The deduplication logic below ensures we don't add the same asset twice.
 
-    // Add the fresh assets (deduplication prevents duplicates)
-    // Note: Since we use editorKey to force remount, state.assets is always empty on mount
     assets.forEach(asset => {
       const normalizedType = asset.type === 'video' ? 'video' : asset.type === 'image' ? 'image' : 'audio';
       const assetKey = asset.sourceNodeId || asset.id;
 
-      // Check if already added in this session
+      // Check if already added in this session via this component
       if (addedAssetsRef.current.has(assetKey)) {
         return;
       }
 
+      // Check if already in global state
       const existingById = state.assets.find((a) => a.id === asset.id);
       const existingBySrc = state.assets.find((a) => a.src === (asset.src || asset.url));
       const existingBySourceNode = state.assets.find((a) =>
         asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId
       );
-      const existingByNameType = state.assets.find(
-        (a) => a.name === (asset.name || 'Imported Asset') && a.type === normalizedType
-      );
 
+      // Strict check: if asset exists in state, skip
       if (existingById || existingBySrc || existingBySourceNode) {
+        // Add to local ref so we don't check again
+        addedAssetsRef.current.add(assetKey);
         return;
-      }
-
-      if (existingByNameType && !existingByNameType.readOnly) {
-        dispatch({ type: 'REMOVE_ASSET', payload: existingByNameType.id });
       }
 
       addedAssetsRef.current.add(assetKey);
@@ -190,7 +179,6 @@ const AssetInitializer = ({ assets }: { assets: any[] }) => {
         });
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assets]);
   return null;
 };

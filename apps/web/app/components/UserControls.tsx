@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element */
+
 import { motion } from 'framer-motion';
 import { GoogleLogo } from '@phosphor-icons/react';
 import betterAuthClient from '@/lib/betterAuthClient';

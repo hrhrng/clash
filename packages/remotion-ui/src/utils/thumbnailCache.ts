@@ -4,7 +4,7 @@
  */
 
 const THUMBNAIL_PREFIX = 'thumb_editor_v1_';
-const CACHE_VERSION_KEY = 'thumb_editor_version';
+// const CACHE_VERSION_KEY = 'thumb_editor_version'; // unused
 
 /**
  * Simple hash function for consistent keys
@@ -250,7 +250,8 @@ export function generateVideoThumbnailAtTime(
           cleanup();
           resolve(undefined);
         }
-      } catch (err) {
+      } catch {
+        // ignore error
         cleanup();
         resolve(undefined);
       }

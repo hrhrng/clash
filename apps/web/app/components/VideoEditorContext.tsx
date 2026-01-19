@@ -347,6 +347,20 @@ export function VideoEditorProvider({
         (asset: Asset & { sourceNodeId?: string }) => {
             if (!editorNodeId || !onCanvasAssetLinked) return;
             onCanvasAssetLinked(asset, editorNodeId);
+
+            // Add to local assets state so it appears in the editor immediately
+            setAssets((current) => {
+                const exists = current.some((a) =>
+                    a.id === asset.id ||
+                    (asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId)
+                );
+                return exists ? current : [...current, asset];
+            });
+
+            // Remove from available assets since it's now picked
+            setAvailableAssets((current) =>
+                current.filter(a => a.id !== asset.id && a.sourceNodeId !== asset.sourceNodeId)
+            );
         },
         [editorNodeId, onCanvasAssetLinked]
     );

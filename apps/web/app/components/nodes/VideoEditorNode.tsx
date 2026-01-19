@@ -1,5 +1,6 @@
 
 import React, { memo, useCallback, useState } from 'react';
+/* eslint-disable @next/next/no-img-element */
 import { Handle, Position, NodeProps, useReactFlow, Node } from 'reactflow';
 import { FilmSlate, VideoCamera } from '@phosphor-icons/react';
 import { useVideoEditor } from '../VideoEditorContext';
@@ -46,26 +47,122 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
     }, [data.timelineDsl, id, loroSync]);
 
     const handleOpenEditor = useCallback(() => {
-        const assets = data.inputs || [];
-        console.log('[VideoEditorNode] handleOpenEditor called with assets:', assets.length, assets);
+        // Derive connected assets dynamically from edges
+        // This removes the need to sync edge data to node.data.inputs
+        const nodes = reactFlow.getNodes();
+        const edges = reactFlow.getEdges();
+
+        // Find edges connected to this node's 'assets' handle
+        // Relaxed check: Look for ANY edge connected to this target node,
+        // prioritizing 'assets' handle but falling back to null handle if needed.
+        const connectedEdges = edges.filter(
+            (edge) => edge.target === id && (edge.targetHandle === 'assets' || !edge.targetHandle)
+        );
+
+        console.log('[VideoEditorNode] Connected edges check:', {
+            totalEdges: edges.length,
+            nodeId: id,
+            connectedEdgesCount: connectedEdges.length,
+            connectedEdges: connectedEdges
+        });
+
+        // Map connected edges to asset objects
+        const edgeAssets = connectedEdges.map((edge) => {
+             const sourceNode = nodes.find((n) => n.id === edge.source);
+             if (!sourceNode) return null;
+
+             // Normalize type check (handle case sensitivity)
+             const nodeType = (sourceNode.type || '').toLowerCase();
+             if (['image', 'video', 'audio'].includes(nodeType)) {
+                 // Check status if video gen
+                 const statusValue = sourceNode.data?.status;
+                 const src = sourceNode.data?.src;
+
+                 // Smart filtering:
+                 // Only skip if it's explicitly in an active state (generating/uploading) AND has no usable source.
+                 // If it has a source, we assume it's usable even if status is missing or weird.
+                 const normalizedStatus = normalizeStatus(statusValue);
+                 const isActive = isActiveStatus(normalizedStatus);
+
+                 // For videos, if it's generating and has no src, skip it.
+                 // If it has src, we show it (it might be a preview or finished asset).
+                 if (nodeType === 'video' && isActive && !src) {
+                     return null;
+                 }
+
+                 return {
+                    id: sourceNode.id,
+                    type: nodeType as 'image' | 'video' | 'audio',
+                    src: resolveAssetUrl(src),
+                    name: sourceNode.data.label || sourceNode.type,
+                    width: sourceNode.data.naturalWidth,
+                    height: sourceNode.data.naturalHeight,
+                    duration: sourceNode.data.duration,
+                    sourceNodeId: sourceNode.id,
+                 };
+             }
+             return null;
+        }).filter((a): a is any => a !== null);
+
+        // Fallback/Supplement: Scan timelineDsl for used assets
+        // This ensures that if arrange_timeline put something in the timeline, it shows up in assets
+        // even if edges are missing or malformed.
         let timelineDsl = data.timelineDsl;
         if (loroSync?.doc) {
             const loroNode = loroSync.doc.getMap('nodes').get(id) as any;
             timelineDsl = loroNode?.data?.timelineDsl ?? timelineDsl;
         }
-        const nodes = reactFlow.getNodes();
-        const edges = reactFlow.getEdges();
-        const connectedAssetIds = new Set(
-            edges
-                .filter((edge) => edge.target === id && edge.targetHandle === 'assets')
-                .map((edge) => edge.source)
-        );
+
+        const timelineAssets: any[] = [];
+        if (timelineDsl?.tracks) {
+            const assetIdsInTimeline = new Set<string>();
+            timelineDsl.tracks.forEach((track: any) => {
+                track.items?.forEach((item: any) => {
+                    if (item.assetId) {
+                        assetIdsInTimeline.add(item.assetId);
+                    }
+                });
+            });
+
+            assetIdsInTimeline.forEach(assetId => {
+                const node = nodes.find(n => n.id === assetId);
+                if (node) {
+                    const nodeType = (node.type || '').toLowerCase();
+                     if (['image', 'video', 'audio'].includes(nodeType)) {
+                         const src = node.data?.src;
+                         // Less strict filtering for timeline assets - if it's used, we try to include it
+                         timelineAssets.push({
+                            id: node.id,
+                            type: nodeType as 'image' | 'video' | 'audio',
+                            src: resolveAssetUrl(src),
+                            name: node.data.label || node.type,
+                            width: node.data.naturalWidth,
+                            height: node.data.naturalHeight,
+                            duration: node.data.duration,
+                            sourceNodeId: node.id,
+                         });
+                     }
+                }
+            });
+        }
+
+        // Combine and deduplicate
+        const allAssets = [...edgeAssets, ...timelineAssets];
+        const uniqueAssets = Array.from(new Map(allAssets.map(item => [item.id, item])).values());
+
+        console.log('[VideoEditorNode] handleOpenEditor assets:', {
+            edgeAssets: edgeAssets.length,
+            timelineAssets: timelineAssets.length,
+            totalUnique: uniqueAssets.length
+        });
+
+        const connectedAssetIds = new Set(uniqueAssets.map(a => a.id));
         const inputSrcs = new Set(
-            (assets || []).map((asset: any) => asset?.src).filter(Boolean)
+            uniqueAssets.map((asset: any) => asset?.src).filter(Boolean)
         );
         const seenKeys = new Set<string>();
         const availableAssets = nodes
-            .filter((node) => ['image', 'video', 'audio'].includes(node.type || ''))
+            .filter((node) => ['image', 'video', 'audio'].includes((node.type || '').toLowerCase()))
             .filter((node) => node.data?.src && !connectedAssetIds.has(node.id))
             .filter((node) => {
                 const statusValue = node.data?.status;
@@ -74,7 +171,7 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
             })
             .map((node) => ({
                 id: node.id,
-                type: node.type as 'image' | 'video' | 'audio',
+                type: (node.type || '').toLowerCase() as 'image' | 'video' | 'audio',
                 src: resolveAssetUrl(node.data.src),
                 name: node.data?.label || node.type,
                 width: node.data?.naturalWidth,
@@ -89,8 +186,8 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
                 seenKeys.add(key);
                 return true;
             });
-        openEditor(assets, id, timelineDsl, availableAssets);
-    }, [data.inputs, data.timelineDsl, id, loroSync, openEditor, reactFlow]);
+        openEditor(uniqueAssets, id, timelineDsl, availableAssets);
+    }, [data.timelineDsl, id, loroSync, openEditor, reactFlow]);
 
     const handleRender = useCallback(async () => {
         console.log('[VideoEditorNode] handleRender called');
@@ -292,9 +389,9 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
             <div className="w-full bg-white shadow-md rounded-matrix overflow-hidden transition-all duration-300 hover:shadow-lg ring-1 ring-slate-200">
                 {/* Header Badge */}
                 <div className="absolute top-3 left-3 z-10">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white/90 backdrop-blur-sm rounded-md shadow-sm border border-slate-200/50">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white/90 backdrop-blur-sm rounded-full shadow-sm border border-slate-200/50">
                         <FilmSlate className="w-3.5 h-3.5 text-blue-500" weight="fill" />
-                        <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wide">Timeline Editor</span>
+                        <span className="text-[10px] font-bold font-display text-slate-700 uppercase tracking-wide">Timeline Editor</span>
                     </div>
                 </div>
 
@@ -324,7 +421,7 @@ const VideoEditorNode = ({ data, id }: NodeProps) => {
                                 <FilmSlate className="w-8 h-8 text-stone-500 group-hover:text-blue-500 transition-colors" weight="duotone" />
                             </div>
                             <div className="text-center">
-                                <div className="text-sm font-bold text-stone-700">Video Editor</div>
+                                <div className="text-sm font-bold font-display text-stone-700">Video Editor</div>
                                 <div className="text-xs text-gray-400 mt-1">Double-click to open</div>
                             </div>
                         </div>

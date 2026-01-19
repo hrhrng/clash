@@ -5,22 +5,7 @@ import {
     Plus,
 } from '@phosphor-icons/react';
 import Link from 'next/link';
-
-// Using a loose type here since the Drizzle result includes assets which might not be in the Prisma generated type
-interface Asset {
-    id: string;
-    url: string;
-    type: 'image' | 'video';
-    storageKey: string;
-    createdAt?: Date | string | null;
-}
-
-interface ProjectWithAssets {
-    id: string;
-    name: string;
-    updatedAt: Date | string | null;
-    assets?: Asset[];
-}
+import ProjectCard from './ProjectCard';
 
 interface RecentProjectsProps {
     projects: any[]; // Relaxed type to accept Drizzle result with assets
@@ -65,90 +50,9 @@ export default function RecentProjects({ projects }: RecentProjectsProps) {
                 </motion.button>
 
                 {/* Project Cards */}
-                {projectList.map((project) => {
-                    const allAssets = project.assets || [];
-
-                    // Sort assets: Newest first
-                    const displayAssets = [...allAssets]
-                        .sort((a, b) => {
-                            // Sort by createdAt (descending)
-                            // @ts-ignore
-                            const dateA = new Date(a.createdAt || 0).getTime();
-                            // @ts-ignore
-                            const dateB = new Date(b.createdAt || 0).getTime();
-                            return dateB - dateA;
-                        })
-                        .slice(0, 4); // Take up to 4 assets
-
-                    // console.log(`[RecentProjects] Project ${project.id} assets:`, displayAssets);
-
-                    const assetCount = displayAssets.length;
-
-                    // Determine grid columns based on count
-                    // 1 asset -> full width
-                    // 2 assets -> 2 columns, split vertically
-                    // 3 assets -> 2 up, 1 down (3rd item spans full width)
-                    // 4 assets -> 2x2 grid
-                    const gridClass = assetCount === 1 ? 'grid-cols-1' :
-                                     assetCount === 2 ? 'grid-cols-2' :
-                                     'grid-cols-2 grid-rows-2';
-
-                    // Format Date
-                    const date = new Date(project.updatedAt || new Date());
-                    const formattedDate = new Intl.DateTimeFormat('en-US', {
-                        month: 'long',
-                        day: 'numeric',
-                        year: 'numeric'
-                    }).format(date);
-
-                    return (
-                    <Link key={project.id} href={`/projects/${project.id}`} className="block group">
-                        <motion.div
-                            className="relative aspect-video overflow-hidden rounded-[1.5rem] bg-gray-100 mb-4 transition-all hover:shadow-lg ring-1 ring-black/5"
-                            whileHover={{ y: -2 }}
-                            whileTap={{ scale: 0.98 }}
-                        >
-                            {/* Asset Grid Logic */}
-                            {assetCount === 0 ? (
-                                /* No Assets - Empty State */
-                                <div className="absolute inset-0 flex items-center justify-center bg-gray-50 text-gray-300">
-                                   {/*  Placeholder or empty gray box as per screenshot */}
-                                </div>
-                            ) : (
-                                /* Has Assets */
-                                <div className={`grid h-full w-full ${gridClass} gap-[2px] bg-white`}>
-                                    {displayAssets.map((asset: Asset, index: number) => {
-                                        // Special case for 3 items: the last item (index 2) spans 2 columns
-                                        const isLastOfThree = assetCount === 3 && index === 2;
-                                        return (
-                                            <div
-                                                key={asset.id}
-                                                className={`relative overflow-hidden bg-gray-100 ${isLastOfThree ? 'col-span-2' : ''}`}
-                                            >
-                                                {/* Dashboard shows thumbnails directly - no special handling needed */}
-                                                <img
-                                                    src={asset.url}
-                                                    alt="Asset"
-                                                    className="h-full w-full object-cover"
-                                                />
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </motion.div>
-
-                        {/* Text Content Below Card */}
-                        <div className="px-1">
-                            <h3 className="text-base font-semibold text-gray-900 group-hover:text-brand transition-colors">
-                                {project.name || 'Untitled'}
-                            </h3>
-                            <p className="mt-1 text-xs text-gray-500">
-                                {formattedDate}
-                            </p>
-                        </div>
-                    </Link>
-                )})}
+                {projectList.map((project) => (
+                    <ProjectCard key={project.id} project={project} />
+                ))}
             </div>
         </div>
     );
