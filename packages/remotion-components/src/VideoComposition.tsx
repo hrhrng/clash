@@ -252,7 +252,7 @@ export const VideoComposition: React.FC<{
         // Higher index = lower in timeline = lower z-index
         const trackZIndex = tracks.length - trackIndex;
         return (
-          <TrackComponent key={track.id} track={track} globalEndFrame={globalEndFrame} trackZIndex={trackZIndex} itemsDomMapRef={itemsDomMapRef} />
+          <TrackComponent key={`${track.id}-${trackIndex}`} track={track} globalEndFrame={globalEndFrame} trackZIndex={trackZIndex} itemsDomMapRef={itemsDomMapRef} />
         );
       })}
       
