@@ -126,6 +126,22 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                             default_width = 300
                             default_height = 300
 
+                        # Extract upstream dependencies from timelineDsl for video-editor nodes
+                        upstream_node_ids = []
+                        if resolved_type == "video-editor" and "timelineDsl" in node_data:
+                            timeline_dsl = node_data.get("timelineDsl", {})
+                            asset_ids = set()
+                            for track in timeline_dsl.get("tracks", []):
+                                items = track.get("items", [])
+                                for item in items:
+                                    if "assetId" in item and item["assetId"]:
+                                        asset_ids.add(item["assetId"])
+                            upstream_node_ids = list(asset_ids)
+                            if upstream_node_ids:
+                                # Add upstreamNodeIds to node data
+                                node_data["upstreamNodeIds"] = upstream_node_ids
+                                logger.info(f"[create_canvas_node] Extracted {len(upstream_node_ids)} upstream dependencies from timelineDsl: {upstream_node_ids}")
+
                         loro_node = {
                             "id": result.node_id,
                             "type": resolved_type,
@@ -145,9 +161,31 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                             ),
                         }
 
-                        loro_client.add_node(result.node_id, loro_node)
+                        # Create edges for upstream dependencies
+                        edges_to_add = {}
+                        if upstream_node_ids:
+                            for asset_id in upstream_node_ids:
+                                edge_id = f"{asset_id}-{result.node_id}"
+                                edges_to_add[edge_id] = {
+                                    "id": edge_id,
+                                    "source": asset_id,
+                                    "target": result.node_id,
+                                    "type": "default"
+                                }
+                                logger.info(f"[create_canvas_node] Creating edge from {asset_id} to {result.node_id}")
+
+                        # Add node and edges atomically
+                        if edges_to_add:
+                            loro_client.batch_update_graph(
+                                nodes={result.node_id: loro_node},
+                                edges=edges_to_add
+                            )
+                            logger.info(f"[LoroSync] Added node {result.node_id} with {len(edges_to_add)} edges to Loro")
+                        else:
+                            loro_client.add_node(result.node_id, loro_node)
+                            logger.info(f"[LoroSync] Added node {result.node_id} to Loro")
+
                         loro_sync_success = True
-                        logger.info(f"[LoroSync] Added node {result.node_id} to Loro")
                     except Exception as e:
                         loro_sync_error = str(e)
                         logger.error(f"[LoroSync] Failed to add node to Loro: {e}")
