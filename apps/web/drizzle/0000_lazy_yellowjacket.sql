@@ -13,23 +13,14 @@ CREATE TABLE `account` (
 	FOREIGN KEY (`userId`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE TABLE `message` (
-	`id` text PRIMARY KEY NOT NULL,
-	`content` text NOT NULL,
-	`role` text NOT NULL,
-	`project_id` text NOT NULL,
-	`created_at` integer DEFAULT (strftime('%s', 'now')),
-	FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
 CREATE TABLE `project` (
 	`id` text PRIMARY KEY NOT NULL,
+	`owner_id` text NOT NULL,
 	`name` text NOT NULL,
 	`description` text,
-	`nodes` text DEFAULT '[]',
-	`edges` text DEFAULT '[]',
 	`created_at` integer DEFAULT (strftime('%s', 'now')),
-	`updated_at` integer DEFAULT (strftime('%s', 'now'))
+	`updated_at` integer DEFAULT (strftime('%s', 'now')),
+	FOREIGN KEY (`owner_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
 CREATE TABLE `session` (

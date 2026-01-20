@@ -1,19 +1,29 @@
-"""LangGraph checkpoint implementation using SQLite/D1.
+"""LangGraph checkpoint implementation using PostgreSQL/SQLite.
 
 This module provides checkpoint storage for LangGraph workflows,
 enabling state persistence, recovery, and time-travel debugging.
+
+Priority: PostgreSQL > SQLite
 """
 
 
+import logging
+
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from master_clash.config import get_settings
 from master_clash.database.connection import get_db_connection, get_db_path, init_database
 
+logger = logging.getLogger(__name__)
 
 def get_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
-    """Get a LangGraph checkpointer configured for SQLite/D1.
+    """Get a LangGraph checkpointer configured for PostgreSQL/SQLite.
+
+    Priority order:
+    1. PostgreSQL (Neon) - if POSTGRES_CONNECTION_STRING is set
+    2. SQLite (local) - fallback
 
     Args:
         initialize: Whether to initialize the database schema if not exists
@@ -23,14 +33,12 @@ def get_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
     """
     settings = get_settings()
 
-    if settings.use_d1_checkpointer:
-        from master_clash.database.d1_checkpointer import D1Checkpointer
-        return D1Checkpointer(
-            account_id=settings.cloudflare_account_id,
-            database_id=settings.cloudflare_d1_database_id,
-            api_token=settings.cloudflare_api_token,
-        )
+    # Priority 1: PostgreSQL (Neon)
+    if settings.use_postgres_checkpointer:
+        from master_clash.database.pg_checkpointer import get_checkpointer as get_pg_checkpointer
+        return get_pg_checkpointer(initialize)
 
+    # Priority 2: SQLite (local fallback)
     db_path = get_db_path()
 
     if initialize:
@@ -47,7 +55,11 @@ def get_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
 
 
 async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver:
-    """Get an async LangGraph checkpointer configured for SQLite/D1.
+    """Get an async LangGraph checkpointer configured for PostgreSQL/SQLite.
+
+    Priority order:
+    1. PostgreSQL (Neon) - if POSTGRES_CONNECTION_STRING is set
+    2. SQLite (local) - fallback
 
     For async workflows, this uses aiosqlite for non-blocking I/O.
 
@@ -59,14 +71,20 @@ async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver
     """
     settings = get_settings()
 
-    if settings.use_d1_checkpointer:
-        from master_clash.database.d1_checkpointer import D1Checkpointer
-        return D1Checkpointer(
-            account_id=settings.cloudflare_account_id,
-            database_id=settings.cloudflare_d1_database_id,
-            api_token=settings.cloudflare_api_token,
-        )
+    # Priority 1: PostgreSQL (Neon)
+    if settings.use_postgres_checkpointer:
+        from master_clash.database.pg_checkpointer import get_async_checkpointer as get_async_pg_checkpointer
+        try:
+            return await get_async_pg_checkpointer(initialize)
+        except Exception as exc:
+            if settings.is_production:
+                raise
+            logger.warning(
+                "PostgreSQL checkpointer unavailable; falling back to non-PostgreSQL checkpointer.",
+                exc_info=exc,
+            )
 
+    # Priority 2: SQLite (local fallback)
     import aiosqlite
 
     db_path = get_db_path()
@@ -79,7 +97,7 @@ async def get_async_checkpointer(initialize: bool = True) -> BaseCheckpointSaver
     conn.row_factory = aiosqlite.Row
 
     # SqliteSaver can work with async connections
-    checkpointer = SqliteSaver(conn)
+    checkpointer = AsyncSqliteSaver(conn)
 
     return checkpointer
 

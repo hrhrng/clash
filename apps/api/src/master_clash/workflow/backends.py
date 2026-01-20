@@ -319,10 +319,10 @@ class StateCanvasBackend:
         """
         import uuid
 
-        from master_clash.semantic_id import create_d1_checker, generate_unique_id_for_project
+        from master_clash.semantic_id import create_id_checker, generate_unique_id_for_project
 
         # Generate semantic ID
-        checker = create_d1_checker()
+        checker = create_id_checker()
         node_id = generate_unique_id_for_project(project_id, checker)
 
         # Generate proposal ID

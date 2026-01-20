@@ -1,0 +1,19 @@
+{
+  "summary": "Application-specific components, Context Providers, and Complex Views used within the Next.js App Router.",
+  "context_hints": [
+    "Look here for the main 'Editor' logic (ProjectEditor.tsx)",
+    "Contains all Global State Providers (Contexts)",
+    "Contains the 'Nodes' implementation for React Flow"
+  ],
+  "subdirectories": {
+    "nodes": "Custom React Flow node components (e.g., VideoNode, TextNode). The visual representation of data.",
+    "copilot": "Components for the Chatbot/AI Assistant sidebar interface."
+  },
+  "key_files": {
+    "ProjectEditor.tsx": "The primary workspace component integrating React Flow and the Toolbar.",
+    "ChatbotCopilot.tsx": "The AI chat interface component.",
+    "LoroSyncContext.tsx": "React Context provider for the Loro CRDT sync engine.",
+    "VideoEditorContext.tsx": "State management for the video editing timeline."
+  },
+  "architecture_notes": "Components here are heavy on business logic and state. Pure UI components should go in apps/web/components."
+}

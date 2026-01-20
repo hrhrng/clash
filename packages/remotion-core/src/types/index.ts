@@ -92,6 +92,8 @@ export type Asset = {
   name: string;
   type: 'video' | 'audio' | 'image';
   src: string;
+  width?: number;
+  height?: number;
   duration?: number;
   thumbnail?: string;
   thumbnailFrameCount?: number; // Number of frames in the thumbnail strip
@@ -99,6 +101,8 @@ export type Asset = {
   waveform?: number[]; // Normalized audio peaks (0-1) for waveform visualization
   createdAt: number;
   readOnly?: boolean;
+  /** ID of the source node when asset is linked from canvas (for deduplication) */
+  sourceNodeId?: string;
 };
 
 // Editor state
@@ -136,3 +140,8 @@ export type EditorAction =
   | { type: 'REMOVE_ASSET'; payload: string }
   | { type: 'SET_COMPOSITION_SIZE'; payload: { width: number; height: number } }
   | { type: 'SET_DURATION'; payload: number };
+
+export type TimelineDsl = Pick<
+  EditorState,
+  'tracks' | 'compositionWidth' | 'compositionHeight' | 'fps' | 'durationInFrames'
+>;

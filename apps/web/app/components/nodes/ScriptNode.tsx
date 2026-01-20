@@ -1,6 +1,6 @@
 import { memo, useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
-import { Scroll, Plus, Trash } from '@phosphor-icons/react';
+import { Scroll, Plus } from '@phosphor-icons/react';
 
 // Define the structure for a Shot
 export interface Shot {

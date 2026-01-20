@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
     unoptimized: true, // Cloudflare uses their own image optimization
   },
   async rewrites() {
-    const backendUrl = process.env.BACKEND_API_URL || 'http://127.0.0.1:8000';
+    const backendUrl = process.env.BACKEND_API_URL || 'http://127.0.0.1:8888';
     const syncServerUrl = process.env.LORO_SYNC_URL || 'http://127.0.0.1:8787';
 
     return [
@@ -38,6 +38,14 @@ const nextConfig: NextConfig = {
       {
         source: '/api/describe',
         destination: `${backendUrl}/api/describe`,
+      },
+      {
+        source: '/assets/:path*',
+        destination: `${syncServerUrl}/assets/:path*`,
+      },
+      {
+        source: '/thumbnails/:path*',
+        destination: `${syncServerUrl}/thumbnails/:path*`,
       },
       {
         source: '/api/v1/:path*',

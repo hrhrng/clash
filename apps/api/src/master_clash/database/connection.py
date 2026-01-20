@@ -57,8 +57,8 @@ def init_database(db_path: Path | None = None) -> None:
         path = db_path or get_db_path()
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Resolve dialect for migrations (D1 uses SQLite dialect)
-    if database_url.startswith("sqlite") or database_url.startswith("d1://"):
+    # Resolve dialect for migrations
+    if database_url.startswith("sqlite"):
         dialect = "sqlite"
     else:
         dialect = "postgres"

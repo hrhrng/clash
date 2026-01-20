@@ -21,7 +21,9 @@ export type AtomicTaskType = z.infer<typeof AtomicTaskTypeSchema>;
 // === Image Generation Params ===
 export const ImageGenParamsSchema = z.object({
   prompt: z.string(),
-  model: z.string().default('gemini-2.0-flash-preview-image-generation'),
+  model: z.string().default('nano-banana-pro'),
+  model_params: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  reference_images: z.array(z.string()).optional(),
   aspect_ratio: z.string().optional(),
 });
 export type ImageGenParams = z.infer<typeof ImageGenParamsSchema>;
@@ -29,9 +31,16 @@ export type ImageGenParams = z.infer<typeof ImageGenParamsSchema>;
 // === Video Generation Params ===
 export const VideoGenParamsSchema = z.object({
   prompt: z.string(),
-  image_r2_key: z.string(), // Source image R2 key
-  duration: z.number().default(5),
-  model: z.string().default('kling-v1'),
+  image_r2_key: z.string().optional(), // Source image R2 key
+  duration: z.union([z.number(), z.string()]).default(5),
+  model: z.string().default('kling-image2video'),
+  model_params: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  reference_images: z.array(z.string()).optional(),
+  reference_mode: z.string().optional(),
+  aspect_ratio: z.string().optional(),
+  resolution: z.string().optional(),
+  negative_prompt: z.string().optional(),
+  cfg_scale: z.number().optional(),
 });
 export type VideoGenParams = z.infer<typeof VideoGenParamsSchema>;
 

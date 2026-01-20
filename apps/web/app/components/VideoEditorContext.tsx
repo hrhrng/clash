@@ -1,9 +1,73 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { X } from '@phosphor-icons/react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useRef } from 'react';
 import dynamic from 'next/dynamic';
+import type { EditorState, TimelineDsl, Track } from '@master-clash/remotion-core';
+import type { Node, Edge } from 'reactflow';
+import { useOptionalLoroSyncContext } from './LoroSyncContext';
+import { autoInsertNode } from '@/lib/layout';
+
+/**
+ * Convert R2 key to frontend view URL for displaying in editor
+ * R2 key: "projects/xxx/assets/..." -> View URL: "/api/assets/view/projects/xxx/assets/..."
+ */
+function r2KeyToViewUrl(r2Key: string): string {
+    if (!r2Key.startsWith('projects/') && !r2Key.startsWith('/projects/')) {
+        return r2Key; // Not an R2 key, return as-is
+    }
+    const normalizedKey = r2Key.startsWith('/') ? r2Key : `/${r2Key}`;
+    return `/api/assets/view${normalizedKey}`;
+}
+
+/**
+ * Convert frontend view URL to R2 key for storage
+ * View URL: "/api/assets/view/projects/xxx/assets/..." -> R2 key: "projects/xxx/assets/..."
+ */
+function viewUrlToR2Key(viewUrl: string): string {
+    if (!viewUrl.startsWith('/api/assets/view/') && !viewUrl.startsWith('/api/assets/')) {
+        return viewUrl; // Not a view URL, return as-is
+    }
+    if (viewUrl.startsWith('/api/assets/view/')) {
+        return viewUrl.replace('/api/assets/view/', '');
+    }
+    return viewUrl.replace('/api/assets/', '');
+}
+
+/**
+ * Convert all src URLs in tracks from R2 keys to view URLs (for editor display)
+ */
+function convertTracksToViewUrls(tracks: Track[]): Track[] {
+    return tracks.map(track => ({
+        ...track,
+        items: track.items.map(item => {
+            if (!('src' in item) || typeof item.src !== 'string') {
+                return item;
+            }
+            return {
+                ...item,
+                src: r2KeyToViewUrl(item.src),
+            };
+        }),
+    }));
+}
+
+/**
+ * Convert all src URLs in tracks from view URLs to R2 keys (for storage)
+ */
+function convertTracksToR2Keys(tracks: Track[]): Track[] {
+    return tracks.map(track => ({
+        ...track,
+        items: track.items.map(item => {
+            if (!('src' in item) || typeof item.src !== 'string') {
+                return item;
+            }
+            return {
+                ...item,
+                src: viewUrlToR2Key(item.src),
+            };
+        }),
+    }));
+}
 
 const Editor = dynamic(() => import('@master-clash/remotion-ui').then(mod => mod.Editor), {
     ssr: false,
@@ -15,61 +79,375 @@ interface Asset {
     type: 'video' | 'image' | 'audio';
     src: string;
     name?: string;
+    width?: number;
+    height?: number;
+    duration?: number;
+    sourceNodeId?: string;
 }
+
+// Use TimelineDsl from remotion-core
+type TimelineDslType = Pick<
+    EditorState,
+    'tracks' | 'compositionWidth' | 'compositionHeight' | 'fps' | 'durationInFrames'
+>;
 
 interface VideoEditorContextType {
     isOpen: boolean;
-    openEditor: (assets: Asset[]) => void;
+    openEditor: (
+        assets: Asset[],
+        nodeId: string,
+        timelineDsl?: TimelineDslType | null,
+        availableAssets?: Array<Asset & { sourceNodeId?: string }>
+    ) => void;
     closeEditor: () => void;
+    exportVideo: () => Promise<void>;
 }
 
 const VideoEditorContext = createContext<VideoEditorContextType | undefined>(undefined);
 
-export function VideoEditorProvider({ children }: { children: ReactNode }) {
+export function VideoEditorProvider({
+    children,
+    onAssetAddedToCanvas,
+    onCanvasAssetLinked,
+    nodes = [],
+    edges = [],
+}: {
+    children: ReactNode;
+    onAssetAddedToCanvas?: (
+        file: File,
+        type: 'video' | 'image' | 'audio',
+        editorNodeId: string
+    ) => Promise<Asset | null> | Asset | null;
+    onCanvasAssetLinked?: (asset: Asset & { sourceNodeId?: string }, editorNodeId: string) => void;
+    nodes?: Node[];
+    edges?: Edge[];
+}) {
+    const loroSync = useOptionalLoroSyncContext();
     const [isOpen, setIsOpen] = useState(false);
     const [assets, setAssets] = useState<Asset[]>([]);
+    const [availableAssets, setAvailableAssets] = useState<Array<Asset & { sourceNodeId?: string }>>([]);
+    const [timelineDsl, setTimelineDsl] = useState<TimelineDsl | null>(null);
+    const [editorNodeId, setEditorNodeId] = useState<string | null>(null);
 
-    const openEditor = useCallback((newAssets: Asset[]) => {
-        setAssets(newAssets);
+    // Ref to read editor state on close - no callbacks during playback
+    const editorStateRef = useRef<EditorState | null>(null);
+
+    const openEditor = useCallback((
+        newAssets: Asset[],
+        nodeId: string,
+        nextTimelineDsl?: TimelineDslType | null,
+        nextAvailableAssets: Array<Asset & { sourceNodeId?: string }> = []
+    ) => {
+        console.log('[VideoEditorContext] openEditor called');
+        console.log('[VideoEditorContext] 1. Incoming Assets:', newAssets.length, newAssets);
+
+        // Log Agent-generated DSL if present
+        if (nextTimelineDsl) {
+            console.log('[VideoEditorContext] 2. Agent Generated DSL:', JSON.stringify(nextTimelineDsl, null, 2));
+        } else {
+            console.log('[VideoEditorContext] 2. No Agent DSL provided (Fresh Editor)');
+        }
+
+        // Deduplicate assets before setting
+        const seenKeys = new Set<string>();
+        const deduplicatedAssets = newAssets.filter(asset => {
+            const key = asset.sourceNodeId || asset.id;
+            if (seenKeys.has(key)) {
+                return false;
+            }
+            seenKeys.add(key);
+            return true;
+        });
+
+        setAssets(deduplicatedAssets);
+        setEditorNodeId(nodeId);
+
+        // Hydrate DSL with asset sources if missing (critical for Player which relies on src)
+        let hydratedDsl = nextTimelineDsl;
+        if (hydratedDsl && hydratedDsl.tracks) {
+             hydratedDsl = {
+                 ...hydratedDsl,
+                 tracks: hydratedDsl.tracks.map(track => ({
+                     ...track,
+                     items: track.items.map(item => {
+                         let newItem = { ...item };
+
+                         // 1. Ensure ID exists
+                         if (!newItem.id) {
+                             newItem.id = `item-auto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                         }
+
+                         // 1.5 Handle legacy snake_case keys from backend (asset_id -> assetId)
+                         if ((newItem as any).asset_id && !newItem.assetId) {
+                             newItem.assetId = (newItem as any).asset_id;
+                         }
+                         if ((newItem as any).duration_in_frames && !newItem.durationInFrames) {
+                             newItem.durationInFrames = (newItem as any).duration_in_frames;
+                         }
+                         if ((newItem as any).start_at && !newItem.startAt) {
+                             newItem.startAt = (newItem as any).start_at;
+                         }
+
+                         // 2. Hydrate from Asset (src, type)
+                         if (newItem.assetId && (!newItem.src || !newItem.type)) {
+                             const asset = deduplicatedAssets.find(a => a.id === newItem.assetId);
+                             if (asset) {
+                                 console.log(`[VideoEditorContext] Hydrating item ${newItem.id} from asset ${asset.id}`);
+                                 if (!newItem.src) newItem.src = asset.src;
+                                 if (!newItem.type) newItem.type = asset.type;
+                             } else {
+                                 console.warn(`[VideoEditorContext] Could not find asset for item ${newItem.id} with assetId ${newItem.assetId}`);
+                             }
+                         }
+
+                         // 3. Normalize Type (lowercase)
+                         if (newItem.type) {
+                             newItem.type = newItem.type.toLowerCase() as any;
+                         } else {
+                             // Default to image if still missing? Or solid?
+                             // Leaving it undefined might cause issues, let's default to 'image' if we have src, else 'solid'??
+                             // Best to leave it and let renderer handle fallback or gray block.
+                         }
+
+                         return newItem;
+                     })
+                 }))
+             };
+             console.log('[VideoEditorContext] 3. Hydrated DSL (Ready for Editor):', JSON.stringify(hydratedDsl, null, 2));
+        }
+
+        // Convert R2 keys to view URLs for editor display
+        const convertedTimelineDsl = hydratedDsl ? {
+            ...hydratedDsl,
+            tracks: convertTracksToViewUrls(hydratedDsl.tracks),
+        } : null;
+        setTimelineDsl(convertedTimelineDsl);
+
+        setAvailableAssets(nextAvailableAssets);
         setIsOpen(true);
     }, []);
 
     const closeEditor = useCallback(() => {
+        // Save state on close - read from ref
+        if (editorNodeId && editorStateRef.current && loroSync?.connected) {
+            const state = editorStateRef.current;
+
+            // Convert view URLs back to R2 keys for storage
+            const finalDsl: TimelineDslType = {
+                tracks: convertTracksToR2Keys(state.tracks),
+                compositionWidth: state.compositionWidth,
+                compositionHeight: state.compositionHeight,
+                fps: state.fps,
+                durationInFrames: state.durationInFrames,
+            };
+            loroSync.updateNode(editorNodeId, {
+                data: { timelineDsl: finalDsl },
+            });
+        }
+
         setIsOpen(false);
         setAssets([]);
-    }, []);
+        setAvailableAssets([]);
+        setTimelineDsl(null);
+        setEditorNodeId(null);
+        editorStateRef.current = null;
+    }, [editorNodeId, loroSync]);
+
+    const exportVideo = useCallback(async () => {
+        if (!editorNodeId || !loroSync?.connected) {
+            console.error('[VideoEditorContext] Cannot export: no nodeId or LoroSync not connected');
+            return;
+        }
+
+        // Get current timeline DSL from editor state
+        if (!editorStateRef.current) {
+            alert('No content to export!');
+            return;
+        }
+
+        const state = editorStateRef.current;
+
+        // Calculate actual video duration from timeline content
+        let maxEndFrame = 0;
+        console.log('[VideoEditorContext] Calculating max end frame from tracks:');
+        for (const track of state.tracks) {
+            console.log(`[VideoEditorContext] Track: ${track.id} (${track.name}) - ${track.items.length} items`);
+            for (const item of track.items) {
+                const endFrame = item.from + item.durationInFrames;
+                console.log(`[VideoEditorContext]   Item: ${item.id} (${item.type}) from=${item.from} duration=${item.durationInFrames} end=${endFrame}`);
+                if (endFrame > maxEndFrame) {
+                    maxEndFrame = endFrame;
+                }
+            }
+        }
+        console.log(`[VideoEditorContext] Final maxEndFrame: ${maxEndFrame}, state.durationInFrames: ${state.durationInFrames}`);
+
+        // Create DSL for export (deep copy and convert view URLs to R2 keys for storage)
+        const finalDsl: TimelineDslType = {
+            tracks: convertTracksToR2Keys(state.tracks),  // Convert to R2 keys for storage
+            compositionWidth: state.compositionWidth,
+            compositionHeight: state.compositionHeight,
+            fps: state.fps,
+            durationInFrames: maxEndFrame,  // Use calculated duration instead of state value
+        };
+
+        // Debug: log final DSL
+        console.log('[VideoEditorContext] Final DSL for export:', {
+            durationInFrames: finalDsl.durationInFrames,
+            compositionSize: `${finalDsl.compositionWidth}x${finalDsl.compositionHeight}`,
+            fps: finalDsl.fps,
+        });
+
+        // Check if there's any content
+        if (!finalDsl.tracks || finalDsl.tracks.length === 0) {
+            alert('Please add some content to the timeline before exporting!');
+            return;
+        }
+
+        const durationInSeconds = maxEndFrame / finalDsl.fps;
+
+        console.log('[VideoEditorContext] Export DSL:', {
+            tracks: finalDsl.tracks.length,
+            durationInFrames: finalDsl.durationInFrames,
+            durationInSeconds,
+            compositionSize: `${finalDsl.compositionWidth}x${finalDsl.compositionHeight}`,
+        });
+
+        // Create a new video node with the rendered content
+        const newVideoNodeId = `video-${Date.now()}`;
+
+        // Use autoInsertNode for precise client-side layout
+        // Create temporary edge and node objects for calculation
+        const tempEdge = {
+            id: `temp-edge-${editorNodeId}-${newVideoNodeId}`,
+            source: editorNodeId,
+            target: newVideoNodeId,
+            type: 'default'
+        };
+        const currentNodes = nodes || [];
+        const currentEdges = edges || [];
+
+        const editorNode = currentNodes.find(n => n.id === editorNodeId);
+        const tempNode = {
+            id: newVideoNodeId,
+            type: 'video',
+            position: { x: 0, y: 0 },
+            data: {},
+            parentId: editorNode?.parentId,
+            width: state.compositionWidth > 500 ? 500 : state.compositionWidth, // Approx width
+            height: state.compositionHeight > 500 ? 500 : state.compositionHeight,
+        } as Node;
+
+        // Run auto-layout calculation
+        const layoutResult = autoInsertNode(newVideoNodeId, [...currentNodes, tempNode], [...currentEdges, tempEdge]);
+        const finalPosition = layoutResult.position;
+
+        console.log('[VideoEditorContext] Export calculated layout position:', finalPosition);
+
+        const newVideoNode = {
+            id: newVideoNodeId,
+            type: 'video',
+            position: finalPosition,
+            parentId: editorNode?.parentId,
+            data: {
+                label: `Rendered Video`,
+                src: null,  // Will be filled by callback when rendering completes
+                status: 'generating',
+                duration: durationInSeconds,
+                timelineDsl: finalDsl,
+                pendingTask: null,
+                // Set natural dimensions to match video editor canvas for correct aspect ratio
+                naturalWidth: state.compositionWidth,
+                naturalHeight: state.compositionHeight,
+            },
+        };
+
+        // Add new node to LoroSync
+        loroSync.addNode(newVideoNodeId, newVideoNode);
+
+        // Create edge from editor to new video node
+        const edgeId = `${editorNodeId}-${newVideoNodeId}`;
+        const newEdge = {
+            id: edgeId,
+            source: editorNodeId,
+            target: newVideoNodeId,
+            type: 'default',
+        };
+        loroSync.addEdge(edgeId, newEdge);
+
+        // Sync pushed nodes from layout result
+        if (layoutResult.pushedNodes.size > 0) {
+            console.log('[VideoEditorContext] Syncing pushed nodes:', layoutResult.pushedNodes.size);
+            layoutResult.pushedNodes.forEach((pos, nodeId) => {
+                loroSync.updateNode(nodeId, { position: pos });
+            });
+        }
+
+        console.log('[VideoEditorContext] Export triggered - created new video node:', newVideoNodeId);
+
+        // Note: The actual rendering will be triggered by NodeProcessor
+        // when it detects the new video node with 'generating' status
+    }, [editorNodeId, loroSync, nodes, edges]);
+
+    const handleAssetUpload = useCallback(
+        async (file: File, type: 'video' | 'image' | 'audio') => {
+            if (!editorNodeId || !onAssetAddedToCanvas) return;
+            const result = await onAssetAddedToCanvas(file, type, editorNodeId);
+            if (!result) return;
+            setAssets((current) => {
+                const exists = current.some((asset) =>
+                    asset.id === result.id ||
+                    asset.src === result.src ||
+                    (result.sourceNodeId && asset.sourceNodeId === result.sourceNodeId)
+                );
+                return exists ? current : [...current, result];
+            });
+        },
+        [editorNodeId, onAssetAddedToCanvas]
+    );
+
+    const handleAssetPicked = useCallback(
+        (asset: Asset & { sourceNodeId?: string }) => {
+            if (!editorNodeId || !onCanvasAssetLinked) return;
+            onCanvasAssetLinked(asset, editorNodeId);
+
+            // Add to local assets state so it appears in the editor immediately
+            setAssets((current) => {
+                const exists = current.some((a) =>
+                    a.id === asset.id ||
+                    (asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId)
+                );
+                return exists ? current : [...current, asset];
+            });
+
+            // Remove from available assets since it's now picked
+            setAvailableAssets((current) =>
+                current.filter(a => a.id !== asset.id && a.sourceNodeId !== asset.sourceNodeId)
+            );
+        },
+        [editorNodeId, onCanvasAssetLinked]
+    );
 
     return (
-        <VideoEditorContext.Provider value={{ isOpen, openEditor, closeEditor }}>
+        <VideoEditorContext.Provider value={{ isOpen, openEditor, closeEditor, exportVideo }}>
             {children}
-            <AnimatePresence>
-                {isOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
-                        onClick={closeEditor}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            className="relative w-[95vw] h-[90vh] bg-white rounded-xl overflow-hidden shadow-2xl border border-slate-200"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <button
-                                onClick={closeEditor}
-                                className="absolute top-4 right-4 z-[60] p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900 rounded-full transition-colors"
-                            >
-                                <X size={20} />
-                            </button>
-
-                            <Editor initialAssets={assets} />
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* Full-screen editor overlay - no animation for performance */}
+            {isOpen && (
+                <div className="fixed inset-0 z-[100] bg-[#1a1a1a]">
+                    <Editor
+                        initialAssets={assets}
+                        initialState={timelineDsl ?? undefined}
+                        stateRef={editorStateRef}
+                        onBack={closeEditor}
+                        backLabel="返回"
+                        onAssetUpload={handleAssetUpload}
+                        availableAssets={availableAssets}
+                        onAssetPicked={handleAssetPicked}
+                        editorKey={editorNodeId ?? undefined}
+                        onExport={exportVideo}
+                    />
+                </div>
+            )}
         </VideoEditorContext.Provider>
     );
 }

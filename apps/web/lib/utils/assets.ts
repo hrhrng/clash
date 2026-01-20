@@ -15,8 +15,6 @@ export function isR2Key(src: string): boolean {
     
     const normalized = src.trim();
     const isKey = normalized.startsWith('projects/') || normalized.startsWith('/projects/');
-    
-    console.log(`[isR2Key] Testing '${src}' -> normalized '${normalized}' -> ${isKey}`);
     return isKey;
 }
 
@@ -26,8 +24,11 @@ export function isR2Key(src: string): boolean {
  * If it's already a URL (http, blob, data), returns it as is.
  */
 export function resolveAssetUrl(src: string): string {
-    if (!src) return '';
-    
+    if (!src) {
+        console.log('[resolveAssetUrl] Empty src');
+        return '';
+    }
+
     // Normalize source
     const s = src.trim();
 

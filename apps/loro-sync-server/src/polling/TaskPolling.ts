@@ -41,7 +41,7 @@ export async function pollNodeTasks(
       console.log(`[TaskPolling] 📊 Task ${pendingTask}: ${taskStatus.status}`);
 
       if (taskStatus.status === 'completed') {
-        const updates: Record<string, any> = { 
+        const updates: Record<string, any> = {
           pendingTask: undefined // Clear pending task
         };
 
@@ -51,11 +51,32 @@ export async function pollNodeTasks(
           updates.src = taskStatus.result_url;
           updates.status = 'completed';
           console.log(`[TaskPolling] ✅ Generation complete: ${taskStatus.result_url}`);
+
+          // If this is a video node, trigger thumbnail extraction
+          const nodeType = data.type;
+          if (nodeType === 'video' && taskStatus.result_url) {
+            console.log(`[TaskPolling] 🎬 Video node detected, triggering thumbnail extraction`);
+
+            // Extract R2 key from result URL
+            // URL format: /api/assets/view/projects/{projectId}/assets/video-xxx.mp4
+            const r2Key = extractR2KeyFromUrl(taskStatus.result_url);
+
+            if (r2Key) {
+              // Call Python API to extract thumbnail (fire and forget)
+              extractThumbnail(env, projectId, nodeId, r2Key).catch(err =>
+                console.error(`[TaskPolling] ❌ Thumbnail extraction failed:`, err)
+              );
+            }
+          }
         } else if (taskStatus.result_data?.description) {
           // Description task completed - update description and status
           updates.description = taskStatus.result_data.description;
           updates.status = 'fin';
           console.log(`[TaskPolling] ✅ Description complete`);
+        } else if (taskStatus.result_data?.cover_url) {
+          // Thumbnail extraction completed - update coverUrl
+          updates.coverUrl = taskStatus.result_data.cover_url;
+          console.log(`[TaskPolling] ✅ Thumbnail complete: ${taskStatus.result_data.cover_url}`);
         }
 
         updateNodeData(doc, nodeId, updates, broadcast);
@@ -79,6 +100,56 @@ export async function pollNodeTasks(
 }
 
 /**
+ * Extract R2 key from asset URL
+ * /api/assets/view/projects/xxx/assets/video.mp4 -> projects/xxx/assets/video.mp4
+ */
+function extractR2KeyFromUrl(url: string): string | null {
+  const match = url.match(/\/api\/assets\/view\/(.+)$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Trigger thumbnail extraction for video
+ */
+async function extractThumbnail(
+  env: Env,
+  projectId: string,
+  nodeId: string,
+  videoR2Key: string
+): Promise<void> {
+  const apiUrl = `${env.BACKEND_API_URL}/api/extract-thumbnail`;
+
+  console.log(`[TaskPolling] 📸 Calling thumbnail API: ${apiUrl}`);
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_r2_key: videoR2Key,
+        project_id: projectId,
+        node_id: nodeId,
+        timestamp: 1.0
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(`[TaskPolling] ❌ Thumbnail API error: ${response.status} - ${error}`);
+      return;
+    }
+
+    const result = await response.json() as { cover_url: string; cover_r2_key: string };
+    console.log(`[TaskPolling] ✅ Thumbnail extracted: ${result.cover_url}`);
+
+    // The thumbnail URL will be picked up by the node in the next poll cycle
+    // when we check for thumbnail extraction tasks
+  } catch (error) {
+    console.error(`[TaskPolling] ❌ Thumbnail extraction request failed:`, error);
+  }
+}
+
+/**
  * Get task status from Python API
  */
 async function getTaskStatus(
@@ -87,18 +158,26 @@ async function getTaskStatus(
 ): Promise<{
   status: string;
   result_url?: string;
-  result_data?: { description?: string };
+  result_data?: { description?: string; cover_url?: string };
   error?: string;
 }> {
   try {
-    const response = await fetch(`${env.BACKEND_API_URL}/api/tasks/${taskId}`);
-    
+    const url = `${env.BACKEND_API_URL}/api/tasks/${taskId}`;
+    console.log(`[TaskPolling] 📡 Fetching task status from: ${url}`);
+
+    const response = await fetch(url);
+
     if (!response.ok) {
-      return { status: 'failed', error: `HTTP ${response.status}` };
+      const text = await response.text();
+      console.error(`[TaskPolling] ❌ HTTP ${response.status} error fetching task ${taskId}: ${text}`);
+      return { status: 'failed', error: `HTTP ${response.status}: ${text}` };
     }
 
-    return await response.json();
+    const result = await response.json();
+    console.log(`[TaskPolling] 📥 Task ${taskId} status:`, result);
+    return result;
   } catch (e) {
+    console.error(`[TaskPolling] ❌ Exception fetching task ${taskId}:`, e);
     return { status: 'failed', error: String(e) };
   }
 }

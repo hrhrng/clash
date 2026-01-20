@@ -1,0 +1,48 @@
+'use client';
+
+import { motion } from 'framer-motion';
+import Link from 'next/link';
+
+export default function LandingNav() {
+  return (
+    <header className="fixed top-0 left-0 right-0 z-50 border-b border-slate-200 bg-white/70 backdrop-blur-xl">
+      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6 lg:px-8">
+        {/* Logo Area */}
+        <Link href="/" className="group">
+          <motion.div
+            className="flex items-center gap-1"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <span className="font-display text-3xl font-bold tracking-tighter text-gray-900 leading-none">
+              Clash
+            </span>
+            <div className="h-6 w-[5px] bg-brand -skew-x-[20deg] transform origin-center" />
+          </motion.div>
+        </Link>
+
+        {/* Right Actions */}
+        <div className="flex items-center gap-4">
+          <Link href="/auth/signin">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className="px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
+            >
+              Sign In
+            </motion.button>
+          </Link>
+          <Link href="/auth/signup">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="rounded-lg bg-brand px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all hover:bg-red-600 hover:shadow-md active:shadow-sm"
+            >
+              Get Started
+            </motion.button>
+          </Link>
+        </div>
+      </div>
+    </header>
+  );
+}

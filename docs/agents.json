@@ -1,0 +1,16 @@
+{
+  "summary": "Central location for architectural documentation, technical specs, and protocol explanations.",
+  "context_hints": [
+    "Consult this directory when you need to understand the 'Why' and 'How' of complex systems",
+    "Contains deep-dives into CRDTs, Group Logic, and Agent Specs"
+  ],
+  "subdirectories": {},
+  "key_files": {
+    "AGENTS_JSON_SPEC.md": "Specification for this documentation system (agents.json and file headers).",
+    "agents.md": "Documentation on the Agent/Model configuration and shared patterns.",
+    "loro-crdt-explained.md": "Deep dive into the Loro CRDT implementation for real-time sync.",
+    "group-logic-7ef9.md": "Explanation of the complex grouping logic for canvas nodes.",
+    "loro-sync-python-improvements.md": "Notes on Python integration with Loro Sync."
+  },
+  "architecture_notes": "These documents serve as the 'Long-term Memory' for the project's technical decisions."
+}

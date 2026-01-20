@@ -5,8 +5,6 @@ function isR2Key(src: string): boolean {
     
     const normalized = src.trim();
     const isKey = normalized.startsWith('projects/') || normalized.startsWith('/projects/');
-    
-    console.log(`[isR2Key] Testing '${src}' -> normalized '${normalized}' -> ${isKey}`);
     return isKey;
 }
 

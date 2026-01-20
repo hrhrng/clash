@@ -1,7 +1,7 @@
 import React from 'react';
 import type { TextItem } from '@master-clash/remotion-core';
 import type { ItemRenderProps } from '../registry';
-
+import { colors } from '../../styles';
 
 export const TextRenderer: React.FC<ItemRenderProps> = ({ item, width, height }) => {
   const text = item as TextItem;
@@ -11,7 +11,7 @@ export const TextRenderer: React.FC<ItemRenderProps> = ({ item, width, height })
         position: 'relative',
         width,
         height,
-        background: 'transparent',
+        background: colors.bg.primary,
         color: text.color || '#fff',
         display: 'flex',
         alignItems: 'center',

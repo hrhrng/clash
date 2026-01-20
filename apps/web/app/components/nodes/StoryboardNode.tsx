@@ -3,7 +3,7 @@ import { Handle, Position, NodeProps, useNodes, useEdges } from 'reactflow';
 import { PaintBrush, Link as LinkIcon, MagicWand, Warning } from '@phosphor-icons/react';
 import { Shot } from './ScriptNode';
 
-const StoryboardNode = ({ id, data, selected }: NodeProps) => {
+const StoryboardNode = ({ id, data: _data, selected }: NodeProps) => {
     // React Flow v11 compatible approach
     const nodes = useNodes();
     const edges = useEdges();
@@ -69,7 +69,7 @@ const StoryboardNode = ({ id, data, selected }: NodeProps) => {
                             value={linkedShotId}
                             onChange={(e) => setLinkedShotId(e.target.value)}
                         >
-                            {shots.map((shot, index) => (
+                            {shots.map((shot, _) => (
                                 <option key={shot.id} value={shot.id}>
                                     Scene {shot.scene}: {shot.content.substring(0, 15)}...
                                 </option>

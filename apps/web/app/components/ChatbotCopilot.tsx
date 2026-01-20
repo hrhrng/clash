@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PaperPlaneRight, CaretLeft, CaretRight, Sparkle, Plus, ClockCounterClockwise } from '@phosphor-icons/react';
+import { PaperPlaneRight, CaretLeft, CaretRight, Plus, ClockCounterClockwise, StopCircle, Trash } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
 import { Command } from '../actions';
 import { useChat } from '@ai-sdk/react';
@@ -10,14 +10,28 @@ import { UserMessage } from './copilot/UserMessage';
 import { AgentCard, AgentLog } from './copilot/AgentCard';
 import { ToolCall } from './copilot/ToolCall';
 import { ApprovalCard } from './copilot/ApprovalCard';
-import { NodeProposalCard, NodeProposal } from './copilot/NodeProposalCard';
+import { NodeProposalCard } from './copilot/NodeProposalCard';
 import { ThinkingProcess } from './copilot/ThinkingProcess';
 import { TodoList, TodoItem } from './copilot/TodoList';
 import { ThinkingIndicator } from './copilot/ThinkingIndicator';
-import { Node, Edge, Connection } from 'reactflow';
+import type { Node as RFNode, Edge as RFEdge, Connection as RFConnection } from 'reactflow';
 import ReactMarkdown from 'react-markdown';
 import { resolveAssetUrl } from '@/lib/utils/assets';
 import { thumbnailCache } from '@/lib/utils/thumbnailCache';
+
+const resolveApiBaseUrl = () => {
+    if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+    if (typeof window === 'undefined') return 'http://localhost:8888';
+    const { hostname, origin } = window.location;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+    return isLocal ? 'http://localhost:8888' : origin;
+};
+
+const API_BASE_URL = resolveApiBaseUrl();
+
+const generateId = () => {
+    return Date.now().toString() + Math.random().toString(36).substring(2, 9);
+};
 
 
 interface Message {
@@ -36,34 +50,34 @@ interface ChatbotCopilotProps {
     onWidthChange: (width: number) => void;
     isCollapsed: boolean;
     onCollapseChange: (collapsed: boolean) => void;
-    selectedNodes?: Node[];
+    selectedNodes?: RFNode[];
     onAddNode?: (type: string, extraData?: any) => string;
-    onAddEdge?: (params: Edge | Connection) => void;
-    onUpdateNode?: (nodeId: string, updates: Partial<Node>) => void;
+    onAddEdge?: (params: RFEdge | RFConnection) => void;
+    onUpdateNode?: (nodeId: string, updates: Partial<RFNode>) => void;
     findNodeIdByName?: (name: string) => string | undefined;
-    nodes?: Node[];
-    edges?: Edge[];
+    nodes?: RFNode[];
+    edges?: RFEdge[];
     initialPrompt?: string;
 }
 
 export default function ChatbotCopilot({
     projectId,
     initialMessages,
-    onCommand,
+    onCommand: _onCommand,
     width,
     onWidthChange,
     isCollapsed,
     onCollapseChange,
     selectedNodes = [],
-    onAddNode,
-    onAddEdge,
+    onAddNode: _onAddNode,
+    onAddEdge: _onAddEdge,
     onUpdateNode,
-    findNodeIdByName,
+    findNodeIdByName: _findNodeIdByName,
     nodes = [],
-    edges = [],
+    edges: _edges = [],
     initialPrompt
 }: ChatbotCopilotProps) {
-    const { messages, status, sendMessage } = useChat({
+    const { messages, status } = useChat({
         initialMessages: initialMessages.map(m => ({
             id: m.id,
             role: m.role as 'user' | 'assistant',
@@ -73,7 +87,7 @@ export default function ChatbotCopilot({
     } as any);
 
     const [displayItems, setDisplayItems] = useState<any[]>([]);
-    const [isAutoPilot, setIsAutoPilot] = useState(true);
+    const [isAutoPilot, _setIsAutoPilot] = useState(true);
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingStatus, setProcessingStatus] = useState('Thinking');
     const isAutoPilotRef = useRef(isAutoPilot);
@@ -82,32 +96,279 @@ export default function ChatbotCopilot({
         isAutoPilotRef.current = isAutoPilot;
     }, [isAutoPilot]);
 
-    const generateId = () => {
-        return Date.now().toString() + Math.random().toString(36).substring(2, 9);
-    };
+    // generateId moved outside component
 
-    const [threadId, setThreadId] = useState<string>(() => generateId());
-    const [sessionHistory, setSessionHistory] = useState<string[]>([]);
+    const [threadId, setThreadId] = useState<string>('');
+
+    useEffect(() => {
+        if (typeof window === 'undefined' || threadId) {
+            return;
+        }
+        const saved = localStorage.getItem(`clash_thread_id_${projectId}`);
+        setThreadId(saved || generateId());
+    }, [projectId, threadId]);
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && threadId) {
+            localStorage.setItem(`clash_thread_id_${projectId}`, threadId);
+        }
+    }, [threadId, projectId]);
+
+    interface SessionInfo {
+        threadId: string;
+        title?: string;
+        updatedAt?: string;
+    }
+
+    const [sessionHistory, setSessionHistory] = useState<SessionInfo[]>([]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        const saved = localStorage.getItem(`clash_session_history_${projectId}`);
+        if (!saved) {
+            setSessionHistory([]);
+            return;
+        }
+        try {
+            const parsed = JSON.parse(saved);
+            // Handle migration from string[] to SessionInfo[]
+            const normalized = parsed.map((item: any) =>
+                typeof item === 'string' ? { threadId: item } : item
+            );
+            setSessionHistory(normalized);
+        } catch (e) {
+            console.error('Failed to parse session history', e);
+            setSessionHistory([]);
+        }
+    }, [projectId]);
+
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(`clash_session_history_${projectId}`, JSON.stringify(sessionHistory));
+        }
+    }, [sessionHistory, projectId]);
+
+    // Automatically add current threadId to session history if it has content
+    useEffect(() => {
+        if (displayItems.length > 0 && threadId) {
+           setSessionHistory(prev => {
+               const exists = prev.some(s => s.threadId === threadId);
+               if (exists) return prev;
+               return [{ threadId, title: `Session ${threadId.slice(-6)}` }, ...prev];
+           });
+        }
+    }, [displayItems.length, threadId]);
+
     const [showHistory, setShowHistory] = useState(false);
+    const historyDropdownRef = useRef<HTMLDivElement | null>(null);
+    const historyButtonRef = useRef<HTMLButtonElement | null>(null);
     const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
+    
+    // Session management state
+    const [sessionStatus, setSessionStatus] = useState<'idle' | 'running' | 'completing' | 'interrupted' | 'completed'>('idle');
+    const eventSourceRef = useRef<EventSource | null>(null);
 
     // Typewriter effect state
-    const [isTyping, setIsTyping] = useState(false);
+    const [_isTyping, setIsTyping] = useState(false);
     const textQueueRef = useRef<string>('');
     const typewriterIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-    const handleNewSession = () => {
-        const newThreadId = generateId();
-        if (messages.length > 0 || displayItems.length > 0) {
-            setSessionHistory(prev => [...prev, threadId]);
+    const handleNewSession = useCallback(() => {
+        console.log('[ChatbotCopilot] Starting new session reset');
+
+        // 1. Close active EventSource
+        if (eventSourceRef.current) {
+            console.log('[ChatbotCopilot] Closing active EventSource for new session');
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
         }
+
+        // 2. Clear typewriter and queue
+        if (typewriterIntervalRef.current) {
+            clearInterval(typewriterIntervalRef.current);
+            typewriterIntervalRef.current = null;
+        }
+        textQueueRef.current = '';
+        setIsTyping(false);
+
+        // 3. Reset all workflow states
+        const newThreadId = generateId();
         setThreadId(newThreadId);
         setDisplayItems([]);
+        setSessionStatus('idle');
+        setIsProcessing(false);
+        setProcessingStatus('');
+
+        // 4. Reset sub-agent states and todos
+        setTodoItems([]);
+
+        console.log('[ChatbotCopilot] New session initiated:', newThreadId);
+    }, []);
+
+    // Deletes a session and all its data
+    const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation(); // Prevent switching to the session being deleted
+        
+        if (!window.confirm('Are you sure you want to delete this session and all its history?')) {
+            return;
+        }
+
+        console.log('[ChatbotCopilot] Deleting session:', id);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/${id}`, {
+                method: 'DELETE',
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to delete session');
+            }
+
+            // 1. Update local history list
+            setSessionHistory(prev => prev.filter(s => s.threadId !== id));
+
+            // 2. If we deleted the current session, start a new one
+            if (id === threadId) {
+                console.log('[ChatbotCopilot] Current session deleted, resetting UI');
+                handleNewSession();
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error deleting session:', err);
+        }
+    }, [threadId, handleNewSession]);
+
+    // Stop/interrupt the current session
+    const handleStop = async () => {
+        console.log('[ChatbotCopilot] Stop requested');
+        setSessionStatus('completing');
+        
+        // Close the EventSource immediately to stop receiving events
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+        }
+        
+        // Notify backend to stop after current step
+        try {
+            await fetch(`${API_BASE_URL}/api/v1/session/${threadId}/interrupt`, {
+                method: 'POST',
+            });
+            console.log('[ChatbotCopilot] Interrupt request sent to backend');
+        } catch (e) {
+            console.error('[ChatbotCopilot] Failed to send interrupt request:', e);
+        }
+        
+        setIsProcessing(false);
+        setSessionStatus('interrupted');
     };
 
+    const loadSessionHistory = useCallback(async (id: string) => {
+        console.log('[ChatbotCopilot] Loading structured session history:', id);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/${id}/history`);
+            if (!response.ok) throw new Error('Failed to fetch history');
+            const data = await response.json();
+            
+            if (data.messages && data.messages.length > 0) {
+                // Backend now returns structured displayItems, use them directly
+                setDisplayItems(data.messages);
+                console.log(`[ChatbotCopilot] Loaded ${data.messages.length} structured items from history`);
+            } else {
+                setDisplayItems([]);
+            }
+            
+            // Also check status
+            const statusResponse = await fetch(`${API_BASE_URL}/api/v1/session/${id}/status`);
+            if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                setSessionStatus(statusData.status || 'idle');
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error loading history:', err);
+        }
+    }, []);
+
+    // Load initial history
+    useEffect(() => {
+        if (threadId) {
+            loadSessionHistory(threadId);
+        }
+    }, [threadId, loadSessionHistory]);
+
+    const fetchProjectSessions = useCallback(async () => {
+        console.log('[ChatbotCopilot] Fetching session list for project:', projectId);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/v1/session/project/${projectId}/list`);
+            if (!response.ok) throw new Error('Failed to fetch session list');
+            const data = await response.json();
+            
+            if (data.sessions) {
+                setSessionHistory(prev => {
+                    // Map backend objects to SessionInfo
+                    const backendSessions: SessionInfo[] = data.sessions.map((s: any) => ({
+                        threadId: s.thread_id,
+                        title: s.title,
+                        updatedAt: s.updated_at
+                    }));
+
+                    // Merge: prefer backend info for existing IDs, keep local-only IDs if any
+                    const merged = [...backendSessions];
+                    prev.forEach(p => {
+                        if (!merged.some(m => m.threadId === p.threadId)) {
+                            merged.push(p);
+                        }
+                    });
+                    
+                    return merged.sort((a, b) => {
+                        const dateA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+                        const dateB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+                        return dateB - dateA;
+                    });
+                });
+                console.log(`[ChatbotCopilot] Synced ${data.sessions.length} sessions from backend`);
+            }
+        } catch (err) {
+            console.error('[ChatbotCopilot] Error fetching session list:', err);
+        }
+    }, [projectId]);
+
+    // Initial sync of session list
+    useEffect(() => {
+        fetchProjectSessions();
+    }, [fetchProjectSessions]);
+
     const handleHistoryClick = () => {
-        setShowHistory(!showHistory);
+        setShowHistory((prev) => {
+            const next = !prev;
+            if (next) fetchProjectSessions();
+            return next;
+        });
     };
+
+    useEffect(() => {
+        if (!showHistory) return;
+
+        const onPointerDown = (event: PointerEvent) => {
+            const target = event.target as globalThis.Node | null;
+            if (!target) return;
+            if (historyDropdownRef.current?.contains(target)) return;
+            if (historyButtonRef.current?.contains(target)) return;
+            setShowHistory(false);
+        };
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setShowHistory(false);
+        };
+
+        // Use capture so this still works even if other handlers call stopPropagation().
+        document.addEventListener("pointerdown", onPointerDown, true);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown, true);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [showHistory]);
 
     // Sync initial messages to display items
     useEffect(() => {
@@ -119,7 +380,7 @@ export default function ChatbotCopilot({
                 id: m.id
             })));
         }
-    }, [initialMessages]);
+    }, [initialMessages, displayItems.length]);
 
     // Flush remaining text immediately
     const flushTypewriter = useCallback(() => {
@@ -222,10 +483,10 @@ export default function ChatbotCopilot({
     // Map agent name -> agent_id (delegation tool_call_id) so late events without agent_id can still attach
     const agentNameToIdRef = useRef<Record<string, string>>({});
 
-    const scrollToBottom = () => {
+    const scrollToBottom = useCallback(() => {
         if (!shouldStickToBottom) return;
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    };
+    }, [shouldStickToBottom]);
 
     const handleScroll = () => {
         const container = scrollContainerRef.current;
@@ -248,45 +509,25 @@ export default function ChatbotCopilot({
         expectedNodeId?: string; // Wait for this node to exist
     } | null>(null);
 
-    // Effect to handle pending resume after nodes update
-    useEffect(() => {
-        if (pendingResume) {
-            // If we are waiting for a specific node, check if it exists
-            if (pendingResume.expectedNodeId) {
-                const nodeExists = nodes.some(n => n.id === pendingResume.expectedNodeId);
-                if (!nodeExists) {
-                    // Not ready yet, keep waiting
-                    return;
-                }
-                console.log(`[ChatbotCopilot] Node ${pendingResume.expectedNodeId} found. Resuming stream...`);
-            } else if (nodes.length === 0) {
-                // If not waiting for specific node, but nodes are empty (unlikely in this flow but good safety), wait
-                return;
-            }
-
-            console.log('[ChatbotCopilot] Resuming stream...', pendingResume);
-            runStreamScenario(pendingResume.userInput, pendingResume.resume, pendingResume.inputData);
-            setPendingResume(null);
-        }
-    }, [nodes, pendingResume]);
 
     // Helper to resolve name to ID using current nodes (via ref)
-    const resolveName = (name: string) => {
-        console.log(`[ChatbotCopilot] resolveName called for: "${name}"`);
-        const currentNodes = nodesRef.current;
-        console.log(`[ChatbotCopilot] Current nodes available (ref):`, currentNodes.map(n => ({ id: n.id, label: n.data?.label })));
-        const node = currentNodes.find(n => n.data?.label === name);
-        if (node) {
-            console.log(`[ChatbotCopilot] Found match! ID: ${node.id}`);
-        } else {
-            console.warn(`[ChatbotCopilot] No match found for "${name}"`);
-        }
-        return node?.id;
-    };
+    // const resolveName = (name: string) => {
+    //     console.log(`[ChatbotCopilot] resolveName called for: "${name}"`);
+    //     const currentNodes = nodesRef.current;
+    //     console.log(`[ChatbotCopilot] Current nodes available (ref):`, currentNodes.map(n => ({ id: n.id, label: n.data?.label })));
+    //     const node = currentNodes.find(n => n.data?.label === name);
+    //     if (node) {
+    //         console.log(`[ChatbotCopilot] Found match! ID: ${node.id}`);
+    //     } else {
+    //         console.warn(`[ChatbotCopilot] No match found for "${name}"`);
+    //     }
+    //     return node?.id;
+    // };
 
-    const runStreamScenario = async (userInput: string, resume: boolean = false, inputData?: any) => {
+    const runStreamScenario = useCallback(async (userInput: string, resume: boolean = false, inputData?: any) => {
         setIsProcessing(true);
         setProcessingStatus('Thinking');
+        setSessionStatus('running');
         // 1. Add User Message (only if not resuming)
         if (!resume) {
             const userMsgId = generateId();
@@ -301,7 +542,7 @@ export default function ChatbotCopilot({
 
         // 3. Connect to SSE Stream
         console.log('[ChatbotCopilot] Connecting to SSE stream...');
-        const url = new URL(`http://localhost:8000/api/v1/stream/${projectId}`);
+        const url = new URL(`${API_BASE_URL}/api/v1/stream/${projectId}`);
         url.searchParams.append('thread_id', threadId);
         if (resume) {
             url.searchParams.append('resume', 'true');
@@ -316,6 +557,7 @@ export default function ChatbotCopilot({
         }
 
         const eventSource = new EventSource(url.toString());
+        eventSourceRef.current = eventSource;  // Save ref for stop functionality
 
         // Track if stream ended normally to suppress error on close
         let normalEnd = false;
@@ -328,7 +570,7 @@ export default function ChatbotCopilot({
             retryCount = 0; // Reset retry count on successful connection
         };
 
-        eventSource.onerror = (e) => {
+        eventSource.onerror = (_e) => {
             // EventSource fires onerror on normal close - check if it's expected
             if (normalEnd) {
                 console.log('[ChatbotCopilot] SSE Stream closed (expected).');
@@ -613,7 +855,7 @@ export default function ChatbotCopilot({
                     // Special handling for task_delegation
                     if (data.tool === 'task_delegation') {
                         const targetAgent = data.input.agent;
-                        const instruction = data.input.instruction;
+                        // const instruction = data.input.instruction; // Unused
                         const toolCallId = data.id || generateId();
                         // Use task_delegation tool_call_id as the AgentCard ID for precise matching
                         const agentCardId = `agent-${toolCallId}`;
@@ -1033,10 +1275,35 @@ export default function ChatbotCopilot({
         });
 
         eventSource.addEventListener('end', () => {
-            console.log('[ChatbotCopilot] Received end event. Closing stream.');
+            console.log('[ChatbotCopilot] ===== RECEIVED END EVENT ===== Closing stream.');
+            hasReceivedData = true;
             normalEnd = true;
             eventSource.close();
+            eventSourceRef.current = null;
             setIsProcessing(false);
+            setSessionStatus('completed');
+        });
+
+        // Handle session interrupted event from backend
+        eventSource.addEventListener('session_interrupted', (e: any) => {
+            console.log('[ChatbotCopilot] Session interrupted by backend');
+            normalEnd = true;
+            eventSource.close();
+            eventSourceRef.current = null;
+            setIsProcessing(false);
+            setSessionStatus('interrupted');
+            try {
+                const data = JSON.parse(e.data);
+                // Add a system message about interruption
+                setDisplayItems(prev => [...prev, {
+                    type: 'message',
+                    role: 'assistant',
+                    content: `⏸️ ${data.message || 'Session interrupted. You can resume by sending another message.'}`,
+                    id: generateId()
+                }]);
+            } catch (err) {
+                console.error('[ChatbotCopilot] Failed to parse session_interrupted:', err);
+            }
         });
 
         // ========================================
@@ -1057,7 +1324,7 @@ export default function ChatbotCopilot({
                 const data = JSON.parse(e.data);
                 console.log('[ChatbotCopilot] Received rerun_generation_node:', data);
 
-                const { nodeId, assetId, nodeData } = data;
+                const { nodeId, assetId, nodeData: _nodeData } = data;
 
                 if (!nodeId || !assetId) {
                     console.error('[ChatbotCopilot] Missing nodeId or assetId in rerun_generation_node event');
@@ -1108,7 +1375,29 @@ export default function ChatbotCopilot({
                 console.error('[ChatbotCopilot] Error parsing rerun_generation_node event:', err);
             }
         });
-    };
+    }, [projectId, threadId, selectedNodes, onUpdateNode, nodes, flushTypewriter, processTypewriterQueue]);
+
+    // Effect to handle pending resume after nodes update
+    useEffect(() => {
+        if (pendingResume) {
+            // If we are waiting for a specific node, check if it exists
+            if (pendingResume.expectedNodeId) {
+                const nodeExists = nodes.some(n => n.id === pendingResume.expectedNodeId);
+                if (!nodeExists) {
+                    // Not ready yet, keep waiting
+                    return;
+                }
+                console.log(`[ChatbotCopilot] Node ${pendingResume.expectedNodeId} found. Resuming stream...`);
+            } else if (nodes.length === 0) {
+                // If not waiting for specific node, but nodes are empty (unlikely in this flow but good safety), wait
+                return;
+            }
+
+            console.log('[ChatbotCopilot] Resuming stream...', pendingResume);
+            runStreamScenario(pendingResume.userInput, pendingResume.resume, pendingResume.inputData);
+            setPendingResume(null);
+        }
+    }, [nodes, pendingResume, runStreamScenario]);
 
     const handleSubmit = async (e?: React.FormEvent) => {
         e?.preventDefault();
@@ -1118,8 +1407,14 @@ export default function ChatbotCopilot({
         setInput('');
         setShouldStickToBottom(true);
 
+        // If session was interrupted, we can just continue with the same thread_id
+        // The backend will use the checkpoint to maintain context
+        // No explicit "resume" needed - user's new message continues the conversation
         await runStreamScenario(value);
     };
+
+    // Handle resume choice from dialog - REMOVED: no explicit dialog needed
+    // User simply continues by sending a new message
 
     // Process data stream for commands - temporarily disabled as data is not available in useChat return
     /*
@@ -1134,7 +1429,7 @@ export default function ChatbotCopilot({
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isCollapsed, displayItems, shouldStickToBottom]);
+    }, [messages, isCollapsed, displayItems, shouldStickToBottom, scrollToBottom]);
 
     // Auto-send initial prompt if provided (simplified approach)
     const hasAutoStartedRef = useRef(false);
@@ -1156,7 +1451,7 @@ export default function ChatbotCopilot({
                 runStreamScenario(initialPrompt, false);
             }, 500);
         }
-    }, [initialPrompt, projectId, router]); // Depend on necessary values
+    }, [initialPrompt, projectId, router, runStreamScenario]); // Depend on necessary values
 
     const startResizing = () => {
         setIsResizing(true);
@@ -1197,7 +1492,7 @@ export default function ChatbotCopilot({
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={() => onCollapseChange(false)}
-                        className="absolute right-4 top-4 z-50 flex h-14 w-14 items-center justify-center rounded-lg border border-slate-200/60 bg-white/80 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90"
+                        className="absolute right-4 top-4 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-slate-200/60 bg-white/80 shadow-sm backdrop-blur-xl transition-all hover:shadow-md hover:bg-white/90"
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
                     >
@@ -1207,7 +1502,7 @@ export default function ChatbotCopilot({
             </AnimatePresence>
 
             <motion.div
-                className={`h-full bg-white/60 backdrop-blur-xl flex flex-col relative ${isCollapsed ? '' : 'border-l border-white/20 shadow-2xl'}`}
+                className={`h-full bg-white/80 backdrop-blur-xl flex flex-col relative ${isCollapsed ? '' : 'border-l border-slate-200 shadow-xl'}`}
                 style={{ width: isCollapsed ? 0 : `${width}px` }}
                 animate={{ width: isCollapsed ? 0 : width }}
                 transition={isResizing ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
@@ -1224,7 +1519,7 @@ export default function ChatbotCopilot({
                     <>
                         <motion.button
                             onClick={() => onCollapseChange(true)}
-                            className="absolute left-2 top-4 z-20 p-2 flex items-center justify-center hover:bg-gray-100/50 rounded-lg transition-all"
+                            className="absolute left-2 top-4 z-20 p-2 flex items-center justify-center hover:bg-gray-100/50 rounded-full transition-all"
                             whileHover={{ scale: 1.1 }}
                             whileTap={{ scale: 0.9 }}
                         >
@@ -1235,7 +1530,7 @@ export default function ChatbotCopilot({
                         <div className="absolute right-4 top-4 z-20 flex items-center gap-1">
                             <motion.button
                                 onClick={handleNewSession}
-                                className="p-2 rounded-lg hover:bg-gray-100/50 text-slate-600 transition-colors"
+                                className="p-2 rounded-full hover:bg-gray-100/50 text-slate-600 transition-colors"
                                 whileHover={{ scale: 1.1 }}
                                 whileTap={{ scale: 0.9 }}
                                 title="New Session"
@@ -1244,7 +1539,8 @@ export default function ChatbotCopilot({
                             </motion.button>
                             <motion.button
                                 onClick={handleHistoryClick}
-                                className="p-2 rounded-lg hover:bg-gray-100/50 text-slate-600 transition-colors relative"
+                                ref={historyButtonRef}
+                                className="p-2 rounded-full hover:bg-gray-100/50 text-slate-600 transition-colors relative"
                                 whileHover={{ scale: 1.1 }}
                                 whileTap={{ scale: 0.9 }}
                                 title="History"
@@ -1264,30 +1560,44 @@ export default function ChatbotCopilot({
                                     initial={{ opacity: 0, y: -10, scale: 0.95 }}
                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                     exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                                    ref={historyDropdownRef}
                                     className="absolute top-14 right-4 z-30 w-64 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden"
                                 >
                                     <div className="p-3 border-b border-slate-100 bg-slate-50">
-                                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Session History</h3>
+                                        <h3 className="font-display text-xs font-semibold text-slate-500 uppercase tracking-wider">Session History</h3>
                                     </div>
                                     <div className="max-h-60 overflow-y-auto">
                                         {sessionHistory.length === 0 ? (
                                             <div className="p-4 text-center text-sm text-slate-400">No history yet</div>
                                         ) : (
-                                            sessionHistory.map((id, index) => (
+                                            sessionHistory.map((item, index) => (
                                                 <div
-                                                    key={id}
+                                                    key={item.threadId}
                                                     className="px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0 flex items-center justify-between group"
                                                     onClick={() => {
-                                                        // In a real app, we would load this session
-                                                        alert(`Load session: ${id}`);
+                                                        // Switch to this session
+                                                        setThreadId(item.threadId);
                                                         setShowHistory(false);
                                                     }}
                                                 >
                                                     <div className="flex flex-col">
-                                                        <span className="text-sm font-medium text-slate-700">Session {index + 1}</span>
-                                                        <span className="text-[10px] text-slate-400 font-mono">{id.slice(-6)}</span>
+                                                        <span className="text-sm font-medium text-slate-700 truncate max-w-[180px]">
+                                                            {item.title || `Session ${index + 1}`}
+                                                        </span>
+                                                        <span className="text-[10px] text-slate-400 font-mono">{item.threadId.slice(-6)}</span>
                                                     </div>
-                                                    <CaretRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                                                    <div className="flex items-center gap-2">
+                                                        <motion.button
+                                                            onClick={(e) => deleteSession(item.threadId, e)}
+                                                            className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                                                            whileHover={{ scale: 1.1 }}
+                                                            whileTap={{ scale: 0.9 }}
+                                                            title="Delete Session"
+                                                        >
+                                                            <Trash className="w-3.5 h-3.5" />
+                                                        </motion.button>
+                                                        <CaretRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500" />
+                                                    </div>
                                                 </div>
                                             ))
                                         )}
@@ -1331,9 +1641,9 @@ export default function ChatbotCopilot({
                                                                 ul: ({ children }: any) => <ul className="list-disc pl-4 mb-4 space-y-1">{children}</ul>,
                                                                 ol: ({ children }: any) => <ol className="list-decimal pl-4 mb-4 space-y-1">{children}</ol>,
                                                                 li: ({ children }: any) => <li className="mb-1">{children}</li>,
-                                                                h1: ({ children }: any) => <h1 className="text-2xl font-bold mb-4 mt-6">{children}</h1>,
-                                                                h2: ({ children }: any) => <h2 className="text-xl font-bold mb-3 mt-5">{children}</h2>,
-                                                                h3: ({ children }: any) => <h3 className="text-lg font-bold mb-2 mt-4">{children}</h3>,
+                                                                h1: ({ children }: any) => <h1 className="font-display text-2xl font-bold mb-4 mt-6">{children}</h1>,
+                                                                h2: ({ children }: any) => <h2 className="font-display text-xl font-bold mb-3 mt-5">{children}</h2>,
+                                                                h3: ({ children }: any) => <h3 className="font-display text-lg font-bold mb-2 mt-4">{children}</h3>,
                                                                 code: ({ className, children, ...props }: any) => {
                                                                     const match = /language-(\w+)/.exec(className || '');
                                                                     const isInline = !match && !String(children).includes('\n');
@@ -1391,23 +1701,24 @@ export default function ChatbotCopilot({
                                         exit={{ opacity: 0, y: 10, scale: 0.9 }}
                                         className="absolute bottom-[80px] right-6 z-20 pointer-events-auto"
                                     >
-                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-2">
+                                        <div className="bg-white/90 backdrop-blur-md text-slate-600 text-xs font-medium px-3 py-1.5 rounded-full border border-slate-200 shadow-sm flex items-center gap-2">
                                             <div className="flex -space-x-2">
                                                 {selectedNodes.filter(n => n.data?.src).slice(0, 3).map((node) => {
                                                     const src = resolveAssetUrl(node.data.src);
                                                     // Choice 1: Reference images (for generated videos, this is the most reliable start frame)
                                                     // Choice 2: Legacy thumbnail in node data
                                                     // Choice 3: Local storage cache (canvas capture)
-                                                    const thumbnail = (node.data.referenceImageUrls && node.data.referenceImageUrls[0]) || 
-                                                                    node.data.thumbnail || 
+                                                    const thumbnail = (node.data.referenceImageUrls && node.data.referenceImageUrls[0]) ||
+                                                                    node.data.thumbnail ||
                                                                     thumbnailCache.get(node.data.src);
-                                                    
-                                                    const isVideo = node.type === 'video' || 
-                                                                   node.data?.actionType === 'video-gen' || 
+
+                                                    const isVideo = node.type === 'video' ||
+                                                                   node.data?.actionType === 'video-gen' ||
                                                                    /\.(mp4|mov|webm)$/i.test(node.data?.src || '');
                                                     return (
                                                         <div key={node.id} className="w-6 h-6 rounded-md ring-2 ring-white overflow-hidden bg-slate-100 flex items-center justify-center">
                                                             {thumbnail ? (
+                                                                /* eslint-disable-next-line @next/next/no-img-element */
                                                                 <img src={resolveAssetUrl(thumbnail)} alt="" className="w-full h-full object-cover" />
                                                             ) : isVideo ? (
                                                                 <video
@@ -1418,6 +1729,7 @@ export default function ChatbotCopilot({
                                                                     playsInline
                                                                 />
                                                             ) : (
+                                                                /* eslint-disable-next-line @next/next/no-img-element */
                                                                 <img src={src} alt="" className="w-full h-full object-cover" />
                                                             )}
                                                         </div>
@@ -1451,22 +1763,36 @@ export default function ChatbotCopilot({
                                         value={input}
                                         onChange={(e) => setInput(e.target.value)}
                                         placeholder={isProcessing ? "Agent is thinking..." : (selectedNodes.length > 0 ? "Ask anything about selected files..." : "Type your message...")}
-                                        className={`flex-1 px-4 py-4 bg-white backdrop-blur-xl rounded-matrix focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        className={`flex-1 px-6 py-4 bg-white backdrop-blur-xl rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white text-sm text-gray-900 placeholder:text-gray-500 border border-slate-200 transition-all shadow-sm hover:shadow-md ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         disabled={isLoading || isProcessing}
                                     />
-                                    <motion.button
-                                        type="submit"
-                                        disabled={!input.trim() || isLoading || isProcessing}
-                                        className={`px-4 py-4 rounded-matrix transition-all flex items-center justify-center ${input.trim() && !isProcessing
-                                            ? 'bg-gray-900/90 text-white shadow-lg'
-                                            : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
-                                            }`}
-                                        whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
-                                        whileTap={input.trim() ? { scale: 0.95 } : {}}
-                                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                                    >
-                                        <PaperPlaneRight className="w-4 h-4" weight="fill" />
-                                    </motion.button>
+                                    {sessionStatus === 'running' ? (
+                                        <motion.button
+                                            type="button"
+                                            onClick={handleStop}
+                                            className="px-6 py-4 rounded-full transition-all flex items-center justify-center gap-2 bg-red-500/90 text-white shadow-lg hover:bg-red-600"
+                                            whileHover={{ scale: 1.05, y: -2 }}
+                                            whileTap={{ scale: 0.95 }}
+                                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                        >
+                                            <StopCircle className="w-5 h-5" weight="fill" />
+                                            <span className="text-sm font-medium">Stop</span>
+                                        </motion.button>
+                                    ) : (
+                                        <motion.button
+                                            type="submit"
+                                            disabled={!input.trim() || isLoading || isProcessing}
+                                            className={`h-[54px] w-[54px] rounded-full transition-all flex items-center justify-center ${input.trim() && !isProcessing
+                                                ? 'bg-gray-900/90 text-white shadow-lg'
+                                                : 'bg-gray-300/60 text-gray-400 cursor-not-allowed'
+                                                }`}
+                                            whileHover={input.trim() ? { scale: 1.05, y: -2 } : {}}
+                                            whileTap={input.trim() ? { scale: 0.95 } : {}}
+                                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                        >
+                                            <PaperPlaneRight className="w-5 h-5" weight="fill" />
+                                        </motion.button>
+                                    )}
                                 </form>
                             </div>
                         </motion.div>

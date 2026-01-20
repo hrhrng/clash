@@ -7,7 +7,7 @@ install:  ## Install all dependencies including dev tools
 	uv sync --all-groups
 
 dev:  ## Run FastAPI development server
-	uv run uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8000
+	uv run uvicorn master_clash.api.main:app --reload --host 0.0.0.0 --port 8888
 
 format:  ## Format code with ruff
 	uv run ruff format .
@@ -31,7 +31,7 @@ docker-build:  ## Build Docker image
 	docker build -t master-clash-backend:latest .
 
 docker-run:  ## Run Docker container
-	docker run -d -p 8000:8000 --env-file .env master-clash-backend:latest
+	docker run -d -p 8888:8888 --env-file .env master-clash-backend:latest
 
 clean:  ## Clean up build artifacts and cache
 	rm -rf build/ dist/ *.egg-info .pytest_cache .coverage htmlcov/ .ruff_cache .mypy_cache

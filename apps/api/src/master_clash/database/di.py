@@ -23,7 +23,8 @@ def _sqlite_path_from_url(url: str) -> Path:
 
 def get_database() -> Database:
     settings = get_settings()
-    url = settings.database_url or "sqlite:///./data/checkpoints.db"
+    # Use absolute path to avoid ambiguity between API and CLI
+    url = settings.database_url or "sqlite:////Users/xiaoyang/Proj/clash/apps/api/data/checkpoints.db"
 
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
@@ -36,11 +37,5 @@ def get_database() -> Database:
         from master_clash.database.adapters.postgres_adapter import PostgresDatabase
 
         return PostgresDatabase(url)
-    if scheme == "d1":
-        # Expect env: CF_ACCOUNT_ID, CF_API_TOKEN, D1_DATABASE_ID
-        from master_clash.database.adapters.d1_adapter import D1Database
-
-        dbname = parsed.netloc or parsed.path.lstrip("/") or "default"
-        return D1Database(dbname)
 
     raise ValueError(f"Unsupported DATABASE_URL scheme: {scheme}")

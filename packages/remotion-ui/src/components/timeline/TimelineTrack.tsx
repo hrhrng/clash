@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import type { Track, Asset, Item } from '@master-clash/remotion-core';
 import { TimelineItem } from './TimelineItem';
+import { colors, timeline, typography, borderRadius } from './styles';
 import { secondsToFrames } from './utils/timeFormatter';
 import { useEditor } from '@master-clash/remotion-core';
 
@@ -39,6 +40,7 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(track.name);
+
 
   const handleTrackClick = useCallback(() => {
     onSelectTrack();
@@ -134,14 +136,30 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
   return (
     <div
-      className={`flex h-[72px] border-b border-slate-200 transition-colors duration-150 ${isSelected ? 'bg-blue-50' : 'bg-white'
-        } ${track.hidden ? 'opacity-30' : 'opacity-100'}`}
+      style={{
+        display: 'flex',
+        height: timeline.trackHeight,
+        borderBottom: `1px solid ${colors.border.default}`,
+        backgroundColor: isSelected ? colors.bg.selected : colors.bg.primary,
+        transition: 'background-color 0.15s ease',
+        opacity: track.hidden ? 0.3 : 1,
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* 轨道标签区域 */}
       <div
-        className="w-[200px] shrink-0 bg-slate-50 border-r border-slate-200 p-3 flex flex-col justify-between cursor-pointer"
+        style={{
+          width: timeline.trackLabelWidth,
+          flexShrink: 0,
+          backgroundColor: colors.bg.secondary,
+          borderRight: `1px solid ${colors.border.default}`,
+          padding: '12px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          cursor: 'pointer',
+        }}
         onClick={handleTrackClick}
       >
         {/* 轨道名称 */}
@@ -154,13 +172,31 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
               onBlur={handleNameBlur}
               onKeyDown={handleNameKeyDown}
               autoFocus
-              className="w-full bg-white border border-blue-500 rounded text-slate-900 text-sm font-medium px-1.5 py-1 outline-none"
+              style={{
+                width: '100%',
+                backgroundColor: colors.bg.elevated,
+                border: `1px solid ${colors.accent.primary}`,
+                borderRadius: borderRadius.sm,
+                color: colors.text.primary,
+                fontSize: typography.fontSize.sm,
+                fontWeight: typography.fontWeight.medium,
+                padding: '4px 6px',
+                outline: 'none',
+              }}
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
             <div
               onDoubleClick={handleNameDoubleClick}
-              className="text-slate-900 text-sm font-medium whitespace-nowrap overflow-hidden text-ellipsis select-none"
+              style={{
+                color: colors.text.primary,
+                fontSize: typography.fontSize.sm,
+                fontWeight: typography.fontWeight.medium,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                userSelect: 'none',
+              }}
             >
               {track.name}
             </div>
@@ -174,11 +210,27 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="flex gap-1 mt-2"
+            style={{
+              display: 'flex',
+              gap: 4,
+              marginTop: 8,
+            }}
           >
             {/* 静音按钮 */}
             <button
-              className="w-6 h-6 bg-white border border-slate-200 rounded text-slate-500 text-xs cursor-pointer flex items-center justify-center hover:border-blue-400 hover:text-blue-500"
+              style={{
+                width: 24,
+                height: 24,
+                backgroundColor: colors.bg.elevated,
+                border: `1px solid ${colors.border.default}`,
+                borderRadius: borderRadius.sm,
+                color: colors.text.secondary,
+                fontSize: typography.fontSize.xs,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 // TODO: toggle mute
@@ -190,7 +242,19 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
             {/* 独奏按钮 */}
             <button
-              className="w-6 h-6 bg-white border border-slate-200 rounded text-slate-500 text-xs cursor-pointer flex items-center justify-center hover:border-blue-400 hover:text-blue-500"
+              style={{
+                width: 24,
+                height: 24,
+                backgroundColor: colors.bg.elevated,
+                border: `1px solid ${colors.border.default}`,
+                borderRadius: borderRadius.sm,
+                color: colors.text.secondary,
+                fontSize: typography.fontSize.xs,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 // TODO: toggle solo
@@ -202,10 +266,19 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
             {/* 锁定按钮 */}
             <button
-              className={`w-6 h-6 border rounded text-xs cursor-pointer flex items-center justify-center ${track.locked
-                ? 'bg-amber-50 border-amber-200 text-amber-600'
-                : 'bg-white border-slate-200 text-slate-500 hover:border-blue-400 hover:text-blue-500'
-                }`}
+              style={{
+                width: 24,
+                height: 24,
+                backgroundColor: track.locked ? colors.accent.warning : colors.bg.elevated,
+                border: `1px solid ${colors.border.default}`,
+                borderRadius: borderRadius.sm,
+                color: track.locked ? colors.text.primary : colors.text.secondary,
+                fontSize: typography.fontSize.xs,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 // TODO: toggle lock
@@ -220,7 +293,12 @@ export const TimelineTrack: React.FC<TimelineTrackProps> = ({
 
       {/* 轨道内容区域 */}
       <div
-        className="flex-1 relative h-full overflow-visible"
+        style={{
+          flex: 1,
+          position: 'relative',
+          height: '100%',
+          overflow: 'visible',
+        }}
         onClick={handleTrackClick}
         onDragOver={onDragOver}
         onDrop={onDrop}

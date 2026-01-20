@@ -1,163 +1,68 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useEditor } from '@master-clash/remotion-core';
 import type { Asset, TextItem } from '@master-clash/remotion-core';
-import { loadAudioWaveform } from '@master-clash/remotion-core';
 
 // Export for TimelineTracksContainer to use
 export let currentDraggedAsset: any = null;
 export let currentAssetDragOffset: number = 0; // 鼠标相对于 asset 卡片左边缘的偏移量（像素）
 
-export const AssetPanel: React.FC = () => {
+type AssetPanelProps = {
+  onBack?: () => void;
+  backLabel?: string;
+  onAssetUpload?: (file: File, type: 'video' | 'image' | 'audio') => void;
+  availableAssets?: Array<{
+    id: string;
+    name?: string;
+    type: 'video' | 'image' | 'audio';
+    src: string;
+    width?: number;
+    height?: number;
+    sourceNodeId?: string;
+  }>;
+  onAssetPicked?: (asset: {
+    id: string;
+    name?: string;
+    type: 'video' | 'image' | 'audio';
+    src: string;
+    width?: number;
+    height?: number;
+    sourceNodeId?: string;
+  }) => void;
+  onExport?: () => Promise<void>;
+};
+
+export const AssetPanel: React.FC<AssetPanelProps> = ({
+  onBack,
+  backLabel = '返回',
+  onAssetUpload,
+  availableAssets = [],
+  onAssetPicked,
+  onExport,
+}) => {
   const { state, dispatch } = useEditor();
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const generateVideoThumbnail = (videoUrl: string): Promise<{ thumbnail: string; frameCount: number; frameWidth: number }> => {
-    return new Promise((resolve) => {
-      const video = document.createElement('video');
-      video.src = videoUrl;
-      video.crossOrigin = 'anonymous';
-      video.preload = 'metadata';
-
-      video.addEventListener('loadedmetadata', async () => {
-        try {
-          // Note: video.duration reads from container metadata, which may include
-          // extra audio beyond the video stream. This can cause a few frames difference
-          // compared to professional tools. Users can manually adjust in the timeline.
-          const duration = video.duration;
-
-          const frameInterval = 1.0; // 每1秒提取一帧
-          const startTime = 0.5; // 从0.5秒开始
-          const frameCount = Math.min(Math.floor((duration - startTime) / frameInterval) + 1, 100); // 最多100帧
-
-          const originalFrameWidth = video.videoWidth;
-          const originalFrameHeight = video.videoHeight;
-
-          // 设置每一帧的目标宽度（横向裁剪/缩放）
-          const targetFrameHeight = 80; // 固定高度
-          const targetFrameWidth = Math.floor((originalFrameWidth / originalFrameHeight) * targetFrameHeight);
-
-          // 创建一个宽画布来容纳所有帧
-          const canvas = document.createElement('canvas');
-          canvas.width = targetFrameWidth * frameCount;
-          canvas.height = targetFrameHeight;
-          const ctx = canvas.getContext('2d');
-
-          if (!ctx) {
-            resolve({ thumbnail: videoUrl, frameCount: 1, frameWidth: 1 });
-            return;
-          }
-
-          // 提取每一帧
-          for (let i = 0; i < frameCount; i++) {
-            const time = startTime + i * frameInterval;
-
-            // 等待视频跳转到指定时间
-            await new Promise<void>((resolveSeek) => {
-              const seeked = () => {
-                video.removeEventListener('seeked', seeked);
-                resolveSeek();
-              };
-              video.addEventListener('seeked', seeked);
-              video.currentTime = Math.min(time, duration - 0.1);
-            });
-
-            // 将当前帧缩放并绘制到画布上
-            ctx.drawImage(
-              video,
-              0, 0, originalFrameWidth, originalFrameHeight, // 源区域
-              i * targetFrameWidth, 0, targetFrameWidth, targetFrameHeight // 目标区域
-            );
-          }
-
-          // 将画布转换为blob
-          canvas.toBlob((blob) => {
-            if (blob) {
-              resolve({
-                thumbnail: URL.createObjectURL(blob),
-                frameCount,
-                frameWidth: targetFrameWidth
-              });
-            } else {
-              resolve({ thumbnail: videoUrl, frameCount: 1, frameWidth: 1 });
-            }
-          }, 'image/jpeg', 0.75);
-        } catch (err) {
-          console.error('Error generating thumbnail:', err);
-          resolve({ thumbnail: videoUrl, frameCount: 1, frameWidth: 1 });
-        }
-      });
-
-      video.addEventListener('error', () => {
-        resolve({ thumbnail: videoUrl, frameCount: 1, frameWidth: 1 }); // fallback on error
-      });
-    });
-  };
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
 
     for (const file of Array.from(files)) {
-      const url = URL.createObjectURL(file);
       const type = file.type.startsWith('video')
         ? 'video'
         : file.type.startsWith('audio')
           ? 'audio'
-          : 'image';
+          : file.type.startsWith('image')
+            ? 'image'
+            : null;
 
-      let thumbnail: string | undefined;
-      let thumbnailFrameCount: number | undefined;
-      let thumbnailFrameWidth: number | undefined;
-      let waveform: number[] | undefined;
-      let duration: number | undefined;
-
-      // Get duration for video/audio
-      if (type === 'video' || type === 'audio') {
-        try {
-          duration = await new Promise<number>((resolve, reject) => {
-            const media = document.createElement(type === 'video' ? 'video' : 'audio');
-            media.src = url;
-            media.addEventListener('loadedmetadata', () => {
-              resolve(media.duration);
-            });
-            media.addEventListener('error', reject);
-          });
-        } catch (error) {
-          console.error('Error getting duration:', error);
-        }
+      if (!type) continue;
+      if (!onAssetUpload) {
+        console.warn('[AssetPanel] onAssetUpload not provided; skipping upload.');
+        continue;
       }
 
-      // Generate thumbnail for video
-      if (type === 'video') {
-        const result = await generateVideoThumbnail(url);
-        thumbnail = result.thumbnail;
-        thumbnailFrameCount = result.frameCount;
-        thumbnailFrameWidth = result.frameWidth;
-      }
-
-      // Generate waveform for audio and video
-      if (type === 'audio' || type === 'video') {
-        try {
-          waveform = await loadAudioWaveform(url, 500); // Increased from 100 to 500 for finer granularity
-        } catch (error) {
-          console.error('Error generating waveform:', error);
-        }
-      }
-
-      const asset: Asset = {
-        id: `asset-${Date.now()}-${Math.random()}`,
-        name: file.name,
-        type: type as 'video' | 'audio' | 'image',
-        src: url,
-        duration,
-        thumbnail,
-        thumbnailFrameCount,
-        thumbnailFrameWidth,
-        waveform,
-        createdAt: Date.now(),
-      };
-
-      dispatch({ type: 'ADD_ASSET', payload: asset });
+      onAssetUpload(file, type);
     }
 
     if (fileInputRef.current) {
@@ -280,11 +185,82 @@ export const AssetPanel: React.FC = () => {
     e.dataTransfer.setData('quickAddType', type);
   };
 
+  const handlePickAsset = (asset: {
+    id: string;
+    name?: string;
+    type: 'video' | 'image' | 'audio';
+    src: string;
+    width?: number;
+    height?: number;
+    sourceNodeId?: string;
+  }) => {
+    const exists = state.assets.some((a) =>
+      a.id === asset.id ||
+      a.src === asset.src ||
+      (asset.sourceNodeId && a.sourceNodeId === asset.sourceNodeId)
+    );
+
+    if (!exists) {
+      dispatch({
+        type: 'ADD_ASSET',
+        payload: {
+          id: asset.id,
+          name: asset.name || 'Canvas Asset',
+          type: asset.type,
+          src: asset.src,
+          width: asset.width,
+          height: asset.height,
+          createdAt: Date.now(),
+          readOnly: true,
+          sourceNodeId: asset.sourceNodeId,
+        },
+      });
+    }
+    onAssetPicked?.(asset);
+    setIsPickerOpen(false);
+  };
+
   return (
 
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="relative flex flex-col h-full bg-slate-50">
       <div className="px-4 py-3 bg-white border-b border-slate-200">
-        <h2 className="m-0 text-sm font-bold text-slate-900">Assets</h2>
+        <div className="flex items-center justify-between">
+          {onBack ? (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-900 bg-slate-900 text-white shadow-sm transition-colors hover:bg-slate-800"
+              aria-label={backLabel}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-5 w-5"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path
+                  d="M10.5 6.5L5 12l5.5 5.5M6 12h13"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : (
+            <h2 className="m-0 text-sm font-bold text-slate-900">Assets</h2>
+          )}
+          {onExport && (
+            <button
+              type="button"
+              onClick={() => onExport()}
+              className="flex h-9 px-3 items-center justify-center rounded-lg border border-blue-600 bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 text-sm font-semibold"
+            >
+              Export
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4">
@@ -401,9 +377,17 @@ export const AssetPanel: React.FC = () => {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm hover:shadow active:scale-95"
+            className="w-full py-3 px-4 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm hover:shadow active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!onAssetUpload}
           >
             Upload Files
+          </button>
+          <button
+            onClick={() => setIsPickerOpen(true)}
+            className="mt-2 w-full py-2 px-4 bg-white text-slate-700 rounded-lg text-sm font-semibold border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={availableAssets.length === 0}
+          >
+            Add From Canvas
           </button>
         </div>
 
@@ -419,7 +403,7 @@ export const AssetPanel: React.FC = () => {
                 key={asset.id}
                 draggable
                 onDragStart={(e) => handleAssetDragStart(e, asset)}
-                className="group flex items-center p-2 bg-white border border-slate-200 rounded-lg cursor-move hover:border-blue-400 hover:shadow-sm transition-all gap-3"
+                className="group flex items-center p-2 bg-white border border-slate-200 rounded-lg cursor-move hover:border-blue-400 hover:shadow-sm transition-all gap-3 overflow-hidden"
               >
                 {asset.type === 'image' && (
                   <img
@@ -438,8 +422,10 @@ export const AssetPanel: React.FC = () => {
                 {asset.type === 'audio' && (
                   <div className="w-12 h-12 flex items-center justify-center bg-slate-100 rounded text-xl border border-slate-200">🎵</div>
                 )}
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-900 truncate">{asset.name}</div>
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="text-sm font-medium text-slate-900 truncate" title={asset.name}>
+                    {asset.name}
+                  </div>
                   <div className="text-xs text-slate-500 capitalize mt-0.5">{asset.type}</div>
                 </div>
                 {!asset.readOnly && (
@@ -455,6 +441,53 @@ export const AssetPanel: React.FC = () => {
           )}
         </div>
       </div>
+
+      {isPickerOpen && (
+        <div className="absolute inset-0 z-20 bg-white/95 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white">
+            <div className="text-sm font-bold text-slate-900">Add From Canvas</div>
+            <button
+              onClick={() => setIsPickerOpen(false)}
+              className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+            >
+              Close
+            </button>
+          </div>
+          <div className="p-4 space-y-2 overflow-auto h-[calc(100%-52px)]">
+            {availableAssets.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 text-sm">
+                No available assets
+              </div>
+            ) : (
+              availableAssets.map((asset) => (
+                <button
+                  key={asset.id}
+                  onClick={() => handlePickAsset(asset)}
+                  className="w-full flex items-center gap-3 p-2 rounded-lg border border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50 transition-colors text-left"
+                >
+                  {asset.type === 'image' ? (
+                    <img
+                      src={asset.src}
+                      alt={asset.name || 'Image'}
+                      className="w-12 h-12 object-cover rounded-md bg-slate-100 border border-slate-100"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-md bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">
+                      {asset.type.toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900 truncate">
+                      {asset.name || 'Untitled'}
+                    </div>
+                    <div className="text-xs text-slate-500 capitalize">{asset.type}</div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

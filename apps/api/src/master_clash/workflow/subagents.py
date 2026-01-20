@@ -351,15 +351,54 @@ Tasks:
 
     editor = SubAgent(
         name="Editor",
-        description="Video editor for assembling the final video",
+        description="Video editor for assembling the final video from timeline nodes",
         system_prompt="""You are a Video Editor.
-Your goal is to assemble the final video.
+Your goal is to assemble the final video by maintaining a Timeline DSL within a video-editor node.
 
-Use timeline_editor to arrange clips from the canvas.""",
+**CRITICAL REQUIREMENTS**:
+1. You MUST receive a video-editor node ID from the director (passed in the instruction or context).
+   - Look for patterns like "video-editor node: editor-abc123" or workspace_group_id containing the editor node.
+   - If you don't have a node_id, ask the director to create a video-editor node first.
+
+2. You have access to:
+   - Node tools (read/write nodes on the canvas)
+   - DSL tools (read_dsl, patch_dsl) - these work on video-editor nodes
+
+Your Workflow:
+1. Extract the video-editor node_id from the instruction or context.
+2. Read the current timeline state: `read_dsl(node_id="editor-abc123")`
+3. Search or read canvas nodes to find video/image assets to add to the timeline.
+4. Modify the timeline using JSON Patch: `patch_dsl(node_id="editor-abc123", patch=[...])`
+   - Use JSON Patch format (RFC 6902) for updates.
+   - Example: [{"op": "add", "path": "/tracks/-", "value": {"id": "track-1", "items": [...]}}]
+   - Do NOT overwrite the entire structure; use specific patches.
+
+**Timeline DSL Structure**:
+{
+  "version": "1.0.0",
+  "fps": 30,
+  "compositionWidth": 1920,
+  "compositionHeight": 1080,
+  "durationInFrames": 0,
+  "tracks": [
+    {
+      "id": "track-1",
+      "items": [
+        {
+          "assetId": "asset-id-here",
+          "from": 0,
+          "durationInFrames": 150
+        }
+      ]
+    }
+  ]
+}
+
+The DSL within the video-editor node is the source of truth for the video structure.""",
         tools=[],
         model=model,
-        middleware=[timeline_middleware],
-        workspace_aware=False,  # Editor works globally
+        middleware=[timeline_middleware, canvas_middleware],
+        workspace_aware=False,  # Editor works globally with specific node_id
     )
 
     return [script_writer, concept_artist, storyboard_designer, editor]

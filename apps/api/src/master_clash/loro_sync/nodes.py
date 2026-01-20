@@ -7,9 +7,15 @@ Provides methods for adding, updating, removing, and reading nodes.
 import logging
 from typing import Any
 
-from loro import ExportMode, LoroDoc
+from loro import LoroDoc
 
 logger = logging.getLogger(__name__)
+
+# Special position value indicating a node needs auto-layout by the frontend
+# Frontend will detect this and calculate the proper position based on:
+# - Reference node (source via edge in same group) -> insert to the right
+# - No reference -> place at bottom of group/canvas
+NEEDS_LAYOUT_POSITION = {"x": -1, "y": -1}
 
 
 class LoroNodesMixin:
@@ -31,14 +37,41 @@ class LoroNodesMixin:
         node_type = node_data.get("type", "unknown")
         logger.info(f"[LoroSyncClient] ➕ Adding node: {node_id} (type: {node_type})")
 
-        version_before = self.doc.oplog_vv
         nodes_map = self.doc.get_map("nodes")
-
         nodes_map.insert(node_id, node_data)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Node added: {node_id}")
+
+    def add_node_auto_layout(
+        self,
+        node_id: str,
+        node_type: str,
+        data: dict[str, Any],
+        parent_id: str | None = None,
+    ):
+        """Add a new node with automatic layout by the frontend.
+
+        The node will be placed at a special placeholder position (-1, -1).
+        Frontend will detect this and calculate the proper position based on:
+        - If there's a reference node (source via edge in same group) -> insert to the right
+        - If no reference -> place at bottom of group/canvas
+
+        Args:
+            node_id: Unique node ID (semantic ID recommended)
+            node_type: Node type (e.g., 'action-badge', 'image', 'video')
+            data: Node data (label, status, url, etc.)
+            parent_id: Optional parent group ID
+        """
+        node_data = {
+            "type": node_type,
+            "position": NEEDS_LAYOUT_POSITION.copy(),
+            "data": data,
+        }
+
+        if parent_id:
+            node_data["parentId"] = parent_id
+
+        self.add_node(node_id, node_data)
 
     def update_node(self, node_id: str, node_data: dict[str, Any]):
         """Update an existing node (merge with existing data).
@@ -49,7 +82,6 @@ class LoroNodesMixin:
         """
         logger.info(f"[LoroSyncClient] 🔄 Updating node: {node_id}")
 
-        version_before = self.doc.oplog_vv
         nodes_map = self.doc.get_map("nodes")
 
         # Get existing node data safely
@@ -71,9 +103,7 @@ class LoroNodesMixin:
             merged["data"] = {**existing.get("data", {}), **node_data.get("data", {})}
 
         nodes_map.insert(node_id, merged)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Node updated: {node_id}")
 
     def remove_node(self, node_id: str):
@@ -84,13 +114,9 @@ class LoroNodesMixin:
         """
         logger.info(f"[LoroSyncClient] ➖ Removing node: {node_id}")
 
-        version_before = self.doc.oplog_vv
         nodes_map = self.doc.get_map("nodes")
-
         nodes_map.delete(node_id)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Node removed: {node_id}")
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:

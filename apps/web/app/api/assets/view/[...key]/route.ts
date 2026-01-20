@@ -12,6 +12,12 @@ export async function GET(
         const { key } = await context.params;
         const objectKey = key.join('/');
 
+        console.log('[Asset View] Request:', {
+            key,
+            objectKey,
+            bucketName: process.env.R2_BUCKET_NAME,
+        });
+
         if (!objectKey) {
             return NextResponse.json({ error: 'Missing object key' }, { status: 400 });
         }

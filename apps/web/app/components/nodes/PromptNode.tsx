@@ -2,7 +2,7 @@
 
 import { memo, useState, useCallback, useEffect } from 'react';
 import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
-import { ChatText, X } from '@phosphor-icons/react';
+import { X } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 import MilkdownEditor from '../MilkdownEditor';
@@ -18,9 +18,9 @@ const PromptNode = ({ data, selected, id }: NodeProps) => {
 
     // Sync when data changes
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setLabel((prev: string) => (data.label && data.label !== prev ? data.label : prev));
-        // eslint-disable-next-line react-hooks/set-state-in-effect
+         
         setContent((prev: string) => (data.content && data.content !== prev ? data.content : prev));
     }, [data.label, data.content]);
 

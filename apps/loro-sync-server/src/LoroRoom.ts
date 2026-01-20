@@ -80,6 +80,49 @@ export class LoroRoom {
       }
     }
 
+    // Handle GET /nodes request
+    if (url.pathname.endsWith('/nodes') && request.method === 'GET') {
+      try {
+        const pathParts = url.pathname.split('/');
+        // /sync/:projectId/nodes
+        const syncIndex = pathParts.indexOf('sync');
+        const projectId = (syncIndex !== -1 && pathParts.length > syncIndex + 1) ? pathParts[syncIndex + 1] : null;
+
+        if (!projectId) {
+          return new Response('Missing project ID', { status: 400 });
+        }
+
+        // Ensure initialization (handle race conditions with WebSocket)
+        if (!this.initPromise) {
+          this.initPromise = (async () => {
+            console.log(`[LoroRoom] 🔄 Initializing for GET /nodes: ${projectId}`);
+            this.projectId = projectId;
+            await this.loadDocument(projectId);
+            await this.startPeriodicSave();
+            await this.triggerTaskPolling();
+            console.log(`[LoroRoom] ✅ Room initialized for project: ${projectId}`);
+          })();
+        }
+
+        await this.initPromise;
+
+        if (this.projectId !== projectId) {
+           return new Response('Project ID mismatch', { status: 403 });
+        }
+
+        const nodesMap = this.doc.getMap('nodes');
+        const nodesObj = nodesMap.toJSON() as Record<string, any>;
+        const nodesArray = Object.values(nodesObj);
+
+        return new Response(JSON.stringify(nodesArray), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (error) {
+        console.error('[LoroRoom] ❌ Get nodes error:', error);
+        return new Response('Failed to get nodes', { status: 500 });
+      }
+    }
+
     // Handle internal update-node request (from ImageGenDO/VideoGenDO or Python API)
     if (url.pathname.endsWith('/update-node') && request.method === 'POST') {
       try {
@@ -379,6 +422,18 @@ export class LoroRoom {
    */
   async alarm(): Promise<void> {
     try {
+      // Restore projectId from storage if not set (happens after DO restart)
+      if (!this.projectId) {
+        const storedProjectId = await this.state.storage.get<string>('project_id');
+        if (storedProjectId) {
+          this.projectId = storedProjectId;
+          console.log(`[LoroRoom] 🔄 Restored projectId from storage: ${storedProjectId}`);
+        } else {
+          console.warn('[LoroRoom] ⚠️ Cannot run alarm: no project ID in storage');
+          return;
+        }
+      }
+
       const alarmType = (await this.state.storage.get<string>('alarm_type')) || 'snapshot';
 
       if (alarmType === 'snapshot') {

@@ -7,7 +7,7 @@ import { type UseLoroSyncReturn } from '../hooks/useLoroSync';
  * Context value for LoroSync
  * Provides all sync methods to child components
  */
-interface LoroSyncContextValue extends UseLoroSyncReturn {}
+type LoroSyncContextValue = UseLoroSyncReturn;
 
 const LoroSyncContext = createContext<LoroSyncContextValue | null>(null);
 

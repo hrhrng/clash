@@ -14,7 +14,6 @@ Task Types:
 
 import asyncio
 import base64
-import json
 import logging
 import uuid
 from datetime import datetime
@@ -23,7 +22,14 @@ from typing import Literal
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
-from master_clash.services import r2, d1, genai
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
+from master_clash.services import genai, generation_models, r2
+from master_clash.database.di import get_database
+from master_clash.services.generation_models import (
+    ImageGenerationRequest,
+    VideoGenerationRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,7 @@ HEARTBEAT_INTERVAL_MS = 30 * 1000  # 30 seconds
 WORKER_ID = f"worker_{uuid.uuid4().hex[:8]}"  # Unique per process
 
 # Task types
-TaskType = Literal["image_gen", "video_gen", "image_desc", "video_desc"]
+TaskType = Literal["image_gen", "video_gen", "audio_gen", "image_desc", "video_desc", "video_render", "video_thumbnail"]
 
 # Status constants
 STATUS_PENDING = "pending"
@@ -73,7 +79,7 @@ class TaskStatusResponse(BaseModel):
     node_id: str | None = None
 
 
-# === D1 Operations ===
+# === Database Operations ===
 
 async def create_task(
     task_id: str,
@@ -83,74 +89,103 @@ async def create_task(
     params: dict,
     callback_url: str | None = None,
 ) -> None:
-    """Create task in D1."""
+    """Create task in DB."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """INSERT INTO aigc_tasks 
-           (task_id, project_id, task_type, provider, status, params, 
-            created_at, updated_at, max_retries)
-           VALUES (?, ?, ?, 'python', ?, ?, ?, ?, 3)""",
-        [task_id, project_id, task_type, STATUS_PENDING, 
-         json.dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """INSERT INTO aigc_tasks
+               (task_id, project_id, task_type, provider, status, params,
+                created_at, updated_at, max_retries)
+               VALUES (?, ?, ?, 'python', ?, ?, ?, ?, 3)""",
+            [task_id, project_id, task_type, STATUS_PENDING,
+             json_dumps({**params, "node_id": node_id, "callback_url": callback_url}), now, now]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def claim_task(task_id: str) -> bool:
     """Claim task with lease."""
     now = int(datetime.utcnow().timestamp() * 1000)
     lease_expires = now + LEASE_DURATION_MS
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
-           WHERE task_id = ? AND status = ?""",
-        [STATUS_PROCESSING, WORKER_ID, now, lease_expires, now, task_id, STATUS_PENDING]
-    )
-    return True
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, worker_id = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+               WHERE task_id = ? AND status = ?""",
+            [STATUS_PROCESSING, WORKER_ID, now, lease_expires, now, task_id, STATUS_PENDING]
+        )
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 async def renew_lease(task_id: str) -> bool:
     """Renew task lease."""
     now = int(datetime.utcnow().timestamp() * 1000)
     lease_expires = now + LEASE_DURATION_MS
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
-           WHERE task_id = ? AND worker_id = ?""",
-        [now, lease_expires, now, task_id, WORKER_ID]
-    )
-    return True
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ?
+               WHERE task_id = ? AND worker_id = ?""",
+            [now, lease_expires, now, task_id, WORKER_ID]
+        )
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 async def complete_task(task_id: str, result_url: str = None, result_data: dict = None) -> None:
     """Mark task completed."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, result_url = ?, result_data = ?, updated_at = ?, completed_at = ?
-           WHERE task_id = ?""",
-        [STATUS_COMPLETED, result_url, json.dumps(result_data) if result_data else None, now, now, task_id]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, result_url = ?, result_data = ?, updated_at = ?, completed_at = ?
+               WHERE task_id = ?""",
+            [STATUS_COMPLETED, result_url, json_dumps(result_data) if result_data else None, now, now, task_id]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def fail_task(task_id: str, error: str) -> None:
     """Mark task failed."""
     now = int(datetime.utcnow().timestamp() * 1000)
-    
-    await d1.execute(
-        """UPDATE aigc_tasks 
-           SET status = ?, error_message = ?, updated_at = ?
-           WHERE task_id = ?""",
-        [STATUS_FAILED, error, now, task_id]
-    )
+    db = get_database()
+    try:
+        db.execute(
+            """UPDATE aigc_tasks
+               SET status = ?, error_message = ?, updated_at = ?
+               WHERE task_id = ?""",
+            [STATUS_FAILED, error, now, task_id]
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 async def get_task(task_id: str) -> dict | None:
-    """Get task from D1."""
-    return await d1.query_one("SELECT * FROM aigc_tasks WHERE task_id = ?", [task_id])
+    """Get task from DB."""
+    db = get_database()
+    try:
+        row = db.fetchone("SELECT * FROM aigc_tasks WHERE task_id = ?", [task_id])
+        if not row:
+            return None
+        # row is dict-like (psycopg dict_row or sqlite3.Row)
+        return dict(row)
+    finally:
+        db.close()
+
 
 
 async def callback_to_loro(
@@ -161,14 +196,40 @@ async def callback_to_loro(
     """
     Callback to Loro Sync Server with node updates.
     Fire-and-forget with simple retry.
+
+    IMPORTANT:
+    - Does NOT overwrite 'completed' status with 'failed'
+    - Protects already-completed nodes from background task failures
     """
     if not callback_url or not node_id:
         return
-    
+
     import httpx
-    
+
+    # 🛡️ Safety check: If trying to set status to 'failed', first check current node status
+    # Do NOT overwrite 'completed' status with 'failed' (prevents race conditions)
+    if updates.get("status") == "failed":
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Get current node status from Loro Sync
+                check_resp = await client.get(f"{callback_url}/node/{node_id}")
+                if check_resp.status_code == 200:
+                    current_node = check_resp.json()
+                    current_status = current_node.get("data", {}).get("status")
+
+                    # If node is already completed, skip this update
+                    if current_status in ("completed", "fin"):
+                        logger.info(
+                            f"[Callback] 🛡️ Skipping 'failed' update for node {node_id[:8]} "
+                            f"(already {current_status})"
+                        )
+                        return
+        except Exception as e:
+            # If check fails, continue with update (fail-safe: allow the update)
+            logger.warning(f"[Callback] ⚠️ Status check failed, proceeding with update: {e}")
+
     payload = {"nodeId": node_id, "updates": updates}
-    
+
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -179,9 +240,9 @@ async def callback_to_loro(
                 logger.warning(f"[Callback] ⚠️ Attempt {attempt+1} failed: {resp.status_code}")
         except Exception as e:
             logger.warning(f"[Callback] ⚠️ Attempt {attempt+1} error: {e}")
-        
+
         await asyncio.sleep(1)
-    
+
     logger.error(f"[Callback] ❌ Failed after 3 attempts for node {node_id[:8]}")
 
 
@@ -189,43 +250,57 @@ async def callback_to_loro(
 
 async def process_image_generation(task_id: str, params: dict) -> None:
     """Generate image using Gemini."""
-    from master_clash.tools.nano_banana import nano_banana_gen
-    
     callback_url = params.get("callback_url")
     node_id = params.get("node_id")
-    
+
     try:
         await claim_task(task_id)
-        logger.info(f"[Tasks] Processing image_gen: {task_id}")
-        
+        logger.info(f"[Tasks] 🎨 Processing image_gen: {task_id}, node: {node_id}")
+        logger.info(f"[Tasks] 📋 Params: {params}")
+
         prompt = params.get("prompt", "")
-        
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        reference_images = params.get("reference_images") or params.get("referenceImageUrls") or []
+
+        # Support legacy aspect_ratio field
+        if params.get("aspect_ratio") and "aspect_ratio" not in model_params:
+            model_params["aspect_ratio"] = params.get("aspect_ratio")
+
+        logger.info(f"[Tasks] 🚀 Calling generation_models.generate_image with model={model_id or generation_models.DEFAULT_IMAGE_MODEL}")
+
         # Start heartbeat
         heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
-        
+
         try:
-            # Generate image (sync function, run in thread pool)
-            result_base64 = await asyncio.to_thread(nano_banana_gen, prompt)
-            
-            if result_base64:
-                # Upload to R2 (async)
-                image_data = base64.b64decode(result_base64)
+            generation_result = await generation_models.generate_image(
+                ImageGenerationRequest(
+                    prompt=prompt,
+                    model_id=model_id or generation_models.DEFAULT_IMAGE_MODEL,
+                    params=model_params,
+                    reference_images=reference_images,
+                )
+            )
+
+            if generation_result.success and generation_result.base64_data:
+                image_data = base64.b64decode(generation_result.base64_data)
                 r2_key = f"projects/{params.get('project_id')}/generated/{task_id}.png"
                 await r2.put_object(r2_key, image_data, "image/png")
-                
+
                 await complete_task(task_id, result_url=r2_key)
-                
-                # Callback to Loro
+
                 await callback_to_loro(callback_url, node_id, {
                     "src": r2_key,
                     "status": "completed",
-                    "pendingTask": None
+                    "pendingTask": None,
+                    "model": model_id or generation_models.DEFAULT_IMAGE_MODEL,
                 })
             else:
-                await fail_task(task_id, "No image generated")
+                error_message = generation_result.error or "No image generated"
+                await fail_task(task_id, error_message)
                 await callback_to_loro(callback_url, node_id, {
                     "status": "failed",
-                    "error": "No image generated",
+                    "error": error_message,
                     "pendingTask": None
                 })
         finally:
@@ -233,6 +308,66 @@ async def process_image_generation(task_id: str, params: dict) -> None:
             
     except Exception as e:
         logger.error(f"[Tasks] image_gen failed: {e}")
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "status": "failed",
+            "error": str(e),
+            "pendingTask": None
+        })
+
+
+async def process_audio_generation(task_id: str, params: dict) -> None:
+    """Generate audio/speech using TTS."""
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎵 Processing audio_gen: {task_id}, node: {node_id}")
+        logger.info(f"[Tasks] 📋 Params: {params}")
+
+        text = params.get("prompt", "")
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        project_id = params.get("project_id")
+
+        logger.info(f"[Tasks] 🚀 Calling generation_models.generate_audio with model={model_id or generation_models.DEFAULT_AUDIO_MODEL}")
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
+
+        try:
+            generation_result = await generation_models.generate_audio(
+                generation_models.AudioGenerationRequest(
+                    text=text,
+                    project_id=project_id,
+                    model_id=model_id or generation_models.DEFAULT_AUDIO_MODEL,
+                    params=model_params,
+                )
+            )
+
+            if generation_result.success and generation_result.r2_key:
+                await complete_task(task_id, result_url=generation_result.r2_key)
+
+                await callback_to_loro(callback_url, node_id, {
+                    "src": generation_result.r2_key,
+                    "status": "completed",
+                    "pendingTask": None,
+                    "model": model_id or generation_models.DEFAULT_AUDIO_MODEL,
+                })
+            else:
+                error_message = generation_result.error or "No audio generated"
+                await fail_task(task_id, error_message)
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": error_message,
+                    "pendingTask": None
+                })
+        finally:
+            heartbeat_task.cancel()
+
+    except Exception as e:
+        logger.exception(f"[Tasks] ❌ audio_gen failed for {task_id}")
         await fail_task(task_id, str(e))
         await callback_to_loro(callback_url, node_id, {
             "status": "failed",
@@ -324,8 +459,6 @@ async def process_video_description(task_id: str, params: dict) -> None:
 
 async def process_video_generation(task_id: str, params: dict) -> None:
     """Generate video using Kling API."""
-    from master_clash.services import kling
-    
     callback_url = params.get("callback_url")
     node_id = params.get("node_id")
     
@@ -333,61 +466,85 @@ async def process_video_generation(task_id: str, params: dict) -> None:
         await claim_task(task_id)
         logger.info(f"[Tasks] Processing video_gen: {task_id}")
         
-        image_r2_key = params.get("image_r2_key")
         prompt = params.get("prompt", "")
+        model_id = params.get("model") or params.get("model_id")
+        model_params = params.get("model_params") or {}
+        reference_images = params.get("reference_images") or params.get("referenceImageUrls") or []
+        image_r2_key = params.get("image_r2_key") or (reference_images[0] if reference_images else None)
         duration = params.get("duration", 5)
         
-        if not image_r2_key:
-            await fail_task(task_id, "image_r2_key is required for video generation")
-            await callback_to_loro(callback_url, node_id, {
-                "status": "failed",
-                "error": "No source image",
-                "pendingTask": None
-            })
-            return
+        if image_r2_key and "image_r2_key" not in model_params:
+            model_params["image_r2_key"] = image_r2_key
+        if duration and "duration" not in model_params:
+            model_params["duration"] = duration
         
         heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
         
         try:
-            logger.info(f"[Tasks] Submitting to Kling with image: {image_r2_key}")
-            
-            # Submit to Kling API (it will fetch from R2 internally)
-            result = await kling.submit_video(
-                image_r2_key=image_r2_key,
-                prompt=prompt,
-                duration=duration,
+            logger.info(f"[Tasks] Submitting video task with model: {model_id or generation_models.DEFAULT_VIDEO_MODEL}")
+            submission = await generation_models.submit_video_job(
+                VideoGenerationRequest(
+                    prompt=prompt,
+                    project_id=params.get("project_id", "unknown"),
+                    model_id=model_id or generation_models.DEFAULT_VIDEO_MODEL,
+                    params=model_params,
+                    reference_images=reference_images,
+                    callback_url=callback_url,
+                )
             )
-            
-            if not result.get("success"):
-                await fail_task(task_id, result.get("error", "Kling submit failed"))
+
+            if not submission.success:
+                await fail_task(task_id, submission.error or "Video submit failed")
                 await callback_to_loro(callback_url, node_id, {
                     "status": "failed",
-                    "error": result.get("error"),
+                    "error": submission.error,
                     "pendingTask": None
                 })
                 return
-            
-            external_task_id = result.get("external_task_id")
-            logger.info(f"[Tasks] Kling task submitted: {external_task_id}")
-            
-            # Store external_task_id for polling
-            await d1.execute(
-                "UPDATE aigc_tasks SET external_task_id = ?, external_service = ? WHERE task_id = ?",
-                [external_task_id, "kling", task_id]
-            )
-            
-            # Poll until complete
-            max_polls = 60  # 5 minutes at 5s intervals
+
+            if submission.r2_key:
+                await complete_task(task_id, result_url=submission.r2_key)
+                await callback_to_loro(callback_url, node_id, {
+                    "src": submission.r2_key,
+                    "status": "completed",
+                    "pendingTask": None
+                })
+                return
+
+            external_task_id = submission.external_task_id
+            if not external_task_id:
+                await fail_task(task_id, "No external task id returned from provider")
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": "Video provider did not return task id",
+                    "pendingTask": None
+                })
+                return
+            logger.info(f"[Tasks] Video task submitted: {external_task_id} via {submission.provider}")
+
+            db = get_database()
+            try:
+                db.execute(
+                    "UPDATE aigc_tasks SET external_task_id = ?, external_service = ? WHERE task_id = ?",
+                    [external_task_id, submission.provider, task_id]
+                )
+                db.commit()
+            finally:
+                db.close()
+
+            max_polls = 60  # 60 * 30s = 30 minutes
             for i in range(max_polls):
                 await asyncio.sleep(30)
                 
-                poll_result = await kling.poll_video(external_task_id, params.get("project_id", "unknown"))
-                poll_status = poll_result.get("status")
-                logger.info(f"[Tasks] Kling poll {i+1}: status={poll_status}")
+                poll_result = await generation_models.poll_video_job(
+                    model_id or generation_models.DEFAULT_VIDEO_MODEL,
+                    external_task_id,
+                    params.get("project_id", "unknown"),
+                )
+                logger.info(f"[Tasks] Video poll {i+1}: status={poll_result.status}")
                 
-                if poll_status == "completed":
-                    # kling.py already uploaded to R2 and returns r2_key
-                    r2_key = poll_result.get("r2_key")
+                if poll_result.status == "completed":
+                    r2_key = poll_result.r2_key
                     await complete_task(task_id, result_url=r2_key)
                     await callback_to_loro(callback_url, node_id, {
                         "src": r2_key,
@@ -395,17 +552,16 @@ async def process_video_generation(task_id: str, params: dict) -> None:
                         "pendingTask": None
                     })
                     return
-                elif poll_status == "failed":
-                    await fail_task(task_id, poll_result.get("error", "Video generation failed"))
+                elif poll_result.status == "failed":
+                    await fail_task(task_id, poll_result.error or "Video generation failed")
                     await callback_to_loro(callback_url, node_id, {
                         "status": "failed",
-                        "error": poll_result.get("error"),
+                        "error": poll_result.error,
                         "pendingTask": None
                     })
                     return
                 # else: still pending, continue polling
             
-            # Timeout
             await fail_task(task_id, "Video generation timed out")
             await callback_to_loro(callback_url, node_id, {
                 "status": "failed",
@@ -437,6 +593,135 @@ async def _heartbeat_loop(task_id: str) -> None:
         pass
 
 
+async def process_video_thumbnail(task_id: str, params: dict) -> None:
+    """Extract video thumbnail."""
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎬 Processing video_thumbnail: {task_id}")
+
+        video_r2_key = params.get("video_r2_key")
+        project_id = params.get("project_id")
+        timestamp = params.get("timestamp", 1.0)
+
+        if not video_r2_key:
+            raise ValueError("video_r2_key is required")
+
+        # Call the thumbnail extraction endpoint directly
+        from master_clash.api.thumbnail_router import extract_video_frame
+
+        # Download video from R2
+        video_data, _ = await r2.fetch_object(video_r2_key)
+        logger.info(f"[Tasks] 📥 Downloaded video: {len(video_data)} bytes")
+
+        # Extract frame
+        thumbnail_data = await extract_video_frame(video_data, timestamp)
+        logger.info(f"[Tasks] 📸 Extracted frame: {len(thumbnail_data)} bytes")
+
+        # Generate cover R2 key
+        # Convert: projects/{id}/assets/video-xxx.mp4 -> projects/{id}/covers/video-xxx.jpg
+        from pathlib import Path
+        video_key_path = Path(video_r2_key)
+        video_filename = video_key_path.stem
+
+        cover_r2_key = f"projects/{project_id}/covers/{video_filename}.jpg"
+
+        # Upload thumbnail to R2
+        await r2.put_object(
+            key=cover_r2_key,
+            data=thumbnail_data,
+            content_type="image/jpeg"
+        )
+        logger.info(f"[Tasks] ✅ Uploaded thumbnail: {cover_r2_key}")
+
+        # Generate public URL
+        cover_url = f"/api/assets/view/{cover_r2_key}"
+
+        # Complete task
+        await complete_task(task_id, result_data={"cover_url": cover_url, "cover_r2_key": cover_r2_key})
+
+        # Callback to Loro
+        await callback_to_loro(callback_url, node_id, {
+            "coverUrl": cover_url,
+            "pendingTask": None,
+        })
+
+    except Exception as e:
+        logger.error(f"[Tasks] video_thumbnail failed: {e}", exc_info=True)
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "pendingTask": None,
+            "error": str(e)
+        })
+
+
+async def process_video_render(task_id: str, params: dict) -> None:
+    """
+    Render video using Remotion CLI with Timeline DSL.
+
+    This is different from video_gen (which generates new video using AI).
+    video_render composites existing assets (videos, images, audio, text) using a timeline.
+    """
+    callback_url = params.get("callback_url")
+    node_id = params.get("node_id")
+    project_id = params.get("project_id", "unknown")
+
+    try:
+        await claim_task(task_id)
+        logger.info(f"[Tasks] 🎬 Processing video_render: {task_id}, node: {node_id}")
+
+        timeline_dsl = params.get("timeline_dsl", {})
+        if not timeline_dsl:
+            raise ValueError("Missing timeline_dsl in params")
+
+        logger.info(f"[Tasks] 📋 Timeline DSL: {json_dumps(timeline_dsl)[:500]}...")
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(task_id))
+
+        try:
+            # Import render service (lazy import to avoid circular dependency)
+            from master_clash.services.remotion_render import render_video_with_remotion
+
+            result = await render_video_with_remotion(
+                timeline_dsl=timeline_dsl,
+                project_id=project_id,
+                task_id=task_id,
+            )
+
+            if result.success and result.r2_key:
+                await complete_task(task_id, result_url=result.r2_key)
+
+                await callback_to_loro(callback_url, node_id, {
+                    "src": result.r2_key,
+                    "status": "completed",
+                    "pendingTask": None
+                })
+                logger.info(f"[Tasks] ✅ video_render completed: {result.r2_key}")
+            else:
+                error_message = result.error or "Render failed"
+                await fail_task(task_id, error_message)
+                await callback_to_loro(callback_url, node_id, {
+                    "status": "failed",
+                    "error": error_message,
+                    "pendingTask": None
+                })
+
+        finally:
+            heartbeat_task.cancel()
+
+    except Exception as e:
+        logger.error(f"[Tasks] ❌ video_render failed: {e}", exc_info=True)
+        await fail_task(task_id, str(e))
+        await callback_to_loro(callback_url, node_id, {
+            "status": "failed",
+            "error": str(e),
+            "pendingTask": None
+        })
+
+
 # === Endpoints ===
 
 @router.post("/submit", response_model=TaskSubmitResponse)
@@ -455,8 +740,11 @@ async def submit_task(request: TaskSubmitRequest, background_tasks: BackgroundTa
     processor = {
         "image_gen": process_image_generation,
         "video_gen": process_video_generation,
+        "audio_gen": process_audio_generation,
         "image_desc": process_image_description,
         "video_desc": process_video_description,
+        "video_render": process_video_render,
+        "video_thumbnail": process_video_thumbnail,
     }.get(request.task_type)
     
     if processor:
@@ -480,8 +768,8 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
-    params = json.loads(task.get("params", "{}"))
-    result_data = json.loads(task.get("result_data") or "{}")
+    params = json_loads(task.get("params", "{}"))
+    result_data = json_loads(task.get("result_data") or "{}")
     
     return TaskStatusResponse(
         task_id=task_id,

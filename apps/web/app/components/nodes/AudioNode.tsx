@@ -1,20 +1,32 @@
 import { memo, useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { Play, Pause, X, SpeakerHigh, SkipBack, SkipForward } from '@phosphor-icons/react';
+import { Play, Pause, X, SpeakerHigh, SkipBack, SkipForward, Spinner } from '@phosphor-icons/react';
 import { resolveAssetUrl } from '../../../lib/utils/assets';
+import { normalizeStatus, isActiveStatus, type AssetStatus } from '../../../lib/assetStatus';
 
-const AudioNode = ({ data, selected }: NodeProps) => {
+const AudioNode = ({ data, selected, id: _id }: NodeProps) => {
     const [label, setLabel] = useState(data.label || 'Audio Node');
     const [isPlaying, setIsPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
     const [duration, setDuration] = useState(0);
+    const [status, setStatus] = useState<AssetStatus>(normalizeStatus(data.status) || (data.src ? 'completed' : 'generating'));
+    const [audioUrl, setAudioUrl] = useState<string | undefined>(data.src);
     const audioRef = useRef<HTMLAudioElement>(null);
 
     // Generate random waveform bars
     const waveformBars = useMemo(() => {
         return Array.from({ length: 64 }, () => Math.floor(Math.random() * 70) + 30);
     }, []);
+
+    // Sync status and audioUrl from Loro data changes
+    useEffect(() => {
+        setStatus((prev: AssetStatus) => {
+            const next = normalizeStatus(data.status);
+            return next !== prev ? next : prev;
+        });
+        setAudioUrl((prev: string | undefined) => (data.src !== prev ? data.src : prev));
+    }, [data.status, data.src]);
 
     useEffect(() => {
         const audio = audioRef.current;
@@ -162,7 +174,7 @@ const AudioNode = ({ data, selected }: NodeProps) => {
                     onDoubleClick={(e) => e.stopPropagation()}
                 >
                     <input
-                        className="bg-transparent text-lg font-bold text-slate-500 focus:text-slate-900 focus:outline-none"
+                        className="bg-transparent text-lg font-bold font-display text-slate-500 focus:text-slate-900 focus:outline-none"
                         value={label}
                         onChange={(evt) => {
                             setLabel(evt.target.value);
@@ -174,30 +186,43 @@ const AudioNode = ({ data, selected }: NodeProps) => {
                 {/* Main Card - Waveform Only */}
                 <div
                     className={`w-full bg-white shadow-xl rounded-matrix overflow-hidden transition-all duration-300 hover:shadow-2xl cursor-pointer ${selected ? 'ring-4 ring-slate-900 ring-offset-2' : 'ring-1 ring-slate-200'}`}
-                    onClick={() => setShowModal(true)}
+                    onClick={() => audioUrl && (status === 'completed' || status === 'fin') && setShowModal(true)}
                 >
                     <div className="flex items-center justify-center h-16 px-4">
-                        {/* Waveform Visualization */}
-                        <div className="flex items-center gap-[2px] h-8 w-full justify-center">
-                            {waveformBars.map((height, index) => {
-                                // Animate bars when playing even in minimized view
-                                const activeHeight = isPlaying ? Math.max(height, Math.random() * 80 + 20) : height;
-                                const barPercent = (index / waveformBars.length) * 100;
-                                const isPlayed = barPercent <= progress;
+                        {/* Show generating state */}
+                        {isActiveStatus(status) && !audioUrl ? (
+                            <div className="flex items-center gap-2 text-slate-500">
+                                <Spinner size={24} className="animate-spin" />
+                                <span className="text-sm font-medium">Generating audio...</span>
+                            </div>
+                        ) : status === 'failed' ? (
+                            <div className="flex items-center gap-2 text-red-500">
+                                <X size={24} weight="bold" />
+                                <span className="text-sm font-medium">Generation failed</span>
+                            </div>
+                        ) : (
+                            /* Waveform Visualization */
+                            <div className="flex items-center gap-[2px] h-8 w-full justify-center">
+                                {waveformBars.map((height, index) => {
+                                    // Animate bars when playing even in minimized view
+                                    const activeHeight = isPlaying ? Math.max(height, Math.random() * 80 + 20) : height;
+                                    const barPercent = (index / waveformBars.length) * 100;
+                                    const isPlayed = barPercent <= progress;
 
-                                return (
-                                    <div
-                                        key={index}
-                                        className={`w-1 rounded-full transition-all duration-200 ${isPlayed ? 'bg-slate-900' : 'bg-slate-200'}`}
-                                        style={{ height: `${activeHeight}%` }}
-                                    />
-                                );
-                            })}
-                        </div>
+                                    return (
+                                        <div
+                                            key={index}
+                                            className={`w-1 rounded-full transition-all duration-200 ${isPlayed ? 'bg-slate-900' : 'bg-slate-200'}`}
+                                            style={{ height: `${activeHeight}%` }}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
 
                     {/* Hidden Audio Element - kept in DOM for persistence */}
-                    <audio ref={audioRef} src={resolveAssetUrl(data.src)} />
+                    {audioUrl && <audio ref={audioRef} src={resolveAssetUrl(audioUrl)} />}
                 </div>
 
                 {/* Asset nodes only have output (source) */}

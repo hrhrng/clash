@@ -18,6 +18,10 @@ from clash_types.types import (
     AIGCTask,
     SubmitTaskRequest,
     SubmitTaskResponse,
+    ModelCard,
+    ModelParameter,
+    ModelInputRule,
+    MODEL_CARDS,
 )
 
 __all__ = [
@@ -33,4 +37,8 @@ __all__ = [
     "AIGCTask",
     "SubmitTaskRequest",
     "SubmitTaskResponse",
+    "ModelCard",
+    "ModelParameter",
+    "ModelInputRule",
+    "MODEL_CARDS",
 ]

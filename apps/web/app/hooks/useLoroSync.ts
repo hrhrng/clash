@@ -11,6 +11,8 @@ interface LoroSyncOptions {
 }
 
 export interface UseLoroSyncReturn {
+  /** The project ID this sync is connected to */
+  projectId: string;
   doc: LoroDoc | null;
   connected: boolean;
   addNode: (nodeId: string, nodeData: any) => void;
@@ -92,6 +94,12 @@ const deleteFromDB = async (projectId: string): Promise<void> => {
 /**
  * Custom hook for Loro CRDT sync with the sync server
  * Manages WebSocket connection and document synchronization
+ *
+ * Architecture:
+ * - Loro doc is the source of truth for persistence/sync
+ * - React state is derived from Loro for UI
+ * - Local changes: update Loro doc -> subscribeLocalUpdate sends to server
+ * - Remote changes: import into Loro doc -> subscribe updates React state
  */
 export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
   const {
@@ -110,7 +118,10 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
 
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
-  const [isLoadedFromLocal, setIsLoadedFromLocal] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Track pending local updates that haven't been acknowledged by server
+  
 
   // Update undo/redo state
   const updateUndoRedoState = useCallback(() => {
@@ -118,110 +129,152 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
     setCanRedo(undoManager.canRedo());
   }, [undoManager]);
 
-  // Load from local storage on mount
+  // Helper to read current state from Loro doc
+  const readStateFromLoro = useCallback(() => {
+    const nodesMap = doc.getMap('nodes');
+    const edgesMap = doc.getMap('edges');
+    const tasksMap = doc.getMap('tasks');
+
+    const nodeIds = new Set<string>();
+    for (const [key] of nodesMap.entries()) {
+      nodeIds.add(key);
+    }
+
+    const nodes: Node[] = [];
+    for (const [key, value] of nodesMap.entries()) {
+      const nodeData = value as any;
+      // Validate parentId
+      if (nodeData.parentId && !nodeIds.has(nodeData.parentId)) {
+        const { parentId: _parentId, ...rest } = nodeData;
+        nodes.push({ id: key, ...rest });
+      } else {
+        nodes.push({ id: key, ...nodeData });
+      }
+    }
+
+    const edges: Edge[] = [];
+    for (const [key, value] of edgesMap.entries()) {
+      edges.push({ id: key, ...(value as any) });
+    }
+
+    const tasks: Array<{ id: string; data: any }> = [];
+    for (const [key, value] of tasksMap.entries()) {
+      tasks.push({ id: key, data: value });
+    }
+
+    return { nodes, edges, tasks };
+  }, [doc]);
+
+  // Load from local storage on mount - MUST complete before WebSocket connects
   useEffect(() => {
     let mounted = true;
-    const loadLocal = async () => {
-      console.log(`[useLoroSync] 📂 Loading local snapshot for project: ${projectId}`);
+    const initialize = async () => {
+      // Step 1: Load from IndexedDB
       const snapshot = await loadFromDB(projectId);
-      if (mounted && snapshot) {
+      if (!mounted) return;
+
+      if (snapshot) {
         try {
           doc.import(snapshot);
-          console.log(`[useLoroSync] ✅ Loaded local snapshot (${snapshot.byteLength} bytes)`);
-          setIsLoadedFromLocal(true);
-          updateUndoRedoState();
         } catch (err) {
-          console.error('[useLoroSync] ❌ Failed to import local snapshot:', err);
+          console.error('[useLoroSync] Failed to import local snapshot:', err);
         }
-      } else {
-        console.log('[useLoroSync] 🆕 No local snapshot found');
-      }
-    };
-    loadLocal();
-    return () => { mounted = false; };
-  }, [projectId, doc, updateUndoRedoState]);
-
-  // Subscribe to document changes
-  useEffect(() => {
-    console.log('[useLoroSync] Subscribing to document changes');
-
-    const unsubscribe = doc.subscribe((event: any) => {
-      // Save to local storage (debounced)
-      if (event.local || event.remote) {
-        const snapshot = doc.export({ mode: 'snapshot' });
-        // Simple debounce: clear previous timeout if exists
-        if ((window as any)._loroSaveTimeout) {
-          clearTimeout((window as any)._loroSaveTimeout);
-        }
-        (window as any)._loroSaveTimeout = setTimeout(() => {
-          saveToDB(projectId, snapshot).catch(err => console.error('Failed to save local snapshot:', err));
-        }, 1000);
-
-        // Update undo/redo state on every change
-        updateUndoRedoState();
       }
 
-      // Convert Loro maps to ReactFlow format
-      const nodesMap = doc.getMap('nodes');
-      const edgesMap = doc.getMap('edges');
-      const tasksMap = doc.getMap('tasks');
-
-      // Process nodes
-      if (onNodesChange) {
-        const nodes: Node[] = [];
-        for (const [key, value] of nodesMap.entries()) {
-          nodes.push({
-            id: key,
-            ...(value as any),
-          });
-        }
+      // Step 2: Update React state from Loro
+      const { nodes, edges, tasks } = readStateFromLoro();
+      if (onNodesChange && nodes.length > 0) {
         onNodesChange(nodes);
       }
-
-      // Process edges
-      if (onEdgesChange) {
-        const edges: Edge[] = [];
-        for (const [key, value] of edgesMap.entries()) {
-          edges.push({
-            id: key,
-            ...(value as any),
-          });
-        }
+      if (onEdgesChange && edges.length > 0) {
         onEdgesChange(edges);
       }
-
-      // Process task updates
       if (onTaskUpdate) {
-        for (const [key, value] of tasksMap.entries()) {
-          onTaskUpdate(key, value);
-        }
+        tasks.forEach(t => onTaskUpdate(t.id, t.data));
+      }
+
+      updateUndoRedoState();
+      setIsInitialized(true);
+    };
+
+    initialize();
+    return () => { mounted = false; };
+  }, [projectId, doc, onNodesChange, onEdgesChange, onTaskUpdate, readStateFromLoro, updateUndoRedoState]);
+
+  // Subscribe to document changes - only for remote updates
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    const unsubscribe = doc.subscribe((event: any) => {
+      // event.by: "local" | "import" | "checkout"
+
+      // Save to local storage (debounced) for ALL changes
+      const snapshot = doc.export({ mode: 'snapshot' });
+      if ((window as any)._loroSaveTimeout) {
+        clearTimeout((window as any)._loroSaveTimeout);
+      }
+      (window as any)._loroSaveTimeout = setTimeout(() => {
+        saveToDB(projectId, snapshot).catch(err => console.error('Failed to save local snapshot:', err));
+      }, 1000);
+
+      // Update undo/redo state
+      updateUndoRedoState();
+
+      // CRITICAL: Only update React state for REMOTE changes
+      // Local changes are already in React state - updating would cause loops/overwrites
+      if (event.by === 'local') {
+        return;
+      }
+
+      // Read fresh state from Loro and update React
+      const { nodes, edges, tasks } = readStateFromLoro();
+
+      if (onNodesChange) {
+        onNodesChange(nodes);
+      }
+      if (onEdgesChange) {
+        onEdgesChange(edges);
+      }
+      if (onTaskUpdate) {
+        tasks.forEach(t => onTaskUpdate(t.id, t.data));
       }
     });
 
     return () => {
-      console.log('[useLoroSync] Unsubscribing from document changes');
       unsubscribe();
     };
-  }, [doc, onNodesChange, onEdgesChange, onTaskUpdate, projectId, updateUndoRedoState]);
+  }, [doc, isInitialized, onNodesChange, onEdgesChange, onTaskUpdate, projectId, readStateFromLoro, updateUndoRedoState]);
 
   // WebSocket connection state
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const retryCountRef = useRef(0);
   const isUnmountingRef = useRef(false);
+  const localUpdateSubRef = useRef<any>(null);
 
-  // Send local changes to server
+  // Send update to server (used by subscribeLocalUpdate)
   const sendUpdate = useCallback((update: Uint8Array) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log(`[useLoroSync] 📤 Sending update to server (${update.byteLength} bytes)`);
       ws.send(update);
     } else {
-      console.error(`[useLoroSync] ❌ Cannot send update: WebSocket not connected (state: ${ws?.readyState})`);
     }
   }, []);
 
-  // Connect function
+  // Forward declaration for recursion
+  const connectRef = useRef<() => void>(() => {});
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    const delay = Math.min(500 * Math.pow(1.5, retryCountRef.current), 5000);
+    reconnectTimeoutRef.current = setTimeout(() => {
+      retryCountRef.current++;
+      // Call the latest connect function via ref to avoid circular dependency
+      connectRef.current();
+    }, delay);
+  }, []);
+
+  // Connect function - only called after initialization
   const connect = useCallback(() => {
     if (isUnmountingRef.current) return;
 
@@ -232,7 +285,6 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
     }
 
     const wsUrl = `${syncServerUrl}/sync/${projectId}`;
-    console.log(`[useLoroSync] 🔌 Connecting to ${wsUrl} (attempt ${retryCountRef.current + 1})`);
 
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
@@ -243,9 +295,12 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
         ws.close();
         return;
       }
-      console.log(`[useLoroSync] ✅ Connected to sync server (project: ${projectId})`);
       setConnected(true);
       retryCountRef.current = 0;
+
+      // Send full snapshot on connect to sync with server
+      const snapshot = doc.export({ mode: 'snapshot' });
+      ws.send(snapshot);
 
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       pingIntervalRef.current = setInterval(() => {
@@ -260,10 +315,9 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
         const update = new Uint8Array(event.data);
         doc.import(update);
       } catch (error: any) {
-        console.error('[useLoroSync] ❌ Error importing update:', error);
+        console.error('[useLoroSync] Error importing update:', error);
         const errorMessage = error?.message || String(error);
         if (errorMessage.includes('Checksum mismatch') || errorMessage.includes('corrupted') || errorMessage.includes('Decode error')) {
-          console.error('[useLoroSync] 🚨 Critical: Local document corrupted. Resetting...');
           await deleteFromDB(projectId);
           window.location.reload();
         }
@@ -271,124 +325,116 @@ export function useLoroSync(options: LoroSyncOptions): UseLoroSyncReturn {
     };
 
     ws.onerror = (error) => {
-      console.error('[useLoroSync] ❌ WebSocket error:', error);
+      console.error('[useLoroSync] WebSocket error:', error);
     };
 
-    ws.onclose = (event) => {
-      console.log(`[useLoroSync] 🔌 Disconnected (code: ${event.code})`);
+    ws.onclose = (_event) => {
       setConnected(false);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       if (!isUnmountingRef.current) {
         scheduleReconnect();
       }
     };
-  }, [projectId, syncServerUrl, doc]);
+  }, [projectId, syncServerUrl, doc, scheduleReconnect]);
 
-  const scheduleReconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-    const delay = Math.min(500 * Math.pow(1.5, retryCountRef.current), 5000);
-    console.log(`[useLoroSync] ⏳ Reconnecting in ${delay}ms...`);
-    reconnectTimeoutRef.current = setTimeout(() => {
-      retryCountRef.current++;
-      connect();
-    }, delay);
+  // Keep ref updated
+  useEffect(() => {
+    connectRef.current = connect;
   }, [connect]);
 
+  // Only connect WebSocket AFTER initialization is complete
   useEffect(() => {
+    if (!isInitialized) return;
+
     isUnmountingRef.current = false;
+
+    // Subscribe to local updates - this is the recommended way to send changes to server
+    // subscribeLocalUpdates automatically gives us the bytes to send whenever local changes happen
+    localUpdateSubRef.current = doc.subscribeLocalUpdates((update: Uint8Array) => {
+      sendUpdate(update);
+    });
+
     connect();
+
     return () => {
       isUnmountingRef.current = true;
       if (wsRef.current) wsRef.current.close();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+      if (localUpdateSubRef.current) {
+        localUpdateSubRef.current();
+        localUpdateSubRef.current = null;
+      }
     };
-  }, [connect]);
+  }, [isInitialized, connect, doc, sendUpdate]);
 
   // Helper methods for modifying the document
+  // Note: subscribeLocalUpdate automatically sends changes to server
+  // So we just need to modify the Loro doc - no manual export needed
   const addNode = useCallback((nodeId: string, nodeData: any) => {
-    console.log(`[useLoroSync] Adding node: ${nodeId}`);
-    const versionBefore = doc.version();
     const nodesMap = doc.getMap('nodes');
     nodesMap.set(nodeId, nodeData);
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const updateNode = useCallback((nodeId: string, nodeData: any) => {
-    console.log(`[useLoroSync] Updating node: ${nodeId}`);
-    const versionBefore = doc.version();
     const nodesMap = doc.getMap('nodes');
     const existing = nodesMap.get(nodeId) as any;
-    nodesMap.set(nodeId, {
-      ...existing,
-      ...nodeData,
-      data: { ...(existing?.data || {}), ...(nodeData.data || {}) },
-    });
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    if (!existing) {
+      nodesMap.set(nodeId, nodeData);
+    } else {
+      nodesMap.set(nodeId, {
+        ...existing,
+        ...nodeData,
+        data: { ...(existing?.data || {}), ...(nodeData.data || {}) },
+      });
+    }
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const removeNode = useCallback((nodeId: string) => {
-    console.log(`[useLoroSync] Removing node: ${nodeId}`);
-    const versionBefore = doc.version();
     const nodesMap = doc.getMap('nodes');
     nodesMap.delete(nodeId);
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const addEdge = useCallback((edgeId: string, edgeData: any) => {
-    console.log(`[useLoroSync] Adding edge: ${edgeId}`);
-    const versionBefore = doc.version();
     const edgesMap = doc.getMap('edges');
     edgesMap.set(edgeId, edgeData);
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const updateEdge = useCallback((edgeId: string, edgeData: any) => {
-    console.log(`[useLoroSync] Updating edge: ${edgeId}`);
-    const versionBefore = doc.version();
     const edgesMap = doc.getMap('edges');
     const existing = edgesMap.get(edgeId) as any;
     edgesMap.set(edgeId, { ...existing, ...edgeData });
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const removeEdge = useCallback((edgeId: string) => {
-    console.log(`[useLoroSync] Removing edge: ${edgeId}`);
-    const versionBefore = doc.version();
     const edgesMap = doc.getMap('edges');
     edgesMap.delete(edgeId);
-    const update = doc.export({ mode: 'update', from: versionBefore });
-    sendUpdate(update);
-  }, [doc, sendUpdate]);
+    doc.commit(); // Commit to trigger subscribeLocalUpdate
+  }, [doc]);
 
   const undo = useCallback(() => {
     if (undoManager.canUndo()) {
-      const versionBefore = doc.version();
       undoManager.undo();
-      const update = doc.export({ mode: 'update', from: versionBefore });
-      if (update.length > 0) sendUpdate(update);
+      doc.commit(); // Commit to trigger subscribeLocalUpdate
       updateUndoRedoState();
-      console.log('[useLoroSync] ↩️ Undo performed');
     }
-  }, [doc, undoManager, sendUpdate, updateUndoRedoState]);
+  }, [doc, undoManager, updateUndoRedoState]);
 
   const redo = useCallback(() => {
     if (undoManager.canRedo()) {
-      const versionBefore = doc.version();
       undoManager.redo();
-      const update = doc.export({ mode: 'update', from: versionBefore });
-      if (update.length > 0) sendUpdate(update);
+      doc.commit(); // Commit to trigger subscribeLocalUpdate
       updateUndoRedoState();
-      console.log('[useLoroSync] ↪️ Redo performed');
     }
-  }, [doc, undoManager, sendUpdate, updateUndoRedoState]);
+  }, [doc, undoManager, updateUndoRedoState]);
 
   return {
+    projectId,
     doc,
     connected,
     addNode,

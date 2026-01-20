@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import type { Env, HonoVariables } from './types';
 import { generateRoutes } from './routes/generate';
 import { assetRoutes } from './routes/assets';
+import { thumbnailRoutes } from './routes/thumbnails';
 import { loggerMiddleware } from './middleware/logger';
 import { errorHandler } from './middleware/error-handler';
 
@@ -23,5 +24,6 @@ app.get('/health', (c) => c.text('OK'));
 app.route('/api/generate', generateRoutes);
 app.route('/upload', assetRoutes);
 app.route('/assets', assetRoutes);
+app.route('/thumbnails', thumbnailRoutes);
 
 export { app };

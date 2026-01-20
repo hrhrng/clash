@@ -1,6 +1,6 @@
 import React from 'react';
 import type { VideoItem } from '@master-clash/remotion-core';
-
+import { colors } from '../../styles';
 import type { ItemRenderProps } from '../registry';
 import { secondsToFrames } from '../../utils/timeFormatter';
 
@@ -22,8 +22,22 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const [ready, setReady] = React.useState(false);
 
+  // Resolve asset URL if needed (convert R2 keys to API URLs)
+  const resolvedSrc = React.useMemo(() => {
+    if (!('src' in video) || !video.src) return '';
+
+    // If it's an R2 key (starts with 'projects/'), convert to API URL
+    if (video.src.startsWith('projects/') || video.src.startsWith('/projects/')) {
+      const cleanKey = video.src.startsWith('/') ? video.src.slice(1) : video.src;
+      return `/api/assets/view/${cleanKey}`;
+    }
+
+    // Otherwise return as-is (blob:, http:, data:, etc.)
+    return video.src;
+  }, [video.src]);
+
   React.useEffect(() => {
-    if (!asset?.duration || !('src' in video)) return;
+    if (!asset?.duration || !resolvedSrc) return;
 
     const render = async () => {
       const duration = asset.duration!;
@@ -42,11 +56,11 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
       ctx.fillRect(0, 0, displayWidth, displayHeight);
 
       const ensureFilmstrip = async (): Promise<FilmstripCacheEntry> => {
-        const cached = filmstripCache.get(video.src);
+        const cached = filmstripCache.get(resolvedSrc);
         if (cached && Math.abs(cached.duration - duration) < 0.001) return cached;
 
         const vid = document.createElement('video');
-        vid.src = video.src;
+        vid.src = resolvedSrc;
         vid.crossOrigin = 'anonymous';
         vid.preload = 'metadata';
         await new Promise<void>((resolve, reject) => {
@@ -86,7 +100,7 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
         }
 
         const entry: FilmstripCacheEntry = { canvas: film, frameWidth, frameHeight, framesPerRow, sampleCount, duration };
-        filmstripCache.set(video.src, entry);
+        filmstripCache.set(resolvedSrc, entry);
         return entry;
       };
 
@@ -108,10 +122,10 @@ export const VideoRenderer: React.FC<ItemRenderProps> = ({ item, asset, width, h
     };
 
     render();
-  }, [asset?.duration, video.src, width, height, pixelsPerFrame]);
+  }, [asset?.duration, resolvedSrc, width, height, pixelsPerFrame]);
 
   return (
-    <div style={{ position: 'relative', width, height, background: 'transparent' }}>
+    <div style={{ position: 'relative', width, height, background: colors.bg.primary }}>
       <canvas ref={canvasRef} style={{ width, height, display: 'block', opacity: ready ? 1 : 0.9 }} />
       {/* Waveform overlay if available */}
       {asset?.waveform && (
@@ -136,3 +150,4 @@ const AudioWaveform: React.FC<{ waveform: number[]; width: number; height: numbe
     </svg>
   );
 };
+

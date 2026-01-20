@@ -1,11 +1,19 @@
 """
-FastAPI server for Master Clash backend.
-Handles AI generation - returns base64 images or temporary URLs.
-Frontend handles storage and database.
+@file main.py
+@description Main entry point for the FastAPI backend server.
+@module apps.api.src.master_clash.api
+
+@responsibility
+- Initializes the FastAPI application and middleware (CORS)
+- Registers API routers (describe, tasks, execute, session)
+- Handles global exceptions
+- Manages SSE streaming endpoints for LangGraph workflows
+
+@exports
+- app: The FastAPI application instance
 """
 
 import asyncio
-import base64
 import json
 import logging
 import uuid
@@ -20,14 +28,20 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from master_clash.api.describe_router import router as describe_router
+from master_clash.api.execute_router import router as execute_router
+from master_clash.api.session_router import router as session_router
+from master_clash.api.stream_emitter import StreamEmitter
+from master_clash.api.tasks_router import router as tasks_router
+from master_clash.api.thumbnail_router import router as thumbnail_router
 from master_clash.config import get_settings
 from master_clash.context import ProjectContext, set_project_context
+from master_clash.loro_sync import LoroSyncClient
 from master_clash.tools.description import generate_description
 from master_clash.tools.kling_video import kling_video_gen
 from master_clash.tools.nano_banana import nano_banana_gen
-from master_clash.loro_sync import LoroSyncClient
 from master_clash.utils import image_to_base64
-from master_clash.workflow.multi_agent import graph
+from master_clash.workflow.multi_agent import get_or_create_graph
 
 # Configure logging
 settings = get_settings()
@@ -49,13 +63,12 @@ app.add_middleware(
 )
 
 # Register routers
-from master_clash.api.describe_router import router as describe_router
-from master_clash.api.tasks_router import router as tasks_router
-from master_clash.api.execute_router import router as execute_router
+
 app.include_router(describe_router)
 app.include_router(tasks_router)
 app.include_router(execute_router)
-
+app.include_router(session_router)
+app.include_router(thumbnail_router)
 
 
 class GenerateSemanticIDRequest(BaseModel):
@@ -77,115 +90,6 @@ class GenerateDescriptionResponse(BaseModel):
 
     task_id: str = Field(..., description="Task ID")
     status: str = Field(default="processing", description="Task status")
-
-
-class StreamEmitter:
-    """Helper class to emit formatted SSE events."""
-
-    def format_event(self, event_type: str, data: dict) -> str:
-        logger.info(f"Emitting event: {event_type} - {str(data)[:200]}...")
-        return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-
-    def text(self, content: str, agent: str = "Director", agent_id: str | None = None) -> str:
-        """Output text token/message."""
-        payload = {"agent": agent, "content": content}
-        if agent_id:
-            payload["agent_id"] = agent_id
-        return self.format_event("text", payload)
-
-    def thinking(
-        self, content: str, agent: str = None, id: str = None, agent_id: str | None = None
-    ) -> str:
-        """Output thinking token/message."""
-        data = {"content": content}
-        if agent:
-            data["agent"] = agent
-        if id:
-            data["id"] = id
-        if agent_id:
-            data["agent_id"] = agent_id
-        return self.format_event("thinking", data)
-
-    def sub_agent_start(self, agent: str, task: str, id: str) -> str:
-        logger.info(f"Sub-agent START: {agent} - {task} ({id})")
-        return self.format_event("sub_agent_start", {"agent": agent, "task": task, "id": id})
-
-    def sub_agent_end(self, agent: str, result: str, id: str) -> str:
-        logger.info(f"Sub-agent END: {agent} - {result} ({id})")
-        return self.format_event("sub_agent_end", {"agent": agent, "result": result, "id": id})
-
-    def end(self) -> str:
-        """Output end token."""
-        return self.format_event("end", {})
-
-    async def tool_create_node(
-        self, agent: str, tool_name: str, args: dict, proposal_data: dict, result_text: str
-    ):
-        """Tool execution: Create Node."""
-        tool_id = f"call_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Tool START: {agent} - {tool_name} ({tool_id})")
-        yield self.format_event(
-            "tool_start", {"agent": agent, "tool_name": tool_name, "args": args, "id": tool_id}
-        )
-        await asyncio.sleep(1)  # Simulate work
-        logger.info(f"Node Proposal: {proposal_data.get('id')}")
-        yield self.format_event("node_proposal", proposal_data)
-        logger.info(f"Tool END: {agent} - {result_text} ({tool_id})")
-        yield self.format_event(
-            "tool_end",
-            {
-                "agent": agent,
-                "result": result_text,
-                "status": "success",
-                "id": tool_id,
-                "tool": tool_name,
-            },
-        )
-
-    async def tool_poll_asset(
-        self, agent: str, node_id: str, context: ProjectContext, get_asset_id_func
-    ):
-        """Tool execution: Poll Asset Status."""
-        tool_id = f"call_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Tool Poll START: {agent} - {node_id} ({tool_id})")
-        yield self.format_event(
-            "tool_start",
-            {
-                "agent": agent,
-                "tool_name": "check_asset_status",
-                "args": {"node_id": node_id},
-                "id": tool_id,
-            },
-        )
-
-        asset_id = get_asset_id_func(node_id, context)
-        if not asset_id:
-            logger.info(f"Tool Poll RETRY: {node_id}")
-            yield self.format_event(
-                "tool_end",
-                {
-                    "agent": agent,
-                    "result": "Still generating...",
-                    "status": "success",
-                    "id": tool_id,
-                    "tool": "check_asset_status",
-                },
-            )
-            yield self.format_event("retry", {})
-            yield None  # Signal not found
-        else:
-            logger.info(f"Tool Poll SUCCESS: {node_id} -> {asset_id}")
-            yield self.format_event(
-                "tool_end",
-                {
-                    "agent": agent,
-                    "result": f"Asset generated: {asset_id}",
-                    "status": "success",
-                    "id": tool_id,
-                    "tool": "check_asset_status",
-                },
-            )
-            yield asset_id  # Signal found
 
 
 @app.get("/api/v1/stream/{project_id}")
@@ -225,32 +129,40 @@ async def stream_workflow(
             logger.error(f"[LoroSync] Failed to connect: {e}")
             # Continue anyway - degrade gracefully
 
+        # Create/update session record for interrupt tracking
+        from master_clash.services.session_interrupt import (
+            create_session,
+            generate_and_update_title,
+            set_session_status,
+        )
+
+        await create_session(thread_id, project_id)
+
+        # If new session, trigger title generation in background
+        if not resume and user_input:
+            asyncio.create_task(generate_and_update_title(thread_id, user_input))
+
+        logger.info(f"[Session] Started: thread_id={thread_id}, project_id={project_id}")
+
         inputs = None
         if not resume:
             message = f"Project ID: {project_id}. {user_input}"
 
-            # Append selected node context if provided
+            # Append selected node IDs if provided
             if selected_node_ids:
-                from master_clash.context import get_project_context
-
-                context = get_project_context(project_id)
-                if context:
-                    ids = [i.strip() for i in selected_node_ids.split(",") if i.strip()]
-                    selected_nodes = [n for n in context.nodes if n.id in ids]
-                    if selected_nodes:
-                        context_pieces = [
-                            f"Selected Node: {n.id} ({n.type}) - {n.data.get('label', 'Untitled')}"
-                            + (f" Content: {n.data['content']}" if n.data.get("content") else "")
-                            + (f" Source: {n.data['src']}" if n.data.get("src") else "")
-                            for n in selected_nodes
-                        ]
-                        message += "\n\n[USER SELECTION CONTEXT]\n" + "\n".join(context_pieces)
+                ids = [i.strip() for i in selected_node_ids.split(",") if i.strip()]
+                if ids:
+                    message += f"\n\n[SELECTED NODE IDS]\n{', '.join(ids)}"
 
             inputs = {
                 "messages": [HumanMessage(content=message)],
                 "project_id": project_id,
                 "next": "Supervisor",
             }
+            # Log the original user input as an event for complete history replay
+            from master_clash.services.session_interrupt import log_session_event
+
+            log_session_event(thread_id, "user_message", {"content": user_input})
 
         config = {
             "configurable": {
@@ -307,6 +219,9 @@ async def stream_workflow(
             return agent, agent_id
 
         try:
+            # Get or create the workflow graph lazily
+            graph = await get_or_create_graph()
+
             async for streamed in graph.astream(
                 inputs,
                 config=config,
@@ -433,6 +348,7 @@ async def stream_workflow(
                                         "agent": agent_name or "Agent",
                                         "agent_id": agent_id,
                                     },
+                                    thread_id=thread_id,
                                 )
 
                     # Handle tool outputs (ToolMessage)
@@ -501,6 +417,7 @@ async def stream_workflow(
                                 "agent": tool_end_agent or "Agent",
                                 "agent_id": tool_end_agent_id,
                             },
+                            thread_id=thread_id,
                         )
                         continue
                     else:
@@ -543,6 +460,7 @@ async def stream_workflow(
                                     )
                                     yield emitter.thinking(
                                         thinking_text,
+                                        thread_id=thread_id,
                                         agent=agent_name or "Agent",
                                         agent_id=agent_id,
                                     )
@@ -551,7 +469,10 @@ async def stream_workflow(
                                 part_text = part.get("text", "")
                                 if part_text:
                                     yield emitter.text(
-                                        part_text, agent=agent_name or "Agent", agent_id=agent_id
+                                        part_text,
+                                        thread_id=thread_id,
+                                        agent=agent_name or "Agent",
+                                        agent_id=agent_id,
                                     )
                         continue
 
@@ -559,7 +480,10 @@ async def stream_workflow(
                     text_content = _extract_text(content)
                     if text_content:
                         yield emitter.text(
-                            text_content, agent=agent_name or "Agent", agent_id=agent_id
+                            text_content,
+                            thread_id=thread_id,
+                            agent=agent_name or "Agent",
+                            agent_id=agent_id,
                         )
 
                 elif mode == "custom":
@@ -572,7 +496,7 @@ async def stream_workflow(
                         #     yield emitter.format_event("node_proposal", data["proposal"])
                         #     continue
                         if action == "timeline_edit":
-                            yield emitter.format_event("timeline_edit", data)
+                            yield emitter.format_event("timeline_edit", data, thread_id=thread_id)
                             continue
                         if action == "rerun_generation_node":
                             # Emit rerun_generation_node event with nodeId, assetId, and nodeData
@@ -583,6 +507,7 @@ async def stream_workflow(
                                     "assetId": data.get("assetId"),
                                     "nodeData": data.get("nodeData"),
                                 },
+                                thread_id=thread_id,
                             )
                             continue
                         if action == "subagent_stream":
@@ -595,24 +520,52 @@ async def stream_workflow(
                             # Let's emit as 'thinking' for now to ensure it shows up in the agent card logs?
                             # Or better, if it's raw text from the model, it's likely the agent 'working'.
                             # In ChatbotCopilot.tsx, 'thinking' event adds to logs.
-                            yield emitter.thinking(content, agent=agent, agent_id=agent_id)
+                            yield emitter.thinking(
+                                content, thread_id=thread_id, agent=agent, agent_id=agent_id
+                            )
                             continue
-                        yield emitter.format_event("custom", data)
+                        yield emitter.format_event("custom", data, thread_id=thread_id)
 
         except Exception as exc:  # pragma: no cover - surfaced to client
-            logger.error("Stream workflow failed: %s", exc, exc_info=True)
-            yield emitter.format_event("workflow_error", {"message": str(exc)})
-            yield emitter.end()
-        finally:
-            # Cleanup: Disconnect Loro client
+            # Check if this is an interrupt request
+            from master_clash.workflow.interrupt_middleware import InterruptRequested
+
+            if isinstance(exc, InterruptRequested):
+                logger.info(f"[Session] Interrupted: thread_id={thread_id}")
+                await set_session_status(thread_id, "interrupted")
+                yield emitter.format_event(
+                    "session_interrupted",
+                    {
+                        "thread_id": thread_id,
+                        "message": "Session interrupted. You can resume later with the same thread_id.",
+                    },
+                    thread_id=thread_id,
+                )
+            else:
+                logger.error("Stream workflow failed: %s", exc, exc_info=True)
+                await set_session_status(thread_id, "completed")  # Mark as completed on error
+
+                # Extract error message safely - avoid serialization issues
+                error_msg = str(exc)
+                if not error_msg or len(error_msg) > 500:
+                    error_msg = f"{type(exc).__name__}: {str(exc)[:500]}"
+
+                # Don't pass thread_id to avoid logging complex exception objects
+                yield emitter.format_event("workflow_error", {"message": error_msg})
+
+        # Always end the stream FIRST, before disconnecting Loro
+        yield emitter.end(thread_id=thread_id)
+
+        # Cleanup: Disconnect Loro client in background (non-blocking)
+        # This prevents the SSE stream from waiting for the websocket to close
+        async def cleanup_loro():
             try:
                 await loro_client.disconnect()
                 logger.info(f"[LoroSync] Disconnected for project {project_id}")
             except Exception as e:
                 logger.error(f"[LoroSync] Failed to disconnect: {e}")
 
-        # Always end the stream
-        yield emitter.end()
+        asyncio.create_task(cleanup_loro())
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -625,10 +578,10 @@ async def generate_semantic_ids(request: GenerateSemanticIDRequest):
     that are unique within the project scope.
     """
     try:
-        from master_clash.semantic_id import create_d1_checker, generate_unique_ids_for_project
+        from master_clash.semantic_id import create_id_checker, generate_unique_ids_for_project
 
-        # Create D1 checker
-        checker = create_d1_checker()
+        # Create generic checker (works with Postgres/SQLite)
+        checker = create_id_checker()
 
         # Generate unique IDs
         ids = generate_unique_ids_for_project(request.project_id, request.count, checker)
@@ -660,6 +613,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "master_clash.api.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8888,
         reload=True,  # Disable in production
     )

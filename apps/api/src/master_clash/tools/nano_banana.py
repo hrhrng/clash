@@ -119,16 +119,49 @@ def _base_nano_banana_gen(
     system_prompt: str | None = "Must generate an image",
     images: list[str] | None = None,
     aspect_ratio: str | None = "16:9",
+    image_size: str | None = "2K",
     model_name: str | None = "gemini-2.5-flash-image",
 ):
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langchain_google_genai import ChatGoogleGenerativeAI, Modality
 
+    # Gemini supported aspect ratios (synced with shared-types GEMINI_ASPECT_RATIOS)
+    # Reference: https://ai.google.dev/gemini-api/docs/image-generation
+    supported_aspect_ratios = {
+        "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"
+    }
+    normalized_ratio = aspect_ratio if aspect_ratio in supported_aspect_ratios else "16:9"
+
+    # Gemini supported image sizes (synced with shared-types GEMINI_IMAGE_SIZES)
+    # Reference: https://googleapis.github.io/python-genai/genai.html#genai.types.ImageConfig
+    supported_image_sizes = {"1K", "2K", "4K"}
+    normalized_size = image_size if image_size in supported_image_sizes else "2K"
+
+    logger.info(f"[NanoBanana] Using aspect_ratio={normalized_ratio}, image_size={normalized_size}")
+
+    # Build ImageConfig with all supported parameters
+    # - aspect_ratio: Output aspect ratio (required)
+    # - image_size: Resolution - "1K" (default), "2K", or "4K" (must be uppercase K)
+    # - number_of_images: Number of images per request (1-4)
+    # Reference: https://googleapis.github.io/python-genai/genai.html#genai.types.ImageConfig
+    image_config = {
+        "aspect_ratio": normalized_ratio,
+        "image_size": normalized_size,
+        # "number_of_images": 1,  # Default is 1, can be 1-4
+    }
+
+    # llm = ChatGoogleGenerativeAI(
+    #     model=model_name,
+    #     response_modalities=[Modality.TEXT, Modality.IMAGE],
+    #     base_url=settings.google_ai_studio_base_url,
+    #     transport="rest",
+    # )
     llm = ChatGoogleGenerativeAI(
         model=model_name,
         response_modalities=[Modality.TEXT, Modality.IMAGE],
         base_url=settings.google_ai_studio_base_url,
-        transport="rest",
+        vertexai=True,
+        image_config=image_config,
     )
 
     # 构建消息内容
@@ -195,7 +228,8 @@ def nano_banana_gen(
     text: str,
     system_prompt: str | None = "",
     base64_images: list[str] | None = None,
-    aspect_ratio: str | None = "4:3",
+    aspect_ratio: str | None = "16:9",
+    image_size: str | None = "2K",
 ) -> str:
     """
     Advanced Nano Banana image generation with Gemini 2.5 Flash Image.
@@ -205,7 +239,7 @@ def nano_banana_gen(
         system_prompt: System-level instructions
         base64_images: List of base64-encoded images as visual anchors
         aspect_ratio: Desired aspect ratio for output image
-        model_name: Model to use for generation
+        image_size: Resolution - "1K", "2K", or "4K"
     Returns:
         Generated image base64 data
     """
@@ -216,6 +250,7 @@ def nano_banana_gen(
         system_prompt=system_prompt,
         images=base64_images,
         aspect_ratio=aspect_ratio,
+        image_size=image_size,
         model_name="gemini-2.5-flash-image",
     )
 
@@ -224,7 +259,8 @@ def nano_banana_pro_gen(
     text: str,
     system_prompt: str | None = "",
     base64_images: list[str] | None = None,
-    aspect_ratio: str | None = "4:3",
+    aspect_ratio: str | None = "16:9",
+    image_size: str | None = "2K",
 ) -> str:
     """
     Advanced Nano Banana image generation with Gemini 3 Pro Image Preview.
@@ -234,6 +270,7 @@ def nano_banana_pro_gen(
         system_prompt: System-level instructions
         base64_images: List of base64-encoded images as visual anchors
         aspect_ratio: Desired aspect ratio for output image
+        image_size: Resolution - "1K", "2K", or "4K"
     Returns:
         Generated image base64 data
     """
@@ -244,6 +281,7 @@ def nano_banana_pro_gen(
         system_prompt=system_prompt,
         images=base64_images,
         aspect_ratio=aspect_ratio,
+        image_size=image_size,
         model_name="gemini-3-pro-image-preview",
     )
 

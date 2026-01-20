@@ -11,6 +11,7 @@ from langchain.tools import BaseTool, ToolRuntime
 from pydantic import BaseModel, Field
 
 from master_clash.workflow.backends import CanvasBackendProtocol
+from master_clash.workflow.share_types import TimelineDSL
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +30,17 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             default=None,
             description="Optional description (useful for group nodes)",
         )
+        timelineDsl: dict[str, Any] | None = Field(
+            default=None,
+            description="Timeline DSL structure for video-editor nodes (optional, will be initialized with defaults if not provided)",
+        )
 
         class Config:
             extra = "allow"
 
     class CreateCanvasNodeInput(BaseModel):
-        node_type: Literal["text", "group"] = Field(
-            description="Node type to create (text for notes/scripts, group for organization). NOTE: For prompts with generation, use create_generation_node instead."
+        node_type: Literal["text", "group", "video-editor"] = Field(
+            description="Node type to create (text for notes/scripts, group for organization, video-editor for timeline editing). NOTE: For prompts with generation, use create_generation_node instead."
         )
         payload: CanvasNodeData = Field(
             description="Structured payload for text/prompt/group nodes"
@@ -64,14 +69,23 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
             workspace_group_id = runtime.state.get("workspace_group_id")
             if workspace_group_id:
                 parent_id = workspace_group_id
+                logger.info(f"[create_canvas_node] Auto-set parent_id from workspace: {parent_id}")
+        
+        logger.info(f"[create_canvas_node] Creating {node_type} node with parent_id={parent_id}")
 
         resolved_backend = backend(runtime) if callable(backend) else backend
 
         try:
+            # For video-editor nodes, initialize timelineDsl if not provided
+            node_data_dict = payload.model_dump(exclude_none=True)
+            if node_type == "video-editor" and "timelineDsl" not in node_data_dict:
+                node_data_dict["timelineDsl"] = TimelineDSL().model_dump()
+                logger.info("[create_canvas_node] Initialized default timelineDsl for video-editor node")
+
             result = resolved_backend.create_node(
                 project_id=project_id,
                 node_type=node_type,
-                data=payload.model_dump(exclude_none=True),
+                data=node_data_dict,
                 position=position,
                 parent_id=parent_id,
             )
@@ -95,23 +109,35 @@ def create_create_node_tool(backend: CanvasBackendProtocol) -> BaseTool:
                         elif parent_id_from_proposal:
                             node_position = {"x": 50.0, "y": 50.0}
                         else:
-                            existing_nodes = loro_client.get_all_nodes() or {}
-                            max_x = 0.0
-                            max_y = 0.0
-                            for existing in existing_nodes.values():
-                                existing_pos = (existing or {}).get("position") or {}
-                                try:
-                                    max_x = max(max_x, float(existing_pos.get("x", 0.0)))
-                                    max_y = max(max_y, float(existing_pos.get("y", 0.0)))
-                                except (TypeError, ValueError):
-                                    continue
-                            node_position = {"x": max_x + 120.0, "y": max_y + 80.0}
+                            # Use frontend auto-layout instead of calculating position manually
+                            # This avoids the expensive get_all_nodes() call which can cause hangs
+                            node_position = {"x": -1, "y": -1}  # NEEDS_LAYOUT_POSITION
+                            logger.info(f"[LoroSync] Using frontend auto-layout for node {result.node_id}")
+
+                        # Set default dimensions based on node type (matching frontend ProjectEditor.tsx)
+                        resolved_type = proposal.get("nodeType") or node_type
+                        if resolved_type == "group":
+                            default_width = 400
+                            default_height = 400
+                        elif resolved_type == "video-editor":
+                            default_width = 400
+                            default_height = 225
+                        else:
+                            default_width = 300
+                            default_height = 300
 
                         loro_node = {
                             "id": result.node_id,
-                            "type": proposal.get("nodeType") or node_type,
+                            "type": resolved_type,
                             "position": node_position,
                             "data": node_data,
+                            # ReactFlow node dimensions - critical for proper rendering
+                            "width": default_width,
+                            "height": default_height,
+                            "style": {
+                                "width": default_width,
+                                "height": default_height,
+                            },
                             **(
                                 {"parentId": parent_id_from_proposal}
                                 if parent_id_from_proposal

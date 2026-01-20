@@ -4,13 +4,14 @@ This module provides utilities for tracking costs, timing, and API calls
 associated with workflow checkpoints.
 """
 
-import json
 import time
 from contextlib import contextmanager
 from typing import Any
 
 from master_clash.database.di import get_database
 from master_clash.database.ports import Database
+from master_clash.json_utils import dumps as json_dumps
+from master_clash.json_utils import loads as json_loads
 
 
 class MetadataTracker:
@@ -42,7 +43,7 @@ class MetadataTracker:
                 metadata = excluded.metadata,
                 updated_at = CURRENT_TIMESTAMP
         """,
-            (self.run_id, workflow_name, json.dumps(metadata or {})),
+            (self.run_id, workflow_name, json_dumps(metadata or {})),
         )
         self.db.commit()
 
@@ -144,7 +145,7 @@ class MetadataTracker:
                 api_calls,
                 total_cost,
                 error_message,
-                json.dumps(metadata or {}),
+                json_dumps(metadata or {}),
             ),
         )
         self.db.commit()
@@ -183,7 +184,7 @@ class MetadataTracker:
                 asset_type,
                 asset_path,
                 asset_url,
-                json.dumps(generation_params or {}),
+                json_dumps(generation_params or {}),
                 cost,
                 duration_ms,
             ),
@@ -227,8 +228,8 @@ class MetadataTracker:
                 checkpoint_id,
                 service,
                 endpoint,
-                json.dumps(request_params or {}),
-                json.dumps(response_data or {}) if response_data else None,
+                json_dumps(request_params or {}),
+                json_dumps(response_data or {}) if response_data else None,
                 status_code,
                 cost,
                 duration_ms,
@@ -321,7 +322,7 @@ class MetadataTracker:
             "api_call_count": api_calls or 0,
             "total_api_duration_ms": api_duration or 0,
             "assets_by_type": assets_by_type,
-            "metadata": json.loads(metadata) if metadata else {},
+            "metadata": json_loads(metadata) if metadata else {},
         }
 
     def close(self) -> None:

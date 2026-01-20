@@ -28,7 +28,7 @@ export const TodoList: React.FC<TodoListProps> = ({ items, title = "Plan" }) => 
             className="absolute left-6 bottom-[88px] z-10"
         >
             <div
-                className="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden cursor-pointer transition-all hover:shadow-md w-64"
+                className="bg-white border border-gray-200 shadow-sm rounded-xl overflow-hidden cursor-pointer transition-all hover:shadow-md w-64"
                 onClick={() => setIsExpanded(!isExpanded)}
             >
                 <div className="px-3 py-2 flex items-center justify-between bg-gray-50">

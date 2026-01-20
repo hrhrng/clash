@@ -23,11 +23,11 @@ export function ToolCall({ toolName, args, result, status, isExpanded: initialEx
         failed: { icon: X, color: 'text-red-500', animate: false },
     };
 
-    const config = statusConfig[status];
+    const config = statusConfig[status as keyof typeof statusConfig] ?? statusConfig.pending;
     const StatusIcon = config.icon;
 
     return (
-        <div className={`w-full rounded-lg border border-slate-100 bg-slate-50/50 overflow-hidden text-sm ${indent ? 'ml-6 w-[calc(100%-1.5rem)]' : ''}`}>
+        <div className={`w-full rounded-xl border border-slate-100 bg-slate-50/50 overflow-hidden text-sm ${indent ? 'ml-6 w-[calc(100%-1.5rem)]' : ''}`}>
             <div
                 className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-slate-100 transition-colors"
                 onClick={() => setIsExpanded(!isExpanded)}

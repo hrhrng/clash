@@ -11,9 +11,9 @@ import hashlib
 import hmac
 import base64
 import httpx
-import json
 
 from master_clash.config import get_settings
+from master_clash.json_utils import dumps as json_dumps
 from master_clash.services import r2
 
 settings = get_settings()
@@ -48,8 +48,8 @@ def _generate_jwt() -> str:
     def base64url_encode(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
     
-    header_b64 = base64url_encode(json.dumps(header).encode())
-    payload_b64 = base64url_encode(json.dumps(payload).encode())
+    header_b64 = base64url_encode(json_dumps(header).encode())
+    payload_b64 = base64url_encode(json_dumps(payload).encode())
     
     signature_input = f"{header_b64}.{payload_b64}"
     signature = hmac.new(

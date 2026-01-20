@@ -51,9 +51,11 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
         node_id: str,
         runtime: ToolRuntime,
     ) -> str:
-        """Run a generation node (action-badge) to generate the asset.
+        """Run a generation node (action-badge) OR a video-editor node.
 
-        This triggers the actual generation by calling loro-sync-server API.
+        - For action-badge: Triggers image/video generation using AI models.
+        - For video-editor: Triggers rendering of the video timeline into a video asset.
+
         The result will be automatically synced to the canvas via Loro.
         """
         project_id = runtime.state.get("project_id", "")
@@ -118,7 +120,87 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
             if node is None:
                 return f"Error: Node {node_id} not found"
 
-            # Verify it's a generation node
+            # Handle video-editor node
+            if node.type == "video-editor":
+                logger.info(f"[RunGen] Processing video-editor node {node_id}")
+
+                timeline_dsl = node.data.get("timelineDsl")
+                if not timeline_dsl or not timeline_dsl.get("tracks"):
+                    return f"Error: Video editor {node_id} has no content (empty timeline)."
+
+                # Calculate duration
+                max_end_frame = 0
+                for track in timeline_dsl.get("tracks", []):
+                    for item in track.get("items", []):
+                        end_frame = item.get("from", 0) + item.get("durationInFrames", 0)
+                        if end_frame > max_end_frame:
+                            max_end_frame = end_frame
+
+                fps = timeline_dsl.get("fps", 30)
+                duration_seconds = max_end_frame / fps if fps > 0 else 0
+
+                # Update DSL with calculated duration
+                updated_dsl = {**timeline_dsl, "durationInFrames": max_end_frame}
+
+                # Generate asset ID
+                from master_clash.semantic_id import (
+                    create_id_checker,
+                    generate_unique_id_for_project,
+                )
+                checker = create_id_checker()
+                asset_id = generate_unique_id_for_project(project_id, checker)
+
+                # Get position from Loro
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro not connected, cannot create video node"
+
+                editor_node_data = loro_client.get_node(node_id)
+                editor_node_data = _ensure_dict(editor_node_data)
+
+                editor_pos = editor_node_data.get("position") if editor_node_data else None
+                if not isinstance(editor_pos, dict) or "x" not in editor_pos or "y" not in editor_pos:
+                    editor_pos = {"x": 100, "y": 100}
+
+                # Use NEEDS_LAYOUT_POSITION (-1, -1) to trigger frontend auto-layout
+                # This ensures the new node is placed correctly relative to the source, avoiding overlaps
+                new_x = -1
+                new_y = -1
+
+                pending_node = {
+                    "id": asset_id,
+                    "type": "video",
+                    "position": {"x": new_x, "y": new_y},
+                    "data": {
+                        "label": "Rendered Video",
+                        "status": "generating",
+                        "src": "",
+                        "duration": duration_seconds,
+                        "timelineDsl": updated_dsl,  # Using updated_dsl which includes correct durationInFrames
+                        "naturalWidth": updated_dsl.get("compositionWidth", 1920),
+                        "naturalHeight": updated_dsl.get("compositionHeight", 1080),
+                        "assetId": asset_id,
+                        "sourceNodeId": node_id
+                    }
+                }
+
+                edge_id = f"e-{node_id}-{asset_id}"
+                new_edge = {
+                    "id": edge_id,
+                    "source": node_id,
+                    "target": asset_id,
+                    "type": "default"
+                }
+
+                logger.info(f"[RunGen] Creating video node {asset_id} for editor {node_id}")
+                loro_client.batch_update_graph(
+                    nodes={asset_id: pending_node},
+                    edges={edge_id: new_edge}
+                )
+
+                return f"Rendering triggered for video-editor. Created video node {asset_id}. Watch canvas for updates."
+
+            # Verify it's a generation node (action-badge)
             if node.type != "action-badge":
                 return f"Error: Node {node_id} is not a generation node (type: {node.type})"
 
@@ -198,10 +280,10 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
             # Generate asset ID
             from master_clash.semantic_id import (
-                create_d1_checker,
+                create_id_checker,
                 generate_unique_id_for_project,
             )
-            checker = create_d1_checker()
+            checker = create_id_checker()
             asset_id = generate_unique_id_for_project(project_id, checker)
 
             gen_type = "image" if action_type == "image-gen" else "video"
@@ -231,19 +313,81 @@ def create_run_generation_tool(backend: CanvasBackendProtocol) -> BaseTool:
 
                 parent_id = action_node_data.get("parentId") if action_node_data else None
 
+                # Generate a meaningful label from the action node's label or prompt
+                action_node_label = None
+                if action_node_data and action_node_data.get("data"):
+                    action_node_label = action_node_data["data"].get("label") or action_node_data["data"].get("content")
+
+                # Extract first meaningful line from prompt or label
+                if action_node_label:
+                    # Remove markdown headers and get first non-empty line
+                    lines = [line.strip() for line in action_node_label.split('\n') if line.strip() and not line.strip().startswith('#')]
+                    if lines:
+                        # Take first 50 chars of first line
+                        generated_label = lines[0][:50]
+                        if len(lines[0]) > 50:
+                            generated_label += "..."
+                    else:
+                        generated_label = f"Generated {gen_type}"
+                else:
+                    # Fallback: use first part of prompt
+                    if prompt:
+                        generated_label = prompt[:50]
+                        if len(prompt) > 50:
+                            generated_label += "..."
+                    else:
+                        generated_label = f"Generated {gen_type}"
+
+                logger.info(f"[RunGen] Generated label for asset node: '{generated_label}'")
+
+                action_data = action_node_data.get("data", {}) if action_node_data else {}
+                if not isinstance(action_data, dict):
+                    action_data = {}
+
+                model_params = action_data.get("modelParams") or {}
+                if not isinstance(model_params, dict):
+                    model_params = {}
+
+                model_id = action_data.get("modelId") or action_data.get("model")
+                aspect_ratio = (
+                    model_params.get("aspect_ratio")
+                    or action_data.get("aspectRatio")
+                    or "16:9"
+                )
+                reference_mode = action_data.get("referenceMode")
+
                 node_data = {
-                    "label": f"Generating {gen_type}...",
+                    "label": generated_label,
                     "prompt": prompt,
                     "src": "",
                     "status": "generating",
                     "assetId": asset_id,
                     "sourceNodeId": node_id,
+                    "aspectRatio": aspect_ratio,
                 }
+
+                if model_id:
+                    node_data["model"] = model_id
+                    node_data["modelId"] = model_id
+
+                if model_params:
+                    node_data["modelParams"] = model_params
+
+                if reference_mode:
+                    node_data["referenceMode"] = reference_mode
+
+                if "count" in model_params:
+                    node_data["count"] = model_params.get("count")
+                elif "count" in action_data:
+                    node_data["count"] = action_data.get("count")
 
                 if gen_type == "video":
                     node_data["referenceImageUrls"] = reference_image_urls
-                    node_data["duration"] = 5
-                    node_data["model"] = "kling-v1"
+                    duration_value = model_params.get("duration") or action_data.get("duration") or 5
+                    try:
+                        node_data["duration"] = int(duration_value)
+                    except (TypeError, ValueError):
+                        node_data["duration"] = 5
 
                 pending_node = {
                     "id": asset_id,

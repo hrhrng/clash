@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, CSSProperties } from 'react';
 import { useDraggable } from '@dnd-kit/core';
+import { CSS as _DndCSS } from '@dnd-kit/utilities';
 import { motion } from 'framer-motion';
 import type { Item, Asset, Track } from '@master-clash/remotion-core';
 import { useEditor } from '@master-clash/remotion-core';
@@ -41,10 +42,10 @@ interface TimelineItemProps {
   onResizeStart?: (edge: 'left' | 'right') => void;
   onResize?: (edge: 'left' | 'right', deltaFrames: number) => void;
   onRollEdit?: (edge: 'left' | 'right', deltaFrames: number) => void; // Roll edit with adjacent item
-  hasAdjacentItemOnLeft?: boolean | null;
-  hasAdjacentItemOnRight?: boolean | null;
-  shouldHighlightLeft?: boolean | null;
-  shouldHighlightRight?: boolean | null;
+  hasAdjacentItemOnLeft?: boolean;
+  hasAdjacentItemOnRight?: boolean;
+  shouldHighlightLeft?: boolean;
+  shouldHighlightRight?: boolean;
   onHoverChange?: (isHovered: boolean) => void;
   onResizeEnd?: () => void;
   style?: CSSProperties;
@@ -62,6 +63,8 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   onSelect,
   onDelete,
   onUpdate,
+  onDragStart: _onDragStartProp,
+  onDragEnd: _onDragEndProp,
   onResizeStart,
   onResize,
   onResizeEnd,
@@ -105,7 +108,12 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   // Get asset data (for thumbnail and waveform)
   const asset = React.useMemo(() => {
     if (item.type === 'video' || item.type === 'audio' || item.type === 'image') {
-      // Items have src directly, not assetId
+      // Priority 1: Lookup by assetId (if present)
+      if ('assetId' in item && item.assetId) {
+        const found = assets.find((a) => a.id === item.assetId);
+        if (found) return found;
+      }
+      // Priority 2: Fallback to lookup by src (legacy/direct link)
       return assets.find((a) => a.src === item.src) ?? null;
     }
     return null;
@@ -130,6 +138,7 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     : (hasWaveform ? Math.floor(availableHeight * 0.6) : 44);
 
   // Dynamic thumbnail generation based on zoom level
+  const [dynamicThumbnail, ] = React.useState<string | null>(null);
   const [isGeneratingThumbnail, setIsGeneratingThumbnail] = React.useState(false);
   const thumbnailCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const canvasPixelWidthRef = React.useRef<number>(0);
@@ -409,8 +418,18 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
   }, [hasWaveform]);
 
 
-  const displayThumbnail = thumbnail;
-  const isDynamicReady = false;
+  // Revoke previously created object URLs to avoid memory leaks and reduce flicker
+  const prevThumbUrlRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (prevThumbUrlRef.current && prevThumbUrlRef.current !== dynamicThumbnail) {
+      URL.revokeObjectURL(prevThumbUrlRef.current);
+    }
+    prevThumbUrlRef.current = dynamicThumbnail;
+  }, [dynamicThumbnail]);
+
+  // Use dynamic thumbnail if available, otherwise fallback to static one
+  const displayThumbnail = dynamicThumbnail || thumbnail;
+  const isDynamicReady = Boolean(dynamicThumbnail);
 
   // (removed) Previously used to stretch thumbnail to fit width.
   // Match 3:7 ratio when video has waveform; otherwise keep previous calculation
@@ -735,9 +754,9 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
     },
     disabled: isDragOverlay, // DragOverlay中禁用draggable
   });
-
-  const { attributes, listeners, setNodeRef, isDragging } = isDragOverlay
-    ? { attributes: {}, listeners: {}, setNodeRef: () => { }, isDragging: false }
+  
+  const {attributes, listeners, setNodeRef, isDragging} = isDragOverlay 
+    ? { attributes: {}, listeners: {}, setNodeRef: () => {}, isDragging: false }
     : draggableHook;
 
   // Decoupled renderers: first enable for image/text, others keep existing path
@@ -761,39 +780,65 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
       }}
       onClick={handleClick}
       onDoubleClick={handleTextEdit}
-      className={`absolute top-1/2 -translate-y-1/2 rounded overflow-visible box-border transition-opacity ${isDragging ? 'opacity-0 outline-dashed outline-1 outline-blue-500/80' : (track.hidden ? 'opacity-30' : 'opacity-100')
-        } ${isSelected ? 'border-2 border-white' : 'border border-black/20'}`}
       style={{
+        position: isDragOverlay ? undefined : 'absolute',
         left: isDragOverlay ? undefined : frameToPixels(item.from, pixelsPerFrame),
         width: width,
         height: `${itemHeight}px`,
+        top: isDragOverlay ? undefined : '50%',
+        transform: isDragOverlay ? undefined : 'translateY(-50%)',
         backgroundColor: getColor(),
+        borderRadius: '4px',
+        border: isSelected
+          ? `${borderSize}px solid #ffffff`
+          : `${borderSize}px solid rgba(0,0,0,0.2)`,
         cursor: 'move',
-        ...customStyle,
+        overflow: 'visible', // 改为 visible,让 resize handles 可以延伸出去
+        boxSizing: 'border-box',
+        opacity: isDragging ? 0 : (track.hidden ? 0.3 : 1),
+        outline: isDragging ? '1px dashed rgba(0, 153, 255, 0.8)' : 'none',
+        ...customStyle, // 应用自定义样式（可以覆盖默认样式，如opacity）
       }}
     >
       {/* 内层可拖动区域 - 排除 resize handles,让它们可以独立工作 */}
       <div
         {...listeners}
-        className="absolute inset-y-0 left-1.5 right-1.5 cursor-move z-[5] pointer-events-auto"
+        style={{
+          position: 'absolute',
+          inset: '0 6px 0 6px', // 左右各留出 6px,因为 handles 向外延伸
+          cursor: 'move',
+          zIndex: 5,
+          pointerEvents: 'auto', // 确保可以捕获拖动事件
+        }}
       />
 
       {/* 内容裁剪容器 - 防止内容溢出到 resize handles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none rounded">
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          overflow: 'hidden',
+          pointerEvents: 'none', // 让事件穿透到内层元素
+          borderRadius: '4px',
+        }}
+      >
         {/* 背景图片(非视频类型) */}
         {!useNewRenderer && item.type !== 'video' && item.type !== 'audio' && displayThumbnail && (
           <div
-            className="absolute inset-0 bg-left-top bg-no-repeat"
             style={{
+              position: 'absolute',
+              inset: 0,
               backgroundImage: `url(${displayThumbnail})`,
               backgroundSize: isDynamicReady ? 'auto 100%' : 'cover',
+              backgroundPosition: 'left top',
+              backgroundRepeat: 'no-repeat',
             }}
           />
         )}
 
         {/* New renderer (image/text) */}
         {useNewRenderer && (
-          <div className="absolute inset-0">
+          <div style={{ position: 'absolute', inset: 0 }}>
             <Renderer item={item} asset={asset} width={width} height={itemHeight} pixelsPerFrame={pixelsPerFrame} />
           </div>
         )}
@@ -802,185 +847,209 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
         {item.type === 'video' && (
           <div
             data-thumbnail-id={item.id}
-            className="absolute top-0 left-0 w-full z-[1] overflow-hidden bg-black"
             style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
               height: hasWaveform ? `${thumbnailHeight}px` : '100%',
+              zIndex: 1,
+              overflow: 'hidden',
+              backgroundColor: '#000',
             }}
           >
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                height: '100%',
-                width: canvasPixelWidthRef.current ? `${canvasPixelWidthRef.current}px` : '100%',
-                transform: `translateX(${(-((item as any).sourceStartInFrames || 0) * pixelsPerFrame)}px)`,
-                willChange: 'transform',
-              }}
-            >
-              <canvas
-                ref={thumbnailCanvasRef}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  display: 'block',
-                }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Waveform */}
-        {hasWaveform && itemWaveform && (
           <div
-            data-waveform-id={item.id}
-            draggable={false}
-            onDragStart={(e) => e.preventDefault()}
-            className="absolute bottom-0 left-0 w-full overflow-hidden z-[2] contain-strict"
             style={{
-              height: `${waveformHeight}px`,
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              height: '100%',
+              width: canvasPixelWidthRef.current ? `${canvasPixelWidthRef.current}px` : '100%',
+              transform: `translateX(${(-((item as any).sourceStartInFrames || 0) * pixelsPerFrame)}px)`,
+              willChange: 'transform',
             }}
           >
-            {/* 内容容器：通过 transform 平移显示正确的波形部分 */}
-            <div
+            <canvas
+              ref={thumbnailCanvasRef}
               style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
+                width: '100%',
                 height: '100%',
-                transform: `translateX(${(-((item as any).sourceStartInFrames || 0) * pixelsPerFrame)}px)`,
-                willChange: 'transform',
+                display: 'block',
               }}
-            >
-              {itemWaveform ? renderWaveform(itemWaveform, waveformHeight) : null}
-            </div>
-
-
-            {/* Volume control line */}
-            {(item.type === 'audio' || item.type === 'video') && (() => {
-              const lineY = waveformHeight * (1 - itemVolume / 2);
-              const clampedLineY = Math.max(0, Math.min(waveformHeight - 1, lineY));
-
-              return (
-                <div
-                  onMouseDown={isHovered ? handleVolumeMouseDown : undefined}
-                  className={`absolute left-0 w-full h-px z-[3] ${isHovered ? 'bg-white/50 cursor-ns-resize pointer-events-auto' : 'bg-transparent cursor-default pointer-events-none'
-                    }`}
-                  style={{
-                    top: `${clampedLineY}px`,
-                  }}
-                  title={isHovered ? `Volume: ${Math.round(itemVolume * 100)}%` : ''}
-                />
-              );
-            })()}
+            />
           </div>
-        )}
+        </div>
+      )}
+
+      {/* Waveform */}
+      {hasWaveform && itemWaveform && (
+        <div
+          data-waveform-id={item.id}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            width: '100%',
+            height: `${waveformHeight}px`,
+            overflow: 'hidden',
+            zIndex: 2,
+            contain: 'strict',
+          }}
+        >
+          {/* 内容容器：通过 transform 平移显示正确的波形部分 */}
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              height: '100%',
+              transform: `translateX(${(-((item as any).sourceStartInFrames || 0) * pixelsPerFrame)}px)`,
+              willChange: 'transform',
+            }}
+          >
+            {itemWaveform ? renderWaveform(itemWaveform, waveformHeight) : null}
+          </div>
+
+
+          {/* Volume control line */}
+          {(item.type === 'audio' || item.type === 'video') && (() => {
+            const lineY = waveformHeight * (1 - itemVolume / 2);
+            const clampedLineY = Math.max(0, Math.min(waveformHeight - 1, lineY));
+
+            return (
+              <div
+                onMouseDown={isHovered ? handleVolumeMouseDown : undefined}
+                style={{
+                  position: 'absolute',
+                  top: `${clampedLineY}px`,
+                  left: 0,
+                  width: '100%',
+                  height: '1px',
+                  backgroundColor: isHovered ? 'rgba(255, 255, 255, 0.5)' : 'transparent',
+                  cursor: isHovered ? 'ns-resize' : 'default',
+                  zIndex: 3,
+                  pointerEvents: isHovered ? 'auto' : 'none',
+                }}
+                title={isHovered ? `Volume: ${Math.round(itemVolume * 100)}%` : ''}
+              />
+            );
+          })()}
+        </div>
+      )}
       </div>
       {/* 内容裁剪容器结束 */}
 
       {/* Fade curves */}
-      {
-        hasWaveform && isSelected && (
-          <>
-            {renderFadeCurve(width, itemHeight, audioFadeIn, 'in')}
-            {renderFadeCurve(width, itemHeight, audioFadeOut, 'out')}
-          </>
-        )
-      }
+      {hasWaveform && isSelected && (
+        <>
+          {renderFadeCurve(width, itemHeight, audioFadeIn, 'in')}
+          {renderFadeCurve(width, itemHeight, audioFadeOut, 'out')}
+        </>
+      )}
 
       {/* Fade handles */}
-      {
-        hasWaveform && isHovered && (
-          <>
-            {/* Fade In Handle */}
-            <div
-              onMouseDown={(e) => handleFadeMouseDown(e, 'in')}
-              onDragStart={(e) => e.preventDefault()}
-              style={{
+      {hasWaveform && isHovered && (
+        <>
+          {/* Fade In Handle */}
+          <div
+            onMouseDown={(e) => handleFadeMouseDown(e, 'in')}
+            onDragStart={(e) => e.preventDefault()}
+            style={{
+              position: 'absolute',
+              left: `${audioFadeIn * pixelsPerFrame - 6}px`,
+              top: hasVideoWithThumbnail ? `${thumbnailHeight - 6}px` : (hasWaveform ? `${thumbnailHeight - 6}px` : '-6px'),
+              width: '12px',
+              height: '12px',
+              borderRadius: '50%',
+              backgroundColor: '#fff',
+              border: '2px solid #0066ff',
+              cursor: 'ew-resize',
+              zIndex: 30,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+              pointerEvents: 'auto',
+            }}
+            title={`Fade In: ${(audioFadeIn / state.fps).toFixed(1)}s`}
+          >
+            {draggingFade?.type === 'in' && (
+              <div style={{
                 position: 'absolute',
-                left: `${audioFadeIn * pixelsPerFrame - 6}px`,
-                top: hasVideoWithThumbnail ? `${thumbnailHeight - 6}px` : (hasWaveform ? `${thumbnailHeight - 6}px` : '-6px'),
-                width: '12px',
-                height: '12px',
-                borderRadius: '50%',
-                backgroundColor: '#fff',
-                border: '2px solid #0066ff',
-                cursor: 'ew-resize',
-                zIndex: 30,
-                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                pointerEvents: 'auto',
-              }}
-              title={`Fade In: ${(audioFadeIn / state.fps).toFixed(1)}s`}
-            >
-              {draggingFade?.type === 'in' && (
-                <div style={{
-                  position: 'absolute',
-                  top: '-24px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  backgroundColor: 'rgba(0,0,0,0.9)',
-                  color: '#fff',
-                  padding: '2px 6px',
-                  borderRadius: '3px',
-                  fontSize: '11px',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                }}>
-                  {(audioFadeIn / state.fps).toFixed(2)}s
-                </div>
-              )}
-            </div>
+                top: '-24px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                backgroundColor: 'rgba(0,0,0,0.9)',
+                color: '#fff',
+                padding: '2px 6px',
+                borderRadius: '3px',
+                fontSize: '11px',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}>
+                {(audioFadeIn / state.fps).toFixed(2)}s
+              </div>
+            )}
+          </div>
 
-            {/* Fade Out Handle */}
-            <div
-              onMouseDown={(e) => handleFadeMouseDown(e, 'out')}
-              onDragStart={(e) => e.preventDefault()}
-              style={{
+          {/* Fade Out Handle */}
+          <div
+            onMouseDown={(e) => handleFadeMouseDown(e, 'out')}
+            onDragStart={(e) => e.preventDefault()}
+            style={{
+              position: 'absolute',
+              right: `${audioFadeOut * pixelsPerFrame - 6}px`,
+              top: hasVideoWithThumbnail ? `${thumbnailHeight - 6}px` : (hasWaveform ? `${thumbnailHeight - 6}px` : '-6px'),
+              width: '12px',
+              height: '12px',
+              borderRadius: '50%',
+              backgroundColor: '#fff',
+              border: '2px solid #0066ff',
+              cursor: 'ew-resize',
+              zIndex: 30,
+              boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+              pointerEvents: 'auto',
+            }}
+            title={`Fade Out: ${(audioFadeOut / state.fps).toFixed(1)}s`}
+          >
+            {draggingFade?.type === 'out' && (
+              <div style={{
                 position: 'absolute',
-                right: `${audioFadeOut * pixelsPerFrame - 6}px`,
-                top: hasVideoWithThumbnail ? `${thumbnailHeight - 6}px` : (hasWaveform ? `${thumbnailHeight - 6}px` : '-6px'),
-                width: '12px',
-                height: '12px',
-                borderRadius: '50%',
-                backgroundColor: '#fff',
-                border: '2px solid #0066ff',
-                cursor: 'ew-resize',
-                zIndex: 30,
-                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                pointerEvents: 'auto',
-              }}
-              title={`Fade Out: ${(audioFadeOut / state.fps).toFixed(1)}s`}
-            >
-              {draggingFade?.type === 'out' && (
-                <div style={{
-                  position: 'absolute',
-                  top: '-24px',
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  backgroundColor: 'rgba(0,0,0,0.9)',
-                  color: '#fff',
-                  padding: '2px 6px',
-                  borderRadius: '3px',
-                  fontSize: '11px',
-                  whiteSpace: 'nowrap',
-                  pointerEvents: 'none',
-                }}>
-                  {(audioFadeOut / state.fps).toFixed(2)}s
-                </div>
-              )}
-            </div>
-          </>
-        )
-      }
+                top: '-24px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                backgroundColor: 'rgba(0,0,0,0.9)',
+                color: '#fff',
+                padding: '2px 6px',
+                borderRadius: '3px',
+                fontSize: '11px',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}>
+                {(audioFadeOut / state.fps).toFixed(2)}s
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Item Label */}
-      <span
-        className={`absolute top-1 right-1 text-xs text-white font-medium whitespace-nowrap overflow-hidden text-ellipsis z-[1] pointer-events-none ${thumbnail || hasWaveform ? 'bg-black/70 px-1.5 py-0.5 rounded-[3px]' : ''
-          }`}
-        style={{
-          maxWidth: isHovered ? 'calc(100% - 40px)' : 'calc(100% - 16px)',
-        }}
-      >
+      <span style={{
+        position: 'absolute',
+        top: '4px',
+        right: '4px',
+        fontSize: '12px',
+        color: '#ffffff',
+        fontWeight: 500,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        backgroundColor: (thumbnail || hasWaveform) ? 'rgba(0, 0, 0, 0.7)' : 'transparent',
+        padding: (thumbnail || hasWaveform) ? '2px 6px' : '0',
+        borderRadius: (thumbnail || hasWaveform) ? '3px' : '0',
+        zIndex: 1,
+        maxWidth: isHovered ? 'calc(100% - 40px)' : 'calc(100% - 16px)',
+        pointerEvents: 'none',
+      }}>
         {isEditingText && item.type === 'text' ? (
           <input
             type="text"
@@ -1008,87 +1077,119 @@ export const TimelineItem: React.FC<TimelineItemProps> = ({
       </span>
 
       {/* Delete button - only on hover */}
-      {
-        isHovered && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            transition={{ duration: 0.15 }}
-            onClick={handleDeleteClick}
-            className="absolute top-1 right-1 w-5 h-5 bg-red-500/90 rounded text-white text-sm cursor-pointer flex items-center justify-center z-[31] font-bold border-none"
-          >
-            ×
-          </motion.button>
-        )
-      }
+      {isHovered && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.8 }}
+          transition={{ duration: 0.15 }}
+          onClick={handleDeleteClick}
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            width: 20,
+            height: 20,
+            backgroundColor: 'rgba(255, 68, 68, 0.9)',
+            border: 'none',
+            borderRadius: '4px',
+            color: 'white',
+            fontSize: 14,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 31,
+            fontWeight: 'bold',
+          }}
+        >
+          ×
+        </motion.button>
+      )}
 
       {/* Resize handles */}
       {/* Roll Edit 模式：hover 时且相邻时，显示高亮手柄 */}
       {/* 普通模式：hover 时显示手柄 */}
       {/* 联动显示：相邻 item hover 时也显示 */}
-      {
-        (isHovered || shouldHighlightLeft || shouldHighlightRight) && (
-          <>
-            {/* 左边缘手柄 - 向左延伸,覆盖边界 */}
-            <div
-              onMouseDown={(e) => {
-                e.stopPropagation(); // 阻止事件冒泡,防止触发 dnd-kit 拖动
-                if (hasAdjacentItemOnLeft && onRollEdit) {
-                  // Roll Edit 模式
-                  handleResizeMouseDown('left', e, true);
-                } else {
-                  // 普通 trim 模式
-                  handleResizeMouseDown('left', e);
-                }
-              }}
-              onPointerDown={(e) => e.stopPropagation()} // 阻止 dnd-kit 的 pointer 事件
-              className={`absolute -left-1.5 top-0 bottom-0 w-3 cursor-ew-resize z-10 touch-none ${shouldHighlightLeft
-                ? 'bg-orange-400/60'
-                : resizingEdge === 'left' ? 'bg-blue-500/30' : 'bg-transparent'
-                }`}
-            />
-            {/* 右边缘手柄 - 向右延伸,覆盖边界 */}
-            <div
-              onMouseDown={(e) => {
-                e.stopPropagation(); // 阻止事件冒泡,防止触发 dnd-kit 拖动
-                if (hasAdjacentItemOnRight && onRollEdit) {
-                  // Roll Edit 模式
-                  handleResizeMouseDown('right', e, true);
-                } else {
-                  // 普通 trim 模式
-                  handleResizeMouseDown('right', e);
-                }
-              }}
-              onPointerDown={(e) => e.stopPropagation()} // 阻止 dnd-kit 的 pointer 事件
-              className={`absolute -right-1.5 top-0 bottom-0 w-3 cursor-ew-resize z-10 touch-none ${shouldHighlightRight
-                ? 'bg-orange-400/60'
-                : resizingEdge === 'right' ? 'bg-blue-500/30' : 'bg-transparent'
-                }`}
-            />
-          </>
-        )
-      }
-
-      {/* Color picker for solid items */}
-      {
-        item.type === 'solid' && isHovered && (
-          <input
-            type="color"
-            value={item.color}
-            onChange={(e) => onUpdate(item.id, { color: e.target.value })}
+      {(isHovered || shouldHighlightLeft || shouldHighlightRight) && (
+        <>
+          {/* 左边缘手柄 - 向左延伸,覆盖边界 */}
+          <div
+            onMouseDown={(e) => {
+              e.stopPropagation(); // 阻止事件冒泡,防止触发 dnd-kit 拖动
+              if (hasAdjacentItemOnLeft && onRollEdit) {
+                // Roll Edit 模式
+                handleResizeMouseDown('left', e, true);
+              } else {
+                // 普通 trim 模式
+                handleResizeMouseDown('left', e);
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()} // 阻止 dnd-kit 的 pointer 事件
             style={{
               position: 'absolute',
-              bottom: 4,
-              right: 4,
-              width: 20,
-              height: 20,
+              left: -6,  // 向左延伸 6px,覆盖边界
+              top: 0,
+              bottom: 0,
+              width: 12,
+              cursor: 'ew-resize',
+              zIndex: 10,
+              backgroundColor: shouldHighlightLeft
+                ? 'rgba(255, 165, 0, 0.6)'  // Roll Edit: 橙色高亮
+                : resizingEdge === 'left' ? 'rgba(0, 102, 255, 0.3)' : 'transparent',
+              touchAction: 'none', // 防止触摸事件干扰
             }}
-            className="border-none rounded cursor-pointer z-[2]"
-            onClick={(e) => e.stopPropagation()}
           />
-        )
-      }
-    </div >
+          {/* 右边缘手柄 - 向右延伸,覆盖边界 */}
+          <div
+            onMouseDown={(e) => {
+              e.stopPropagation(); // 阻止事件冒泡,防止触发 dnd-kit 拖动
+              if (hasAdjacentItemOnRight && onRollEdit) {
+                // Roll Edit 模式
+                handleResizeMouseDown('right', e, true);
+              } else {
+                // 普通 trim 模式
+                handleResizeMouseDown('right', e);
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()} // 阻止 dnd-kit 的 pointer 事件
+            style={{
+              position: 'absolute',
+              right: -6,  // 向右延伸 6px,覆盖边界
+              top: 0,
+              bottom: 0,
+              width: 12,
+              cursor: 'ew-resize',
+              zIndex: 10,
+              backgroundColor: shouldHighlightRight
+                ? 'rgba(255, 165, 0, 0.6)'  // Roll Edit: 橙色高亮
+                : resizingEdge === 'right' ? 'rgba(0, 102, 255, 0.3)' : 'transparent',
+              touchAction: 'none', // 防止触摸事件干扰
+            }}
+          />
+        </>
+      )}
+
+      {/* Color picker for solid items */}
+      {item.type === 'solid' && isHovered && (
+        <input
+          type="color"
+          value={item.color}
+          onChange={(e) => onUpdate(item.id, { color: e.target.value })}
+          style={{
+            position: 'absolute',
+            bottom: 4,
+            right: 4,
+            width: 20,
+            height: 20,
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            zIndex: 2,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+      )}
+    </div>
   );
 };

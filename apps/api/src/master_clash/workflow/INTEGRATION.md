@@ -196,18 +196,13 @@ def _generate_canvas_tools(self) -> list[BaseTool]:
 
 ### TimelineMiddleware
 
-Located in [middleware.py](middleware.py), this middleware adds the `timeline_editor` tool (emits SSE `timeline_edit`).
+Located in [middleware.py](middleware.py), this middleware adds the DSL tools for timeline management.
 
-**SSE Emission:**
-```python
-# In create_canvas_node tool
-writer = get_stream_writer()
-if writer:
-    writer({
-        "action": "create_node_proposal",
-        "proposal": result.proposal,
-    })
-```
+**Tools:**
+- `read_dsl`: Reads the current timeline DSL (JSON)
+- `patch_dsl`: Modifies the timeline using JSON Patch (RFC 6902)
+
+**Note:** The previous `timeline_editor` tool has been replaced by direct DSL manipulation for more precise control. The Editor agent now maintains the DSL state directly.
 
 ## SSE Event Types
 
@@ -228,16 +223,6 @@ The backend emits these custom events (handled by [api/main.py](../api/main.py:5
 }
 ```
 
-### timeline_edit
-```json
-{
-  "action": "timeline_edit",
-  "edit_action": "add_clip",
-  "params": { "node_id": "...", "duration": 5 },
-  "project_id": "proj-123"
-}
-```
-
 ## Comparison with Original Tools
 
 | Original (tools.py) | New Architecture | Changes |
@@ -246,7 +231,7 @@ The backend emits these custom events (handled by [api/main.py](../api/main.py:5
 | `read_node` → Returns JSON string | `read_canvas_node` → Returns formatted string | ✅ Same source (`find_node_by_id`) |
 | `create_node` → Returns JSON with action | `create_canvas_node` → Emits SSE, returns message | ✅ **Now emits via `get_stream_writer()`** |
 | `wait_for_task` → Returns status string | `wait_for_generation` → Returns status string | ✅ Same source (`get_asset_id`) |
-| `timeline_editor` → Returns JSON with action | `timeline_editor` → Emits SSE, returns message | ✅ **Now emits via `get_stream_writer()`** |
+| `timeline_editor` → Returns JSON with action | `read_dsl` / `patch_dsl` | 🔄 **Changed to File I/O (DSL)** |
 
 ## Migration Path
 
@@ -259,7 +244,7 @@ The backend emits these custom events (handled by [api/main.py](../api/main.py:5
 ### Phase 2: ✅ Integration Complete
 - `StateCanvasBackend` uses `get_project_context()`
 - `create_canvas_node` emits SSE proposals
-- `timeline_editor` emits SSE events
+- Timeline management moved to DSL file operations
 - All read operations use existing context functions
 
 ### Phase 3: 🔄 Deprecate Legacy Tools (Optional)
@@ -291,7 +276,7 @@ cd backend
 python -m master_clash.api.main
 
 # In another terminal, test SSE endpoint
-curl -N "http://localhost:8000/api/v1/stream/proj-test?thread_id=thread-1&user_input=Create+a+text+node"
+curl -N "http://localhost:8888/api/v1/stream/proj-test?thread_id=thread-1&user_input=Create+a+text+node"
 ```
 
 Expected output:
@@ -307,7 +292,7 @@ data: {"agent": "Agent", "content": "Created node alpha-ocean-square"}
 
 ```bash
 # Sync context from frontend
-curl -X POST http://localhost:8000/api/v1/project/proj-test/context \
+curl -X POST http://localhost:8888/api/v1/project/proj-test/context \
   -H "Content-Type: application/json" \
   -d '{
     "nodes": [

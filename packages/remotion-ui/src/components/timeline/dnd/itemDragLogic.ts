@@ -1,5 +1,5 @@
 import type { Item, Track } from '@master-clash/remotion-core';
-
+import { timeline as timelineStyles } from '../../timeline/styles';
 import { calculateSnapForItemRange, getAllSnapTargets } from '../utils/snapCalculator';
 
 export type InsertDecision = {
@@ -304,7 +304,7 @@ export function buildPreview(
     args.item.id,
     args.currentFrame,
     args.snapEnabled,
-    10
+    timelineStyles.snapThreshold
   );
 
   // Overlap push only when not creating a new track

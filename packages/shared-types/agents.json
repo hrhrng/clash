@@ -1,0 +1,20 @@
+{
+  "summary": "The 'Protocol Layer' of the application. Contains Zod schemas and TypeScript interfaces used by both Frontend and Backend.",
+  "context_hints": [
+    "Modify this package when you need to change API contracts or Data Models",
+    "Run 'pnpm build' in this directory after changes to regenerate artifacts",
+    "Python models are generated from these Zod schemas"
+  ],
+  "subdirectories": {
+    "src": "Source code containing Zod schema definitions.",
+    "python": "Generated Python Pydantic models (do not edit manually).",
+    "scripts": "Scripts for code generation (TS -> Python)."
+  },
+  "key_files": {
+    "src/index.ts": "Main entry point exporting all types.",
+    "src/models.ts": "AI Model configuration and metadata schemas.",
+    "src/tasks.ts": "Task definitions for the Async Job system.",
+    "src/pipeline.ts": "Pipeline execution state definitions."
+  },
+  "architecture_notes": "Single Source of Truth (SSOT) pattern. Zod is the master definition."
+}

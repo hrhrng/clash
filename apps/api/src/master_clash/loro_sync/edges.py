@@ -7,7 +7,7 @@ Provides methods for adding, updating, removing, and reading edges.
 import logging
 from typing import Any
 
-from loro import ExportMode, LoroDoc
+from loro import LoroDoc
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,9 @@ class LoroEdgesMixin:
         target = edge_data.get("target", "?")
         logger.info(f"[LoroSyncClient] ➕ Adding edge: {edge_id} ({source} → {target})")
 
-        version_before = self.doc.oplog_vv
         edges_map = self.doc.get_map("edges")
-
         edges_map.insert(edge_id, edge_data)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Edge added: {edge_id}")
 
     def update_edge(self, edge_id: str, edge_data: dict[str, Any]):
@@ -50,7 +46,6 @@ class LoroEdgesMixin:
         """
         logger.info(f"[LoroSyncClient] 🔄 Updating edge: {edge_id}")
 
-        version_before = self.doc.oplog_vv
         edges_map = self.doc.get_map("edges")
 
         existing_proxy = edges_map.get(edge_id)
@@ -68,9 +63,7 @@ class LoroEdgesMixin:
         merged = {**existing, **edge_data}
 
         edges_map.insert(edge_id, merged)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Edge updated: {edge_id}")
 
     def remove_edge(self, edge_id: str):
@@ -81,13 +74,9 @@ class LoroEdgesMixin:
         """
         logger.info(f"[LoroSyncClient] ➖ Removing edge: {edge_id}")
 
-        version_before = self.doc.oplog_vv
         edges_map = self.doc.get_map("edges")
-
         edges_map.delete(edge_id)
-
-        update = self.doc.export(ExportMode.Updates(version_before))
-        self._send_update(update)
+        self.doc.commit()
         logger.info(f"[LoroSyncClient] ✅ Edge removed: {edge_id}")
 
     def get_edge(self, edge_id: str) -> dict[str, Any] | None:

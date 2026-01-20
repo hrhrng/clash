@@ -20,13 +20,14 @@ from langchain.messages import SystemMessage
 from langchain.tools import BaseTool, ToolRuntime
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from master_clash.workflow.backends import (
     CanvasBackendProtocol,
     NodeInfo,
     StateCanvasBackend,
 )
+from master_clash.workflow.share_types import TimelineDSL
 from master_clash.workflow.tools import (
     create_list_nodes_tool,
     create_read_node_tool,
@@ -35,6 +36,7 @@ from master_clash.workflow.tools import (
     create_run_generation_tool,
     create_wait_generation_tool,
     create_search_nodes_tool,
+    create_list_model_cards_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,8 +91,19 @@ class TimelineMiddleware(AgentMiddleware):
         """Add timeline tools to the model request."""
 
         timeline_prompt = """
-You can control the video timeline via the timeline_editor tool.
-- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+You can control the video timeline via the DSL tools.
+
+**CRITICAL**: You MUST be given a video-editor node ID to work with.
+If you haven't been given a node_id, ask the director for it or request creating a new video-editor node first.
+
+DSL Tools:
+- read_dsl(node_id): Read the current timeline DSL from a video-editor node.
+- patch_dsl(node_id, patch): Modify the timeline using JSON Patch operations on a video-editor node.
+
+Example workflow:
+1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
+2. You read the current state: read_dsl(node_id="editor-abc123")
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {"id": "t1", "items": [...]}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -103,8 +116,19 @@ You can control the video timeline via the timeline_editor tool.
         """Add timeline tools to the model request."""
 
         timeline_prompt = """
-You can control the video timeline via the timeline_editor tool.
-- timeline_editor: Provide an action (e.g., add_clip, set_duration, render) and params.
+You can control the video timeline via the DSL tools.
+
+**CRITICAL**: You MUST be given a video-editor node ID to work with.
+If you haven't been given a node_id, ask the director for it or request creating a new video-editor node first.
+
+DSL Tools:
+- read_dsl(node_id): Read the current timeline DSL from a video-editor node.
+- patch_dsl(node_id, patch): Modify the timeline using JSON Patch operations on a video-editor node.
+
+Example workflow:
+1. Director provides you with a video-editor node_id (e.g., "editor-abc123")
+2. You read the current state: read_dsl(node_id="editor-abc123")
+3. You modify it: patch_dsl(node_id="editor-abc123", patch=[{"op": "add", "path": "/tracks/-", "value": {"id": "t1", "items": [...]}}])
 """
         if request.system_prompt:
             system_prompt = f"{request.system_prompt}\n\n{timeline_prompt}"
@@ -117,47 +141,192 @@ You can control the video timeline via the timeline_editor tool.
 
     def _generate_timeline_tools(self) -> list[BaseTool]:
         """Generate timeline tools."""
-        return [self._timeline_editor_tool()]
+        # We need backend access for arrange_timeline, but TimelineMiddleware currently doesn't hold backend reference.
+        # CanvasMiddleware holds backend.
+        # We should probably move arrange_timeline to CanvasMiddleware or pass backend to TimelineMiddleware.
+        return [self._read_dsl_tool(), self._patch_dsl_tool()]
 
-    def _timeline_editor_tool(self) -> BaseTool:
-        """Create timeline_editor tool."""
+    def _read_dsl_tool(self) -> BaseTool:
+        """Create read_dsl tool."""
         from langchain_core.tools import tool
-        from langgraph.config import get_stream_writer
+        import json
 
-        class TimelineEditorInput(BaseModel):
-            action: str = Field(
-                description="Timeline action, e.g. add_clip, set_duration, render"
-            )
-            params: dict[str, Any] = Field(description="Action parameters")
+        class ReadDSLInput(BaseModel):
+            node_id: str = Field(description="ID of the video-editor node containing the timeline DSL")
 
-        @tool(args_schema=TimelineEditorInput)
-        def timeline_editor(
-            action: str,
-            params: dict[str, Any],
-            runtime: ToolRuntime,
-        ) -> str:
-            """Automated video editor tool."""
+        @tool(args_schema=ReadDSLInput)
+        def read_dsl(node_id: str, runtime: ToolRuntime) -> str:
+            """Read the timeline DSL from a video-editor node.
 
-            project_id = runtime.state.get("project_id", "")
-
+            Returns the timelineDsl field from the node's data as a JSON string.
+            If the node doesn't exist or has no timeline, returns an error message.
+            """
             try:
-                # Emit SSE event for timeline editing
-                writer = get_stream_writer()
-                writer(
-                    {
-                        "action": "timeline_edit",
-                        "edit_action": action,
-                        "params": params,
-                        "project_id": project_id,
-                    }
-                )
+                # Get Loro client from runtime
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
 
-                return f"Timeline action '{action}' executed successfully"
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro client not connected. Cannot read node data."
+
+                # Read node from Loro
+                node_data = loro_client.get_node(node_id)
+                if not node_data:
+                    return f"Error: Node {node_id} not found."
+
+                # Handle different node data formats
+                if hasattr(node_data, "value"):
+                    node_data = node_data.value
+
+                if not isinstance(node_data, dict):
+                    return f"Error: Invalid node data format for {node_id}"
+
+                # Check node type
+                if node_data.get("type") != "video-editor":
+                    return f"Error: Node {node_id} is not a video-editor node (type: {node_data.get('type')})"
+
+                # Get timelineDsl from node.data
+                data = node_data.get("data", {})
+                timeline_dsl = data.get("timelineDsl")
+
+                if timeline_dsl is None:
+                    # Return empty timeline structure
+                    empty_timeline = {
+                        "version": "1.0.0",
+                        "fps": 30,
+                        "compositionWidth": 1920,
+                        "compositionHeight": 1080,
+                        "durationInFrames": 0,
+                        "tracks": []
+                    }
+                    return json.dumps(empty_timeline, indent=2)
+
+                return json.dumps(timeline_dsl, indent=2)
 
             except Exception as e:
-                return f"Error in timeline editor: {e}"
+                logger.error(f"Error reading DSL from node {node_id}: {e}", exc_info=True)
+                return f"Error reading DSL: {e}"
 
-        return timeline_editor
+        return read_dsl
+
+    def _patch_dsl_tool(self) -> BaseTool:
+        """Create patch_dsl tool."""
+        from langchain_core.tools import tool
+        import json
+        import jsonpatch
+
+        class PatchDSLInput(BaseModel):
+            node_id: str = Field(description="ID of the video-editor node containing the timeline DSL")
+            patch: list[dict[str, Any]] = Field(
+                description="JSON Patch operations (RFC 6902). Example: [{'op': 'replace', 'path': '/version', 'value': '1.0.1'}, {'op': 'add', 'path': '/tracks/-', 'value': {...}}]"
+            )
+
+        @tool(args_schema=PatchDSLInput)
+        def patch_dsl(
+            node_id: str,
+            patch: list[dict[str, Any]],
+            runtime: ToolRuntime,
+        ) -> str:
+            """Apply a JSON Patch to the timeline DSL of a video-editor node.
+
+            This modifies the timelineDsl field in the node's data and updates the node in Loro.
+            """
+            try:
+                # Get Loro client from runtime
+                loro_client = runtime.config.get("configurable", {}).get("loro_client")
+
+                if not loro_client or not loro_client.connected:
+                    return "Error: Loro client not connected. Cannot modify node data."
+
+                # Read current node data
+                node_data = loro_client.get_node(node_id)
+                if not node_data:
+                    return f"Error: Node {node_id} not found."
+
+                # Handle different node data formats
+                if hasattr(node_data, "value"):
+                    node_data = node_data.value
+
+                if not isinstance(node_data, dict):
+                    return f"Error: Invalid node data format for {node_id}"
+
+                # Check node type
+                if node_data.get("type") != "video-editor":
+                    return f"Error: Node {node_id} is not a video-editor node (type: {node_data.get('type')})"
+
+                # Get current timelineDsl
+                data = node_data.get("data", {})
+                current_dsl = data.get("timelineDsl")
+
+                if current_dsl is None:
+                    # Initialize with empty timeline
+                    current_dsl = {
+                        "version": "1.0.0",
+                        "fps": 30,
+                        "compositionWidth": 1920,
+                        "compositionHeight": 1080,
+                        "durationInFrames": 0,
+                        "tracks": []
+                    }
+
+                # Apply JSON Patch
+                patched_dsl = jsonpatch.apply_patch(current_dsl, patch)
+
+                # Validate against schema
+                try:
+                    TimelineDSL.model_validate(patched_dsl)
+                except ValidationError as e:
+                    logger.error(f"DSL validation failed for node {node_id}: {e}")
+                    return f"Error: Invalid DSL structure: {e}"
+
+                # Update node in Loro
+                updated_data = {**data, "timelineDsl": patched_dsl}
+
+                # Update upstream dependencies based on assets in timeline
+                # This ensures the video-editor node is connected to the assets it uses
+                asset_ids = set()
+                for track in patched_dsl.get("tracks", []):
+                    items = track.get("items") or []
+                    for item in items:
+                        if "assetId" in item:
+                            asset_ids.add(item["assetId"])
+
+                if asset_ids:
+                    current_upstreams = set(updated_data.get("upstreamNodeIds", []))
+                    new_upstreams = current_upstreams.union(asset_ids)
+
+                    if new_upstreams != current_upstreams:
+                        updated_data["upstreamNodeIds"] = list(new_upstreams)
+                        logger.info(f"Updated upstreamNodeIds for {node_id}: {updated_data['upstreamNodeIds']}")
+
+                        # Add edges for new connections
+                        for asset_id in asset_ids:
+                            if asset_id not in current_upstreams:
+                                edge_id = f"{asset_id}-{node_id}"
+                                try:
+                                    loro_edge = {
+                                        "id": edge_id,
+                                        "source": asset_id,
+                                        "target": node_id,
+                                        "type": "default"
+                                    }
+                                    loro_client.add_edge(edge_id, loro_edge)
+                                    logger.info(f"Added dependency edge {edge_id} from {asset_id} to {node_id}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to add edge {edge_id}: {e}")
+
+                loro_client.update_node(node_id, {"data": updated_data})
+
+                logger.info(f"Successfully patched timeline DSL for node {node_id}")
+                return f"Patch applied successfully to video-editor node {node_id}"
+
+            except jsonpatch.JsonPatchException as e:
+                logger.error(f"JSON Patch error for node {node_id}: {e}", exc_info=True)
+                return f"Error: Invalid JSON Patch operation: {e}"
+            except Exception as e:
+                logger.error(f"Error patching DSL for node {node_id}: {e}", exc_info=True)
+                return f"Error patching DSL: {e}"
+
+        return patch_dsl
 
 
 class CanvasMiddleware(AgentMiddleware):
@@ -211,11 +380,27 @@ class CanvasMiddleware(AgentMiddleware):
 You have access to canvas tools for creating and managing visual content:
 - list_canvas_nodes: List nodes on the canvas
 - read_canvas_node: Read a specific node's data
-- create_canvas_node: Create text/group nodes (for organization)
+- create_canvas_node: Create text/group/video-editor nodes
+  - text: For notes and scripts
+  - group: For organization (ALWAYS create groups first!)
+  - video-editor: For timeline editing (creates a node with embedded timeline DSL)
+- list_model_cards: List available model cards for a given asset kind (image/video/audio). Use this first to choose a model and parameters.
 - create_generation_node: Create PromptActionNodes with embedded prompts for image/video generation
-- run_generation_node: Run a generation node to produce the asset (call after create)
-- wait_for_generation: Wait for image/video generation to complete
+- run_generation_node: Run a generation node to produce the asset (call after create), OR run a video-editor node to render its timeline
+- wait_for_generation: Wait for image/video generation to complete (ONLY pass image/video asset node IDs, NOT action-badge IDs)
 - search_canvas: Search nodes by content
+
+**CRITICAL: Always Organize in Groups**
+1. FIRST create a Group to contain your work (e.g., "Scene 1", "Character Designs")
+2. THEN create all content nodes with parentId pointing to that group
+3. NEVER leave nodes floating outside of a group!
+
+**Video Editor Workflow**:
+- Create a video-editor node: `create_canvas_node(node_type="video-editor", payload={"label": "Final Video"})`
+- This creates a node with an embedded timeline DSL
+- The user or Editor sub-agent can manually arrange assets in the timeline through the UI
+- The frontend automatically links assets to the video-editor when they are added to the timeline
+- When ready, trigger rendering: `run_generation_node(node_id="editor-node-id")`
 
 IMPORTANT: PromptActionNode Architecture:
 - Prompt and action are now MERGED into a single node type
@@ -225,13 +410,17 @@ IMPORTANT: PromptActionNode Architecture:
 - You do NOT need to create separate prompt/text nodes - everything is in the PromptActionNode
 
 Workflow:
-1. Use create_generation_node with:
+1. Create a Group first (using create_canvas_node with type='group')
+2. Call list_model_cards to pick a model and parameters (progressive disclosure)
+3. Use create_generation_node with:
    - 'prompt': detailed generation prompt for the AI model
    - 'content': markdown description/notes for display
+   - 'parent_id': The group ID from step 1 (REQUIRED!)
+   - 'modelParams': MUST be an object (dict), not a JSON string
    - For video_gen: MUST include upstreamNodeIds with at least one completed image node ID
    - For image_gen: upstreamNodeIds are optional
-2. Then use run_generation_node to trigger the generation
-3. Call wait_for_generation to check status
+4. Then use run_generation_node to trigger the generation
+5. Call wait_for_generation to check status (pass the returned asset node ID, NOT the action-badge ID)
 """
 
     def _generate_canvas_tools(self) -> list[BaseTool]:
@@ -240,6 +429,7 @@ Workflow:
             create_list_nodes_tool(self.backend),
             create_read_node_tool(self.backend),
             create_create_node_tool(self.backend),
+            create_list_model_cards_tool(),
             create_generation_node_tool(self.backend),
             create_run_generation_tool(self.backend),
             create_wait_generation_tool(self.backend),
